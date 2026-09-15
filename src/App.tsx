@@ -376,6 +376,11 @@ export default function App() {
   // Handle Resume Upload
   async function handleUpload() {
     if (!files.length) return;
+    if (isSupabaseBrowserConfigured && !session?.user) {
+      setAuthModalOpen(true);
+      setError("Please sign in or create a recruiter account to upload resumes into your workspace.");
+      return;
+    }
     setUploading(true);
     setError("");
     setNotice("");
@@ -383,7 +388,7 @@ export default function App() {
       const result = await uploadResumes(files, { role, source });
       setFiles([]);
       await loadWorkspace();
-      setNotice(result.message);
+      setNotice(result.message || `${files.length} resumes successfully parsed and indexed!`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed.");
     } finally {

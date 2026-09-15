@@ -192,47 +192,50 @@ export async function downloadReport(format: "csv" | "json"): Promise<void> {
 
 export async function uploadResumes(files: File[], metadata: { role: string; source: string }): Promise<UploadResult> {
   const storageClient = supabase;
-  if (isSupabaseBrowserConfigured && storageClient) {
-    const manifest = await request<SignedUploadManifest>("/api/uploads/sign", {
-      method: "POST",
-      headers: jsonHeaders,
-      body: JSON.stringify({
-        files: files.map((file) => ({ name: file.name, size: file.size, mimeType: file.type }))
-      })
-    });
-
-    await runWithConcurrency(manifest.uploads, 4, async (upload, index) => {
-      const file = files[index];
-      if (!file) {
-        throw new Error("The upload manifest did not match the selected files.");
-      }
-      const { error } = await storageClient.storage.from("resumes").uploadToSignedUrl(upload.path, upload.token, file, {
-        contentType: file.type || undefined
+  if (isSupabaseBrowserConfigured && storageClient && accessToken) {
+    try {
+      const manifest = await request<SignedUploadManifest>("/api/uploads/sign", {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({
+          files: files.map((file) => ({ name: file.name, size: file.size, mimeType: file.type }))
+        })
       });
-      if (error) {
-        throw new Error(`Could not upload ${file.name}: ${error.message}`);
-      }
-    });
 
-    return request<UploadResult>("/api/uploads/process", {
-      method: "POST",
-      headers: jsonHeaders,
-      body: JSON.stringify({
-        completionToken: manifest.completionToken,
-        role: metadata.role,
-        source: metadata.source
-      })
-    });
+      await runWithConcurrency(manifest.uploads, 4, async (upload, index) => {
+        const file = files[index];
+        if (!file) {
+          throw new Error("The upload manifest did not match the selected files.");
+        }
+        const { error } = await storageClient.storage.from("resumes").uploadToSignedUrl(upload.path, upload.token, file, {
+          contentType: file.type || undefined
+        });
+        if (error) {
+          throw new Error(`Could not upload ${file.name}: ${error.message}`);
+        }
+      });
+
+      return await request<UploadResult>("/api/uploads/process", {
+        method: "POST",
+        headers: jsonHeaders,
+        body: JSON.stringify({
+          completionToken: manifest.completionToken,
+          role: metadata.role,
+          source: metadata.source
+        })
+      });
+    } catch (signedErr) {
+      console.warn("Signed upload failed, falling back to server multipart upload:", signedErr);
+    }
   }
 
   const form = new FormData();
   files.forEach((file) => form.append("resumes", file));
-  form.append("role", metadata.role);
-  form.append("source", metadata.source);
+  form.append("role", metadata.role || "Open application");
+  form.append("source", metadata.source || "Direct upload");
 
   return request<UploadResult>("/api/applications", {
     method: "POST",
-    headers: authHeaders(),
     body: form
   });
 }
