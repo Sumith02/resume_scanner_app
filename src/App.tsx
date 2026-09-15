@@ -29,6 +29,7 @@ import {
   Zap
 } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { AuthGate } from "./AuthGate";
 import { AuthModal } from "./AuthModal";
 import {
   createAgencyClient,
@@ -439,6 +440,43 @@ export default function App() {
   function toggleSelectCandidate(id: string) {
     setSelectedCandidateIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  }
+
+  // MANDATORY AUTHENTICATION GATE: ZERO PUBLIC ACCESS
+  if (authLoading) {
+    return (
+      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#090d16", color: "#ffffff" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "16px" }}>
+          <div
+            style={{
+              width: "48px",
+              height: "48px",
+              borderRadius: "12px",
+              background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
+              display: "grid",
+              placeItems: "center",
+              boxShadow: "0 8px 24px rgba(37, 99, 235, 0.4)"
+            }}
+          >
+            <Zap size={26} color="#fff" />
+          </div>
+          <Loader2 className="spinning" size={28} color="#38bdf8" />
+          <span style={{ fontSize: "14px", color: "#94a3b8" }}>Connecting to Nexerra Talent OS...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!session) {
+    return (
+      <AuthGate
+        onAuthSuccess={(newSession) => {
+          setSession(newSession);
+          setApiAccessToken(newSession.access_token ?? "");
+          loadWorkspace();
+        }}
+      />
     );
   }
 

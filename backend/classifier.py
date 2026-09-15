@@ -430,3 +430,127 @@ def _title_case(value: str) -> str:
     return " ".join(
         word if word.isupper() and len(word) <= 4 else word[:1].upper() + word[1:].lower() for word in value.split()
     )
+
+
+NON_RESUME_FILENAMES = [
+    "invoice",
+    "receipt",
+    "bill",
+    "quotation",
+    "quote",
+    "statement",
+    "tax_invoice",
+    "taxinvoice",
+    "purchase_order",
+    "po_",
+    "payslip",
+    "salary_slip",
+    "salaryslip",
+    "bank_statement",
+    "gst",
+    "form_16",
+    "form16",
+    "challan",
+    "ticket",
+    "boarding_pass",
+    "boardingpass",
+    "agreement",
+    "nda",
+    "contract",
+    "license",
+    "brochure",
+    "flyer",
+    "presentation",
+    "slides",
+    "timesheet",
+    "expense",
+]
+
+INVOICE_KEYWORDS = [
+    "tax invoice",
+    "commercial invoice",
+    "proforma invoice",
+    "invoice no",
+    "invoice #",
+    "invoice date",
+    "bill to",
+    "billed to",
+    "ship to",
+    "shipped to",
+    "amount due",
+    "total due",
+    "subtotal",
+    "balance due",
+    "payment terms",
+    "due date",
+    "purchase order",
+    "po number",
+    "unit price",
+    "vat number",
+    "vat no",
+    "gstin",
+    "gst no",
+    "hsn/sac",
+    "bank details",
+    "ifsc code",
+    "swift code",
+    "remit to",
+    "terms of payment",
+    "description of goods",
+    "total payable",
+    "net amount",
+]
+
+RESUME_SECTION_MARKERS = [
+    "experience",
+    "work experience",
+    "employment history",
+    "professional experience",
+    "education",
+    "academic background",
+    "qualification",
+    "qualifications",
+    "skills",
+    "technical skills",
+    "core competencies",
+    "key skills",
+    "projects",
+    "personal projects",
+    "academic projects",
+    "summary",
+    "professional summary",
+    "executive summary",
+    "career objective",
+    "certifications",
+    "licenses & certifications",
+    "curriculum vitae",
+    "resume",
+    "curriculum-vitae",
+]
+
+
+def is_candidate_resume(text: str, filename: str) -> tuple[bool, str]:
+    lower_name = filename.lower()
+    for non_resume_kw in NON_RESUME_FILENAMES:
+        if non_resume_kw in lower_name:
+            if "resume" not in lower_name and "cv" not in lower_name:
+                return False, f"File rejected: filename indicates an invoice, receipt, or non-resume document ('{filename}')."
+
+    normalized = _normalize_text(text).lower()
+
+    invoice_hits = [kw for kw in INVOICE_KEYWORDS if kw in normalized]
+    if len(invoice_hits) >= 2:
+        return False, f"File rejected: document contains invoice/billing markers ({', '.join(invoice_hits[:3])})."
+
+    resume_hits = [marker for marker in RESUME_SECTION_MARKERS if marker in normalized]
+    email_match = re.search(r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}", normalized, re.I)
+    phone_match = re.search(r"(?:\+?\d[\d\s().-]{7,}\d)", normalized)
+
+    if len(resume_hits) == 0 and not email_match and not phone_match:
+        return False, "File rejected: document lacks candidate resume sections (Experience, Education, Skills) or contact information."
+
+    if len(normalized) < 30:
+        return False, "File rejected: document text is too brief to be a candidate resume."
+
+    return True, "Valid candidate resume"
+

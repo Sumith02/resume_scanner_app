@@ -11,7 +11,7 @@ from typing import Any
 from docx import Document
 from pypdf import PdfReader
 
-from .classifier import analyze_resume
+from .classifier import analyze_resume, is_candidate_resume
 from .config import Settings
 from .errors import AppError
 from .models import RequestContext
@@ -56,6 +56,10 @@ class ResumeService:
                 mime_type = str(file.get("mimeType") or MIME_BY_EXTENSION[Path(original_name).suffix.lower()])
                 checksum = hashlib.sha256(content).hexdigest()
                 text = extract_resume_text(content, original_name)
+                is_valid, reject_reason = is_candidate_resume(text, original_name)
+                if not is_valid:
+                    failures.append({"fileName": original_name, "message": reject_reason})
+                    continue
                 analysis = analyze_resume(text, original_name)
                 duplicate = _find_duplicate(existing + created, analysis["email"], analysis["phone"], checksum)
                 application_id = str(uuid.uuid4())

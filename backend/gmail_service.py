@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from .classifier import NON_RESUME_FILENAMES
 from .config import Settings
 from .crypto import SignedState, TokenCipher
 from .errors import AppError, ServiceUnavailableError
@@ -171,6 +172,11 @@ class GmailService:
                         if filename:
                             skipped += 1
                         continue
+                    lower_filename = filename.lower()
+                    if any(non_kw in lower_filename for non_kw in NON_RESUME_FILENAMES):
+                        if "resume" not in lower_filename and "cv" not in lower_filename:
+                            skipped += 1
+                            continue
                     attachments_seen += 1
                     if attachments_seen > self.settings.max_upload_files:
                         skipped += 1
