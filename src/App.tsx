@@ -11,6 +11,8 @@ import {
   Inbox,
   Layers3,
   Loader2,
+  LogIn,
+  LogOut,
   Mail,
   Network,
   RefreshCw,
@@ -27,6 +29,7 @@ import {
   Zap
 } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { AuthModal } from "./AuthModal";
 import {
   createAgencyClient,
   createCampaign,
@@ -143,6 +146,7 @@ const navItems: Array<{ key: ViewKey; label: string; icon: ReactNode; badge?: st
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(isSupabaseBrowserConfigured);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
   const [activeView, setActiveView] = useState<ViewKey>("command_center");
   const [intakeMode, setIntakeMode] = useState<IntakeMode>("upload");
 
@@ -554,6 +558,92 @@ export default function App() {
             {blindReviewMode ? <EyeOff size={14} /> : <Eye size={14} />}
             <span>Blind Screening: {blindReviewMode ? "ON" : "OFF"}</span>
           </button>
+
+          {/* USER AUTH & RECRUITER PROFILE */}
+          {session?.user ? (
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "5px 10px",
+                  borderRadius: "6px",
+                  background: "#f1f5f9",
+                  fontSize: "12px",
+                  border: "1px solid var(--line)"
+                }}
+              >
+                <div
+                  style={{
+                    width: "22px",
+                    height: "22px",
+                    borderRadius: "50%",
+                    background: "#2563eb",
+                    color: "#ffffff",
+                    display: "grid",
+                    placeItems: "center",
+                    fontSize: "11px",
+                    fontWeight: 700
+                  }}
+                >
+                  {(session.user.user_metadata?.full_name || session.user.email || "U")[0].toUpperCase()}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.1 }}>
+                  <span style={{ fontWeight: 600, color: "#1e293b", maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {session.user.user_metadata?.full_name || session.user.email?.split("@")[0]}
+                  </span>
+                  <span style={{ fontSize: "10px", color: "#64748b" }}>Recruiter Lead</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (supabase) await supabase.auth.signOut();
+                  setSession(null);
+                  setNotice("Signed out of Nexerra Talent OS.");
+                }}
+                title="Sign Out"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "4px",
+                  padding: "7px 10px",
+                  borderRadius: "6px",
+                  border: "1px solid var(--line)",
+                  background: "#fff",
+                  cursor: "pointer",
+                  fontSize: "12px",
+                  color: "#64748b"
+                }}
+              >
+                <LogOut size={14} />
+                <span>Sign Out</span>
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setAuthModalOpen(true)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                padding: "7px 14px",
+                borderRadius: "6px",
+                border: "none",
+                background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
+                color: "#ffffff",
+                fontSize: "12px",
+                fontWeight: 600,
+                cursor: "pointer",
+                boxShadow: "0 2px 6px rgba(37, 99, 235, 0.25)"
+              }}
+            >
+              <LogIn size={14} />
+              <span>Sign In / Register</span>
+            </button>
+          )}
         </header>
 
         {/* NOTICES & ALERTS */}
@@ -564,8 +654,28 @@ export default function App() {
           </div>
         )}
         {error && (
-          <div style={{ margin: "16px 24px 0", background: "#fef2f2", border: "1px solid #fecaca", padding: "10px 16px", borderRadius: "6px", color: "#b91c1c", fontSize: "13px", display: "flex", justifyContent: "space-between" }}>
-            <span>{error}</span>
+          <div style={{ margin: "16px 24px 0", background: "#fef2f2", border: "1px solid #fecaca", padding: "10px 16px", borderRadius: "6px", color: "#b91c1c", fontSize: "13px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span>{error}</span>
+              {error.toLowerCase().includes("sign in") && (
+                <button
+                  type="button"
+                  onClick={() => setAuthModalOpen(true)}
+                  style={{
+                    background: "#b91c1c",
+                    color: "#ffffff",
+                    border: "none",
+                    borderRadius: "4px",
+                    padding: "3px 8px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: "pointer"
+                  }}
+                >
+                  Sign In Now
+                </button>
+              )}
+            </div>
             <button onClick={() => setError("")} style={{ border: "none", background: "none", cursor: "pointer", color: "#b91c1c" }}><X size={14} /></button>
           </div>
         )}
@@ -864,6 +974,21 @@ export default function App() {
           }}
         />
       )}
+
+      {/* RECRUITER AUTH & LOGIN MODAL */}
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        onSuccess={(newSession) => {
+          setSession(newSession);
+          setApiAccessToken(newSession?.access_token ?? "");
+          loadWorkspace();
+        }}
+        onContinueAsGuest={() => {
+          setNotice("Exploring workspace in Demo Recruiter mode.");
+          loadWorkspace();
+        }}
+      />
     </div>
   );
 }
