@@ -2161,6 +2161,9 @@ function IntakeCenterView({
   onDisconnectGmail: () => void;
   queue: ProcessingJob[];
 }) {
+  const [copiedRedirect, setCopiedRedirect] = useState(false);
+  const redirectUri = gmailStatus.redirectUri || (typeof window !== "undefined" ? `${window.location.origin}/api/integrations/gmail/callback` : "");
+
   return (
     <div className="intake-center-view">
       <div style={{ marginBottom: "20px" }}>
@@ -2316,39 +2319,136 @@ function IntakeCenterView({
           </div>
 
           {!gmailStatus.connected ? (
-            <div style={{ background: "#f8fafc", border: "1px dashed #cbd5e1", borderRadius: "8px", padding: "32px 24px", textAlign: "center" }}>
-              <div style={{ width: "48px", height: "48px", borderRadius: "12px", background: "#fee2e2", display: "grid", placeItems: "center", margin: "0 auto 12px" }}>
-                <Mail size={24} color="#ea4335" />
+            !gmailStatus.configured ? (
+              <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "10px", padding: "24px", textAlign: "left" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: "14px", marginBottom: "16px" }}>
+                  <div style={{ width: "42px", height: "42px", borderRadius: "10px", background: "#fef3c7", display: "grid", placeItems: "center", flexShrink: 0 }}>
+                    <Mail size={22} color="#d97706" />
+                  </div>
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                      <h4 style={{ margin: 0, fontSize: "16px", color: "#0f172a" }}>Google OAuth Setup Required</h4>
+                      <span style={{ fontSize: "11px", fontWeight: 600, background: "#fef3c7", color: "#b45309", padding: "2px 8px", borderRadius: "6px" }}>
+                        Action Needed in Vercel
+                      </span>
+                    </div>
+                    <p style={{ margin: 0, color: "#64748b", fontSize: "13px", lineHeight: 1.5 }}>
+                      To allow client companies to connect their hiring inboxes (e.g. <code>careers@company.com</code>), your Vercel deployment requires Google OAuth credentials from Google Cloud Console.
+                    </p>
+                  </div>
+                </div>
+
+                <div style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "14px 16px", marginBottom: "16px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                    <span style={{ fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+                      Authorized Redirect URI for Google Cloud Console:
+                    </span>
+                    <span style={{ fontSize: "11px", color: "#94a3b8" }}>Exact match required</span>
+                  </div>
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <code style={{ flex: 1, padding: "8px 12px", background: "#f1f5f9", borderRadius: "6px", fontSize: "12px", color: "#0f172a", wordBreak: "break-all" }}>
+                      {redirectUri}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(redirectUri);
+                        setCopiedRedirect(true);
+                        setTimeout(() => setCopiedRedirect(false), 2000);
+                      }}
+                      style={{
+                        background: copiedRedirect ? "#10b981" : "#0f172a",
+                        color: "#ffffff",
+                        border: "none",
+                        padding: "8px 14px",
+                        borderRadius: "6px",
+                        fontSize: "12px",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        whiteSpace: "nowrap"
+                      }}
+                    >
+                      {copiedRedirect ? "Copied!" : "Copy URI"}
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ background: "#f1f5f9", borderRadius: "8px", padding: "14px 16px", fontSize: "13px", color: "#334155", lineHeight: 1.6, marginBottom: "16px" }}>
+                  <div style={{ fontWeight: 600, color: "#0f172a", marginBottom: "6px" }}>3 Simple Setup Steps:</div>
+                  <ol style={{ margin: 0, paddingLeft: "18px" }}>
+                    <li style={{ marginBottom: "4px" }}>
+                      In <b>Google Cloud Console</b> &rarr; <b>APIs & Services</b>, enable the <b>Gmail API</b>.
+                    </li>
+                    <li style={{ marginBottom: "4px" }}>
+                      Go to <b>Credentials</b> &rarr; <b>Create Credentials</b> &rarr; <b>OAuth client ID</b> (Type: <i>Web application</i>) and paste the <b>Authorized Redirect URI</b> above.
+                    </li>
+                    <li>
+                      In <b>Vercel Project Settings &rarr; Environment Variables</b>, add:
+                      <div style={{ display: "flex", gap: "8px", marginTop: "6px", flexWrap: "wrap" }}>
+                        <code style={{ background: "#e2e8f0", padding: "2px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: 600 }}>GOOGLE_CLIENT_ID</code>
+                        <code style={{ background: "#e2e8f0", padding: "2px 8px", borderRadius: "4px", fontSize: "11px", fontWeight: 600 }}>GOOGLE_CLIENT_SECRET</code>
+                      </div>
+                    </li>
+                  </ol>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: "4px" }}>
+                  <span style={{ fontSize: "12px", color: "#dc2626", fontWeight: 500 }}>
+                    {gmailStatus.message || "Awaiting Google credentials configuration."}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={onConnectGmail}
+                    style={{
+                      background: "#e2e8f0",
+                      color: "#475569",
+                      border: "none",
+                      padding: "8px 16px",
+                      borderRadius: "6px",
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      cursor: "pointer"
+                    }}
+                  >
+                    Test Connect
+                  </button>
+                </div>
               </div>
-              <h4 style={{ margin: "0 0 6px", fontSize: "16px" }}>Connect Ingestion Mailbox</h4>
-              <p style={{ margin: "0 0 18px", color: "#64748b", fontSize: "13px", maxWidth: "520px", marginInline: "auto", lineHeight: 1.5 }}>
-                Connect your team's resume receiving mailbox (e.g. <code>careers@yourcompany.com</code> or recruiter inbox) via secure Google OAuth2. Nexerra will scan incoming emails and automatically extract candidate resumes into your database.
-              </p>
-              <button
-                type="button"
-                onClick={onConnectGmail}
-                style={{
-                  background: "linear-gradient(135deg, #ea4335 0%, #c5221f 100%)",
-                  color: "#ffffff",
-                  border: "none",
-                  padding: "10px 22px",
-                  borderRadius: "6px",
-                  fontSize: "13px",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  boxShadow: "0 2px 8px rgba(234, 67, 53, 0.3)"
-                }}
-              >
-                <Mail size={16} />
-                <span>Connect Google / Gmail Inbox</span>
-              </button>
-              <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "14px" }}>
-                {gmailStatus.message || "Requires Google OAuth Client ID configured in server environment."}
-              </p>
-            </div>
+            ) : (
+              <div style={{ background: "#f8fafc", border: "1px dashed #cbd5e1", borderRadius: "8px", padding: "32px 24px", textAlign: "center" }}>
+                <div style={{ width: "48px", height: "48px", borderRadius: "12px", background: "#fee2e2", display: "grid", placeItems: "center", margin: "0 auto 12px" }}>
+                  <Mail size={24} color="#ea4335" />
+                </div>
+                <h4 style={{ margin: "0 0 6px", fontSize: "16px" }}>Connect Ingestion Mailbox</h4>
+                <p style={{ margin: "0 0 18px", color: "#64748b", fontSize: "13px", maxWidth: "520px", marginInline: "auto", lineHeight: 1.5 }}>
+                  Connect your team's resume receiving mailbox (e.g. <code>careers@yourcompany.com</code> or recruiter inbox) via secure Google OAuth2. Nexerra will scan incoming emails and automatically extract candidate resumes into your database.
+                </p>
+                <button
+                  type="button"
+                  onClick={onConnectGmail}
+                  style={{
+                    background: "linear-gradient(135deg, #ea4335 0%, #c5221f 100%)",
+                    color: "#ffffff",
+                    border: "none",
+                    padding: "10px 22px",
+                    borderRadius: "6px",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    boxShadow: "0 2px 8px rgba(234, 67, 53, 0.3)"
+                  }}
+                >
+                  <Mail size={16} />
+                  <span>Connect Google / Gmail Inbox</span>
+                </button>
+                <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "14px" }}>
+                  {gmailStatus.message || "Ready to connect company mailbox via Google OAuth."}
+                </p>
+              </div>
+            )
           ) : (
             <div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px" }}>

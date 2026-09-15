@@ -33,21 +33,42 @@ class GmailService:
         self.cipher = TokenCipher(settings.token_encryption_key)
         self.state = SignedState(settings.oauth_state_secret)
 
+    def missing_configuration(self) -> list[str]:
+        missing: list[str] = []
+        if not self.settings.google_client_id:
+            missing.append("GOOGLE_CLIENT_ID")
+        if not self.settings.google_client_secret:
+            missing.append("GOOGLE_CLIENT_SECRET")
+        if not self.settings.google_redirect_uri:
+            missing.append("GOOGLE_REDIRECT_URI")
+        if not self.settings.oauth_state_secret or len(self.settings.oauth_state_secret) < 32:
+            missing.append("RESUMEFLOW_OAUTH_STATE_SECRET")
+        if not self.settings.token_encryption_key or len(self.settings.token_encryption_key) < 32:
+            missing.append("TOKEN_ENCRYPTION_KEY")
+        return missing
+
     def status(self, context: RequestContext) -> dict[str, object]:
         connection = self.repository.get_gmail_connection(context) if self.settings.gmail_configured else None
         configured = self.settings.gmail_configured
+        missing = self.missing_configuration() if not configured else []
         if connection:
             message = "Gmail is connected and ready for resume imports."
         elif configured:
             message = "Gmail OAuth is configured. Connect an HR mailbox to import resumes."
         else:
-            message = "Gmail requires OAuth credentials and token encryption configuration."
+            message = (
+                f"Gmail requires OAuth credentials in server environment ({', '.join(missing)})."
+                if missing
+                else "Gmail OAuth requires configuration."
+            )
         return {
             "configured": configured,
             "connected": bool(connection),
             "email": connection.get("email", "") if connection else "",
             "updatedAt": connection.get("updated_at", "") if connection else "",
             "defaultQuery": DEFAULT_QUERY,
+            "redirectUri": self.settings.google_redirect_uri,
+            "missingKeys": missing,
             "message": message,
         }
 
@@ -289,7 +310,11 @@ class GmailService:
 
     def _require_configured(self) -> None:
         if not self.settings.gmail_configured:
-            raise ServiceUnavailableError("Gmail OAuth or token encryption is not fully configured.")
+            missing = self.missing_configuration()
+            missing_text = f": {', '.join(missing)}" if missing else ""
+            raise ServiceUnavailableError(
+                f"Gmail OAuth or token encryption is not fully configured. Missing server environment variables{missing_text}."
+            )
 
 
 class _Unauthorized(Exception):

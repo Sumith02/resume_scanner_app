@@ -245,6 +245,8 @@ export interface GmailStatus {
   updatedAt: string;
   defaultQuery: string;
   message: string;
+  redirectUri?: string;
+  missingKeys?: string[];
 }
 
 export interface GmailImportResult {

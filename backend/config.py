@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -105,23 +106,40 @@ def get_settings() -> Settings:
         "SUPABASE_SERVICE_KEY",
     )
     supabase_configured = bool(supabase_url and supabase_public_key and supabase_secret_key)
-    vercel_host = _first("VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_URL")
-    default_origin = f"https://{vercel_host}" if vercel_host else "http://localhost:5173"
     default_auth = supabase_configured
     default_demo = not supabase_configured
+    vercel_host = _first("VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_URL")
+    default_origin = f"https://{vercel_host}" if vercel_host else "http://localhost:5173"
+    app_origin = (_first("APP_ORIGIN") or default_origin).rstrip("/")
+    google_redirect_uri = _first("GOOGLE_REDIRECT_URI") or f"{app_origin}/api/integrations/gmail/callback"
+
+    # Derive 32+ char fallback secrets from supabase_secret_key if not explicitly configured in env
+    fallback_seed = supabase_secret_key or supabase_url or "nexerra-talent-os-state-encryption-key-seed"
+    fallback_state_secret = hashlib.sha256(f"nexerra-state-{fallback_seed}".encode("utf-8")).hexdigest()
+    fallback_encryption_key = hashlib.sha256(f"nexerra-token-{fallback_seed}".encode("utf-8")).hexdigest()
+
+    oauth_state_secret = (
+        _first("RESUMEFLOW_OAUTH_STATE_SECRET", "OAUTH_STATE_SECRET", "GOOGLE_OAUTH_STATE_SECRET")
+        or fallback_state_secret
+    )
+    token_encryption_key = (
+        _first("TOKEN_ENCRYPTION_KEY", "ENCRYPTION_KEY")
+        or fallback_encryption_key
+    )
+
     return Settings(
         environment=environment,
-        app_origin=(_first("APP_ORIGIN") or default_origin).rstrip("/"),
+        app_origin=app_origin,
         supabase_url=supabase_url,
         supabase_public_key=supabase_public_key,
         supabase_secret_key=supabase_secret_key,
         auth_required=_boolean("AUTH_REQUIRED", default_auth),
         allow_demo_mode=_boolean("ALLOW_DEMO_MODE", default_demo),
-        google_client_id=_first("GOOGLE_CLIENT_ID"),
+        google_client_id=_first("GOOGLE_CLIENT_ID", "VITE_GOOGLE_CLIENT_ID"),
         google_client_secret=_first("GOOGLE_CLIENT_SECRET"),
-        google_redirect_uri=_first("GOOGLE_REDIRECT_URI"),
-        oauth_state_secret=_first("RESUMEFLOW_OAUTH_STATE_SECRET"),
-        token_encryption_key=_first("TOKEN_ENCRYPTION_KEY"),
+        google_redirect_uri=google_redirect_uri,
+        oauth_state_secret=oauth_state_secret,
+        token_encryption_key=token_encryption_key,
         resend_api_key=_first("RESEND_API_KEY"),
         mail_from=_first("MAIL_FROM"),
     )
