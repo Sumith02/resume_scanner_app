@@ -91,23 +91,32 @@ def get_settings() -> Settings:
     production = environment == "production"
     supabase_url = _first("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL", "VITE_SUPABASE_URL").rstrip("/")
     supabase_public_key = _first(
+        "SUPABASE_PUBLIC_KEY",
+        "SUPABASE_ANON_KEY",
         "SUPABASE_PUBLISHABLE_KEY",
         "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
         "VITE_SUPABASE_PUBLISHABLE_KEY",
         "VITE_SUPABASE_ANON_KEY",
+        "SUPABASE_KEY",
     )
-    supabase_secret_key = _first("SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY")
+    supabase_secret_key = _first(
+        "SUPABASE_SECRET_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_SERVICE_KEY",
+    )
     supabase_configured = bool(supabase_url and supabase_public_key and supabase_secret_key)
     vercel_host = _first("VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_URL")
     default_origin = f"https://{vercel_host}" if vercel_host else "http://localhost:5173"
+    default_auth = supabase_configured
+    default_demo = not supabase_configured
     return Settings(
         environment=environment,
         app_origin=(_first("APP_ORIGIN") or default_origin).rstrip("/"),
         supabase_url=supabase_url,
         supabase_public_key=supabase_public_key,
         supabase_secret_key=supabase_secret_key,
-        auth_required=_boolean("AUTH_REQUIRED", production or supabase_configured),
-        allow_demo_mode=_boolean("ALLOW_DEMO_MODE", not production and not supabase_configured),
+        auth_required=_boolean("AUTH_REQUIRED", default_auth),
+        allow_demo_mode=_boolean("ALLOW_DEMO_MODE", default_demo),
         google_client_id=_first("GOOGLE_CLIENT_ID"),
         google_client_secret=_first("GOOGLE_CLIENT_SECRET"),
         google_redirect_uri=_first("GOOGLE_REDIRECT_URI"),
