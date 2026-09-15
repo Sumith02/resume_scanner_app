@@ -35,6 +35,7 @@ import {
   createCampaign,
   createJob,
   createTalentPool,
+  disconnectGmail,
   downloadReport,
   executeNaturalSearch,
   fetchAgencyClients,
@@ -42,6 +43,7 @@ import {
   fetchCandidate,
   fetchCandidates,
   fetchEligibleCandidates,
+  fetchGmailAuthUrl,
   fetchGmailStatus,
   fetchJobs,
   fetchProcessingQueue,
@@ -406,6 +408,25 @@ export default function App() {
       setError(err instanceof Error ? err.message : "Gmail import failed.");
     } finally {
       setImportingGmail(false);
+    }
+  }
+
+  async function handleConnectGmail() {
+    try {
+      const url = await fetchGmailAuthUrl();
+      window.location.href = url;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to initiate Gmail connection.");
+    }
+  }
+
+  async function handleDisconnectGmail() {
+    try {
+      const status = await disconnectGmail();
+      setGmailStatus(status);
+      setNotice("Gmail mailbox disconnected.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to disconnect Gmail.");
     }
   }
 
@@ -846,6 +867,8 @@ export default function App() {
                   onSetGmailMaxResults={setGmailMaxResults}
                   importingGmail={importingGmail}
                   onImportGmail={handleGmailImport}
+                  onConnectGmail={handleConnectGmail}
+                  onDisconnectGmail={handleDisconnectGmail}
                   queue={processingQueue}
                 />
               )}
@@ -2068,6 +2091,8 @@ function IntakeCenterView({
   onSetGmailMaxResults,
   importingGmail,
   onImportGmail,
+  onConnectGmail,
+  onDisconnectGmail,
   queue
 }: {
   mode: IntakeMode;
@@ -2089,6 +2114,8 @@ function IntakeCenterView({
   onSetGmailMaxResults: (n: number) => void;
   importingGmail: boolean;
   onImportGmail: () => void;
+  onConnectGmail: () => void;
+  onDisconnectGmail: () => void;
   queue: ProcessingJob[];
 }) {
   return (
@@ -2230,49 +2257,133 @@ function IntakeCenterView({
 
       {mode === "gmail" && (
         <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "8px", padding: "24px", marginBottom: "24px" }}>
-          <h3 style={{ margin: "0 0 8px" }}>Import from Connected Mailbox</h3>
-          <p style={{ fontSize: "13px", color: "var(--muted)", margin: "0 0 16px" }}>
-            Scans Gmail for attachments matching resume formats and processes them into talent dossiers.
-          </p>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
             <div>
-              <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "4px" }}>Target Role</label>
-              <input
-                type="text"
-                value={gmailRole}
-                onChange={(e) => onSetGmailRole(e.target.value)}
-                placeholder="e.g. Open application"
-                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "13px" }}
-              />
+              <h3 style={{ margin: "0 0 6px", fontSize: "16px" }}>Company Ingestion Mailbox (Gmail)</h3>
+              <p style={{ fontSize: "13px", color: "var(--muted)", margin: 0 }}>
+                Automatically monitor an inbox (e.g. <code>careers@company.com</code>) to ingest incoming resumes, extract candidate profiles, and link to talent graph.
+              </p>
             </div>
+            {gmailStatus.connected && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "#dcfce7", color: "#15803d", padding: "4px 12px", borderRadius: "12px", fontSize: "12px", fontWeight: 600 }}>
+                <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#22c55e" }} />
+                Connected: {gmailStatus.email}
+              </span>
+            )}
+          </div>
+
+          {!gmailStatus.connected ? (
+            <div style={{ background: "#f8fafc", border: "1px dashed #cbd5e1", borderRadius: "8px", padding: "32px 24px", textAlign: "center" }}>
+              <div style={{ width: "48px", height: "48px", borderRadius: "12px", background: "#fee2e2", display: "grid", placeItems: "center", margin: "0 auto 12px" }}>
+                <Mail size={24} color="#ea4335" />
+              </div>
+              <h4 style={{ margin: "0 0 6px", fontSize: "16px" }}>Connect Ingestion Mailbox</h4>
+              <p style={{ margin: "0 0 18px", color: "#64748b", fontSize: "13px", maxWidth: "520px", marginInline: "auto", lineHeight: 1.5 }}>
+                Connect your team's resume receiving mailbox (e.g. <code>careers@yourcompany.com</code> or recruiter inbox) via secure Google OAuth2. Nexerra will scan incoming emails and automatically extract candidate resumes into your database.
+              </p>
+              <button
+                type="button"
+                onClick={onConnectGmail}
+                style={{
+                  background: "linear-gradient(135deg, #ea4335 0%, #c5221f 100%)",
+                  color: "#ffffff",
+                  border: "none",
+                  padding: "10px 22px",
+                  borderRadius: "6px",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  boxShadow: "0 2px 8px rgba(234, 67, 53, 0.3)"
+                }}
+              >
+                <Mail size={16} />
+                <span>Connect Google / Gmail Inbox</span>
+              </button>
+              <p style={{ fontSize: "11px", color: "#94a3b8", marginTop: "14px" }}>
+                {gmailStatus.message || "Requires Google OAuth Client ID configured in server environment."}
+              </p>
+            </div>
+          ) : (
             <div>
-              <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "4px" }}>Max Resumes</label>
-              <input
-                type="number"
-                value={gmailMaxResults}
-                onChange={(e) => onSetGmailMaxResults(Number(e.target.value))}
-                min={1}
-                max={50}
-                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "13px" }}
-              />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px" }}>
+                <div>
+                  <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "4px" }}>Target Role / Requisition</label>
+                  <input
+                    type="text"
+                    value={gmailRole}
+                    onChange={(e) => onSetGmailRole(e.target.value)}
+                    placeholder="e.g. Open application"
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "13px" }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "4px" }}>Max Resumes per Scan</label>
+                  <input
+                    type="number"
+                    value={gmailMaxResults}
+                    onChange={(e) => onSetGmailMaxResults(Number(e.target.value))}
+                    min={1}
+                    max={50}
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "13px" }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ marginBottom: "16px" }}>
+                <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "4px" }}>Inbox Search Filter</label>
+                <input
+                  type="text"
+                  value={gmailQuery}
+                  onChange={(e) => onSetGmailQuery(e.target.value)}
+                  placeholder="has:attachment (filename:pdf OR filename:docx) newer_than:30d"
+                  style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "13px" }}
+                />
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <button
+                  type="button"
+                  onClick={onImportGmail}
+                  disabled={importingGmail}
+                  style={{
+                    background: "#0f766e",
+                    color: "#fff",
+                    border: "none",
+                    padding: "9px 22px",
+                    borderRadius: "6px",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    cursor: importingGmail ? "not-allowed" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px"
+                  }}
+                >
+                  {importingGmail && <Loader2 size={14} className="spinning" />}
+                  <span>{importingGmail ? "Scanning Inbox & Ingesting..." : "Scan Inbox & Ingest Resumes"}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={onDisconnectGmail}
+                  style={{
+                    background: "transparent",
+                    color: "#dc2626",
+                    border: "1px solid #fecaca",
+                    padding: "7px 12px",
+                    borderRadius: "6px",
+                    fontSize: "12px",
+                    cursor: "pointer"
+                  }}
+                >
+                  Disconnect Mailbox
+                </button>
+              </div>
             </div>
-          </div>
-          <div style={{ display: "flex", gap: "12px", marginBottom: "16px" }}>
-            <input
-              type="text"
-              value={gmailQuery}
-              onChange={(e) => onSetGmailQuery(e.target.value)}
-              style={{ flex: 1, padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--line)" }}
-            />
-            <button
-              onClick={onImportGmail}
-              disabled={importingGmail}
-              className="button"
-              style={{ background: "#0f766e", color: "#fff", border: "none", padding: "8px 18px", borderRadius: "6px", fontSize: "13px" }}
-            >
-              {importingGmail ? "Scanning Inbox..." : "Import Emails"}
-            </button>
-          </div>
+          )}
         </div>
       )}
 
