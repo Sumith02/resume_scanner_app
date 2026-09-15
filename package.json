@@ -1,0 +1,32 @@
+{
+  "name": "resume_scanner_app",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:client": "vite --host 0.0.0.0",
+    "dev:server": "python -m uvicorn backend.main:app --reload --port 4174",
+    "build": "tsc -p tsconfig.app.json && vite build",
+    "start": "python -m uvicorn backend.main:app --host 0.0.0.0 --port 4174",
+    "lint": "tsc -p tsconfig.app.json --noEmit",
+    "test:backend": "python -m pytest"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.7",
+    "@vitejs/plugin-react": "^5.1.2",
+    "lucide-react": "^0.562.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "concurrently": "^9.2.1",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1"
+  }
+}
