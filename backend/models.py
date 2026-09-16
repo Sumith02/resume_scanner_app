@@ -90,7 +90,8 @@ class CampaignCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=180)
     subject: str = Field(min_length=1, max_length=240)
     body: str = Field(min_length=1, max_length=50000)
-    applicationIds: list[str] | None = Field(default=None, min_length=1, max_length=500)
+    applicationIds: list[str] | None = Field(default=None, max_length=500)
+    customRecipients: list[dict[str, str]] | None = None
 
 
 class GmailImportRequest(BaseModel):

@@ -354,7 +354,7 @@ class SupabaseRepository:
                     {
                         "campaign_id": campaign["id"],
                         "organization_id": context.organization_id,
-                        "application_id": item["applicationId"],
+                        "application_id": None if item.get("status") == "custom" or item.get("isCustom") else item.get("applicationId"),
                         "candidate_email": item["email"],
                         "candidate_name": item["candidateName"],
                         "status": "pending",

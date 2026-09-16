@@ -199,6 +199,7 @@ export default function App() {
   const [rediscoveryResults, setRediscoveryResults] = useState<RediscoveryResult[]>([]);
   const [rediscoveryMetrics, setRediscoveryMetrics] = useState<any>(null);
   const [rediscoveryJobId, setRediscoveryJobId] = useState<string>("");
+  const [campaignPreselectedJobId, setCampaignPreselectedJobId] = useState<string>("");
 
   // Intake State
   const [files, setFiles] = useState<File[]>([]);
@@ -792,6 +793,10 @@ export default function App() {
                   results={rediscoveryResults}
                   onRun={handleRunRediscovery}
                   onSelectCandidate={(id) => setActiveCandidateId(id)}
+                  onReopenOutreach={(jobId) => {
+                    setCampaignPreselectedJobId(jobId);
+                    setActiveView("campaigns");
+                  }}
                 />
               )}
 
@@ -934,7 +939,14 @@ export default function App() {
                 />
               )}
 
-              {activeView === "campaigns" && <CampaignsView />}
+              {activeView === "campaigns" && (
+                <CampaignsView
+                  jobs={jobs}
+                  candidates={candidates}
+                  preselectedJobId={campaignPreselectedJobId}
+                  onClearPreselectedJob={() => setCampaignPreselectedJobId("")}
+                />
+              )}
 
               {activeView === "reports" && <ReportsView report={report} />}
 
@@ -1435,7 +1447,8 @@ function TalentRediscoveryView({
   metrics,
   results,
   onRun,
-  onSelectCandidate
+  onSelectCandidate,
+  onReopenOutreach
 }: {
   jobs: JobOpening[];
   selectedJobId: string;
@@ -1445,6 +1458,7 @@ function TalentRediscoveryView({
   results: RediscoveryResult[];
   onRun: () => void;
   onSelectCandidate: (id: string) => void;
+  onReopenOutreach?: (jobId: string) => void;
 }) {
   return (
     <div className="talent-rediscovery-view">
@@ -1454,11 +1468,11 @@ function TalentRediscoveryView({
           Don't start every hire from zero. Automatically scan your private database of historical candidates for your next opening.
         </p>
 
-        <div style={{ display: "flex", gap: "12px", marginTop: "16px", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: "12px", marginTop: "16px", alignItems: "center", flexWrap: "wrap" }}>
           <select
             value={selectedJobId}
             onChange={(e) => onSelectJob(e.target.value)}
-            style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--line)", background: "#fff", fontSize: "13px", minWidth: "300px" }}
+            style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--line)", background: "#fff", fontSize: "13px", minWidth: "280px" }}
           >
             {jobs.map((j) => (
               <option key={j.id} value={j.id}>{j.title} ({j.department || "Engineering"})</option>
@@ -1473,6 +1487,31 @@ function TalentRediscoveryView({
             {loading ? <Loader2 size={14} className="spinning" /> : <Zap size={14} />}
             <span>Run Rediscovery Engine</span>
           </button>
+
+          {onReopenOutreach && (
+            <button
+              onClick={() => onReopenOutreach(selectedJobId)}
+              className="button"
+              style={{
+                background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
+                color: "#ffffff",
+                border: "none",
+                padding: "8px 16px",
+                borderRadius: "6px",
+                fontSize: "13px",
+                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                cursor: "pointer",
+                boxShadow: "0 2px 8px rgba(37, 99, 235, 0.25)"
+              }}
+              title="Send outreach email to prior applicants when this vacancy reopens"
+            >
+              <Send size={14} />
+              <span>📢 Reopen Vacancy & Notify Past Applicants</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -2904,76 +2943,760 @@ function CandidateDossierDrawer({
 // 13. CAMPAIGNS & REPORTS WRAPPERS
 // ==========================================
 
-function CampaignsView() {
+function CampaignsView({
+  jobs = [],
+  preselectedJobId = "",
+  onClearPreselectedJob
+}: {
+  jobs?: JobOpening[];
+  candidates?: Candidate[];
+  preselectedJobId?: string;
+  onClearPreselectedJob?: () => void;
+}) {
   const [campaigns, setCampaigns] = useState<EmailCampaign[]>([]);
-  const [candidates, setCandidates] = useState<EligibleCandidate[]>([]);
+  const [eligibleList, setEligibleList] = useState<EligibleCandidate[]>([]);
+  const [selectedJobId, setSelectedJobId] = useState<string>(preselectedJobId || (jobs.length > 0 ? jobs[0].id : ""));
+  const [templateKey, setTemplateKey] = useState<"reopened" | "rediscovery" | "checkin" | "custom">("reopened");
   const [title, setTitle] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  const [selectedAppIds, setSelectedAppIds] = useState<Set<string>>(new Set());
+  const [customTestRecipients, setCustomTestRecipients] = useState<Array<{ id: string; candidateName: string; email: string; role: string }>>([]);
+  const [newTestName, setNewTestName] = useState("");
+  const [newTestEmail, setNewTestEmail] = useState("");
+  const [activeTab, setActiveTab] = useState<"compose" | "preview" | "history">("compose");
+  const [submitting, setSubmitting] = useState(false);
+  const [feedbackNotice, setFeedbackNotice] = useState("");
+  const [feedbackError, setFeedbackError] = useState("");
 
+  const targetJob = useMemo(() => jobs.find((j) => j.id === selectedJobId), [jobs, selectedJobId]);
+  const targetJobTitle = targetJob ? targetJob.title : "Software Developer";
+
+  // Load campaigns and eligible candidates from backend
   useEffect(() => {
     fetchCampaigns().then(setCampaigns).catch(() => {});
-    fetchEligibleCandidates().then(setCandidates).catch(() => {});
+    fetchEligibleCandidates().then((list) => {
+      setEligibleList(list);
+    }).catch(() => {});
   }, []);
 
+  // Sync preselectedJobId from props if provided
+  useEffect(() => {
+    if (preselectedJobId) {
+      setSelectedJobId(preselectedJobId);
+      setTemplateKey("reopened");
+      if (onClearPreselectedJob) onClearPreselectedJob();
+    }
+  }, [preselectedJobId, onClearPreselectedJob]);
+
+  // Update subject and body whenever templateKey or targetJobTitle changes
+  useEffect(() => {
+    if (templateKey === "reopened") {
+      setTitle(`Reopened Vacancy Outreach: ${targetJobTitle}`);
+      setSubject(`Position Reopened: ${targetJobTitle} — Priority Invitation to Reconnect`);
+      setBody(
+`Hi {{name}},
+
+We hope you are having a wonderful week!
+
+We are writing to let you know that our ${targetJobTitle} position has reopened! When you previously went through our application process, our technical team was very impressed by your qualifications and background.
+
+Because you were a top finalist, we are reaching out directly to give you priority consideration before launching broader public recruitment.
+
+If you are open to exploring this role again, please reply directly to this email or let us know your current availability for a quick catch-up.
+
+We look forward to reconnecting with you!
+
+Best regards,
+Talent Acquisition Team
+Nexerra Talent OS`
+      );
+    } else if (templateKey === "rediscovery") {
+      setTitle(`Talent Rediscovery: ${targetJobTitle}`);
+      setSubject(`Exciting New Opportunity for {{name}}: ${targetJobTitle}`);
+      setBody(
+`Hi {{name}},
+
+We came across your profile in our talent network and noticed your strong background in {{role}}.
+
+Our team currently has an active opening for ${targetJobTitle} that aligns directly with your expertise. We would love to discuss how your experience could be a great fit for what we're building.
+
+Would you be open to a quick 15-minute conversation this week?
+
+Warm regards,
+Recruiting Team
+Nexerra Talent OS`
+      );
+    } else if (templateKey === "checkin") {
+      setTitle(`Talent Network Check-In: ${targetJobTitle}`);
+      setSubject(`Checking in from the Nexerra Talent Team`);
+      setBody(
+`Hi {{name}},
+
+We are checking in with talented professionals in our network to see how your career journey is progressing.
+
+We have upcoming vacancies in ${targetJobTitle} and would love to hear what projects you're currently working on. If you're open to exploring new opportunities, please let us know!
+
+Best regards,
+Talent Team`
+      );
+    }
+  }, [templateKey, targetJobTitle]);
+
+  // When selectedJobId changes, auto-select candidates who applied for this role or are unhired
+  useEffect(() => {
+    if (!eligibleList.length) return;
+    const lowerTitle = targetJobTitle.toLowerCase();
+    const matching = eligibleList.filter(
+      (c) => c.status !== "hired" && (c.role.toLowerCase().includes(lowerTitle) || lowerTitle.includes(c.role.toLowerCase()))
+    );
+    if (matching.length > 0) {
+      setSelectedAppIds(new Set(matching.map((c) => c.applicationId)));
+    } else {
+      setSelectedAppIds(new Set(eligibleList.map((c) => c.applicationId)));
+    }
+  }, [selectedJobId, eligibleList, targetJobTitle]);
+
+  // Add custom manual test recipient
+  function handleAddTestRecipient() {
+    if (!newTestEmail.trim() || !newTestEmail.includes("@")) {
+      setFeedbackError("Please enter a valid test email address (e.g. test@gmail.com).");
+      return;
+    }
+    const email = newTestEmail.trim().toLowerCase();
+    if (customTestRecipients.some((r) => r.email === email)) {
+      setFeedbackError("This test email has already been added.");
+      return;
+    }
+    const name = newTestName.trim() || email.split("@")[0].toUpperCase();
+    const newTester = {
+      id: `test-${Date.now()}`,
+      candidateName: name,
+      email,
+      role: targetJobTitle
+    };
+    setCustomTestRecipients((prev) => [...prev, newTester]);
+    setNewTestName("");
+    setNewTestEmail("");
+    setFeedbackError("");
+    setFeedbackNotice(`Added test recipient: ${name} (${email})`);
+  }
+
+  function handleRemoveTestRecipient(id: string) {
+    setCustomTestRecipients((prev) => prev.filter((r) => r.id !== id));
+  }
+
+  function toggleCandidate(appId: string) {
+    setSelectedAppIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(appId)) {
+        next.delete(appId);
+      } else {
+        next.add(appId);
+      }
+      return next;
+    });
+  }
+
+  function handleSelectAll() {
+    setSelectedAppIds(new Set(eligibleList.map((c) => c.applicationId)));
+  }
+
+  function handleDeselectAll() {
+    setSelectedAppIds(new Set());
+  }
+
+  const totalSelectedCount = selectedAppIds.size + customTestRecipients.length;
+
+  // Send campaign via backend API
+  async function handleSendCampaign() {
+    if (totalSelectedCount === 0) {
+      setFeedbackError("Please select at least one candidate or add a test recipient.");
+      return;
+    }
+    setSubmitting(true);
+    setFeedbackError("");
+    setFeedbackNotice("");
+    try {
+      const res = await createCampaign({
+        jobId: selectedJobId || undefined,
+        title,
+        subject,
+        body,
+        applicationIds: Array.from(selectedAppIds),
+        customRecipients: customTestRecipients.map((r) => ({
+          candidateName: r.candidateName,
+          email: r.email,
+          role: r.role
+        }))
+      });
+      const updatedCampaigns = await fetchCampaigns();
+      setCampaigns(updatedCampaigns);
+      if (res.providerConfigured) {
+        setFeedbackNotice(`Campaign "${title}" dispatched successfully to ${totalSelectedCount} recipients!`);
+      } else {
+        setFeedbackNotice(`Campaign "${title}" saved as draft (${totalSelectedCount} recipients). Resend email provider not configured in server environment.`);
+      }
+    } catch (err) {
+      setFeedbackError(err instanceof Error ? err.message : "Failed to send campaign.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // Fallback: Open in Gmail or default mail app via mailto:
+  function handleOpenInGmail() {
+    const selectedCandidates = eligibleList.filter((c) => selectedAppIds.has(c.applicationId));
+    const allEmails = [
+      ...selectedCandidates.map((c) => c.email),
+      ...customTestRecipients.map((r) => r.email)
+    ];
+    if (allEmails.length === 0) {
+      setFeedbackError("No recipients selected to email.");
+      return;
+    }
+    const bcc = encodeURIComponent(allEmails.join(","));
+    const sub = encodeURIComponent(subject.replace(/\{\{name\}\}/gi, "Candidate").replace(/\{\{role\}\}/gi, targetJobTitle));
+    const text = encodeURIComponent(body.replace(/\{\{name\}\}/gi, "Candidate").replace(/\{\{role\}\}/gi, targetJobTitle));
+    window.open(`mailto:?bcc=${bcc}&subject=${sub}&body=${text}`, "_blank");
+  }
+
+  // Sample candidate for preview
+  const sampleCandidate = useMemo(() => {
+    if (customTestRecipients.length > 0) {
+      return { name: customTestRecipients[0].candidateName, email: customTestRecipients[0].email, role: targetJobTitle };
+    }
+    const firstSel = eligibleList.find((c) => selectedAppIds.has(c.applicationId));
+    if (firstSel) {
+      return { name: firstSel.candidateName, email: firstSel.email, role: firstSel.role };
+    }
+    return { name: "Rahul Kumar", email: "rahul.kumar@example.com", role: targetJobTitle };
+  }, [customTestRecipients, eligibleList, selectedAppIds, targetJobTitle]);
+
+  const previewSubject = subject.replace(/\{\{name\}\}/gi, sampleCandidate.name).replace(/\{\{role\}\}/gi, sampleCandidate.role);
+  const previewBody = body.replace(/\{\{name\}\}/gi, sampleCandidate.name).replace(/\{\{role\}\}/gi, sampleCandidate.role);
+
   return (
-    <div>
-      <h2>Candidate Outreach Campaigns</h2>
-      <p style={{ color: "var(--muted)" }}>
-        Batch deliver personalized email campaigns to rediscover and activate talent.
-      </p>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
-        <div style={{ background: "#fff", padding: "20px", borderRadius: "8px", border: "1px solid var(--line)" }}>
-          <h3>Create Campaign</h3>
-          <input
-            type="text"
-            placeholder="Campaign Name"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            style={{ width: "100%", padding: "8px", marginBottom: "10px" }}
-          />
-          <input
-            type="text"
-            placeholder="Subject (e.g. New Opportunity for {{name}})"
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            style={{ width: "100%", padding: "8px", marginBottom: "10px" }}
-          />
-          <textarea
-            rows={5}
-            placeholder="Email Body with {{name}} placeholders..."
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            style={{ width: "100%", padding: "8px", marginBottom: "10px" }}
-          />
-          <button
-            onClick={async () => {
-              await createCampaign({ title, subject, body });
-              const c = await fetchCampaigns();
-              setCampaigns(c);
-              setTitle("");
-              setSubject("");
-              setBody("");
-            }}
-            className="button"
-            style={{ background: "#0f766e", color: "#fff", border: "none", padding: "8px 16px", borderRadius: "6px" }}
-          >
-            Send Campaign ({candidates.length} Eligible)
-          </button>
+    <div style={{ maxWidth: "1280px", margin: "0 auto" }}>
+      {/* HEADER BANNER */}
+      <div style={{ background: "linear-gradient(135deg, #090d16 0%, #1e293b 100%)", color: "#fff", padding: "24px 28px", borderRadius: "12px", marginBottom: "24px", border: "1px solid #334155" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "16px" }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+              <h2 style={{ margin: 0, fontSize: "22px", fontWeight: 700 }}>Talent Re-engagement & Vacancy Outreach</h2>
+              <span style={{ background: "#2563eb", color: "#fff", fontSize: "11px", fontWeight: 600, padding: "2px 8px", borderRadius: "6px" }}>
+                Reopened Vacancy Workflow
+              </span>
+            </div>
+            <p style={{ margin: 0, color: "#94a3b8", fontSize: "13px", maxWidth: "640px", lineHeight: 1.5 }}>
+              When an employee departs or a position reopens, instantly reach back out to all previous unselected finalists (e.g. 9 candidates who applied) with a personalized invitation to re-apply.
+            </p>
+          </div>
+
+          {/* TAB SWITCHER */}
+          <div style={{ display: "flex", background: "#0f172a", borderRadius: "8px", padding: "4px", border: "1px solid #334155" }}>
+            <button
+              type="button"
+              onClick={() => setActiveTab("compose")}
+              style={{
+                background: activeTab === "compose" ? "#2563eb" : "transparent",
+                color: activeTab === "compose" ? "#fff" : "#94a3b8",
+                border: "none",
+                padding: "8px 16px",
+                borderRadius: "6px",
+                fontSize: "12px",
+                fontWeight: 600,
+                cursor: "pointer"
+              }}
+            >
+              Compose Outreach
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("preview")}
+              style={{
+                background: activeTab === "preview" ? "#2563eb" : "transparent",
+                color: activeTab === "preview" ? "#fff" : "#94a3b8",
+                border: "none",
+                padding: "8px 16px",
+                borderRadius: "6px",
+                fontSize: "12px",
+                fontWeight: 600,
+                cursor: "pointer"
+              }}
+            >
+              Live Preview
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("history")}
+              style={{
+                background: activeTab === "history" ? "#2563eb" : "transparent",
+                color: activeTab === "history" ? "#fff" : "#94a3b8",
+                border: "none",
+                padding: "8px 16px",
+                borderRadius: "6px",
+                fontSize: "12px",
+                fontWeight: 600,
+                cursor: "pointer"
+              }}
+            >
+              Campaign History ({campaigns.length})
+            </button>
+          </div>
         </div>
 
-        <div style={{ background: "#fff", padding: "20px", borderRadius: "8px", border: "1px solid var(--line)" }}>
-          <h3>Recent Campaigns</h3>
-          {campaigns.map((c) => (
-            <div key={c.id} style={{ borderBottom: "1px solid #f1f5f9", padding: "10px 0" }}>
-              <strong>{c.title}</strong>
-              <div style={{ fontSize: "12px", color: "var(--muted)" }}>
-                Sent: {c.sentCount} | Status: {c.status}
+        {/* NOTIFICATIONS */}
+        {feedbackNotice && (
+          <div style={{ marginTop: "16px", background: "#dcfce7", color: "#166534", padding: "10px 14px", borderRadius: "6px", fontSize: "13px", fontWeight: 500 }}>
+            {feedbackNotice}
+          </div>
+        )}
+        {feedbackError && (
+          <div style={{ marginTop: "16px", background: "#fee2e2", color: "#991b1b", padding: "10px 14px", borderRadius: "6px", fontSize: "13px", fontWeight: 500 }}>
+            {feedbackError}
+          </div>
+        )}
+      </div>
+
+      {activeTab === "compose" && (
+        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "24px", alignItems: "start" }}>
+          {/* LEFT: EMAIL COMPOSER & TEMPLATES */}
+          <div style={{ background: "#ffffff", border: "1px solid var(--line)", borderRadius: "10px", padding: "24px" }}>
+            {/* TARGET ROLE SELECTOR */}
+            <div style={{ marginBottom: "18px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 700, color: "#334155", display: "block", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                Target Reopened Vacancy
+              </label>
+              <select
+                value={selectedJobId}
+                onChange={(e) => setSelectedJobId(e.target.value)}
+                style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "13px", background: "#fff" }}
+              >
+                {jobs.map((j) => (
+                  <option key={j.id} value={j.id}>
+                    {j.title} ({j.department || "General"})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* TEMPLATE PICKER */}
+            <div style={{ marginBottom: "20px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 700, color: "#334155", display: "block", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                Quick Outreach Template
+              </label>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "8px" }}>
+                <button
+                  type="button"
+                  onClick={() => setTemplateKey("reopened")}
+                  style={{
+                    background: templateKey === "reopened" ? "#eff6ff" : "#fff",
+                    border: `1px solid ${templateKey === "reopened" ? "#2563eb" : "var(--line)"}`,
+                    color: templateKey === "reopened" ? "#1d4ed8" : "#334155",
+                    padding: "8px 10px",
+                    borderRadius: "6px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    textAlign: "center"
+                  }}
+                >
+                  🔄 Vacancy Reopened
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTemplateKey("rediscovery")}
+                  style={{
+                    background: templateKey === "rediscovery" ? "#eff6ff" : "#fff",
+                    border: `1px solid ${templateKey === "rediscovery" ? "#2563eb" : "var(--line)"}`,
+                    color: templateKey === "rediscovery" ? "#1d4ed8" : "#334155",
+                    padding: "8px 10px",
+                    borderRadius: "6px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    textAlign: "center"
+                  }}
+                >
+                  ⚡ Rediscovery
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTemplateKey("checkin")}
+                  style={{
+                    background: templateKey === "checkin" ? "#eff6ff" : "#fff",
+                    border: `1px solid ${templateKey === "checkin" ? "#2563eb" : "var(--line)"}`,
+                    color: templateKey === "checkin" ? "#1d4ed8" : "#334155",
+                    padding: "8px 10px",
+                    borderRadius: "6px",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    textAlign: "center"
+                  }}
+                >
+                  🤝 Talent Check-In
+                </button>
               </div>
             </div>
-          ))}
+
+            {/* CAMPAIGN TITLE */}
+            <div style={{ marginBottom: "14px" }}>
+              <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "4px" }}>Campaign Internal Title</label>
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="e.g. Reopened Vacancy Outreach: Fullstack Engineer"
+                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "13px" }}
+              />
+            </div>
+
+            {/* EMAIL SUBJECT */}
+            <div style={{ marginBottom: "14px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                <label style={{ fontSize: "12px", fontWeight: 600 }}>Email Subject</label>
+                <span style={{ fontSize: "11px", color: "var(--muted)" }}>Supports <code>{"{{name}}"}</code> and <code>{"{{role}}"}</code></span>
+              </div>
+              <input
+                type="text"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                placeholder="Subject Line"
+                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "13px" }}
+              />
+            </div>
+
+            {/* EMAIL BODY */}
+            <div style={{ marginBottom: "18px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                <label style={{ fontSize: "12px", fontWeight: 600 }}>Email Message Body</label>
+                <span style={{ fontSize: "11px", color: "var(--muted)" }}>Personalized automatically per recipient</span>
+              </div>
+              <textarea
+                rows={10}
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                placeholder="Write your email body..."
+                style={{ width: "100%", padding: "10px 12px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "13px", fontFamily: "inherit", lineHeight: 1.5 }}
+              />
+            </div>
+
+            {/* TESTING UNIT (MANUAL RECIPIENT ADDER) */}
+            <div style={{ background: "#f8fafc", border: "1px dashed #cbd5e1", borderRadius: "8px", padding: "14px 16px", marginBottom: "20px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                <span style={{ fontSize: "12px", fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                  🧪 Testing Unit: Add Test Email
+                </span>
+                <span style={{ fontSize: "10px", background: "#ede9fe", color: "#6d28d9", padding: "1px 6px", borderRadius: "4px", fontWeight: 600 }}>
+                  Manual Test Mode
+                </span>
+              </div>
+              <p style={{ margin: "0 0 10px", fontSize: "12px", color: "#64748b" }}>
+                Enter your own email or test Gmail to verify outreach delivery before emailing candidate pools.
+              </p>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <input
+                  type="text"
+                  placeholder="Name (e.g. Tester)"
+                  value={newTestName}
+                  onChange={(e) => setNewTestName(e.target.value)}
+                  style={{ width: "130px", padding: "7px 10px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "12px" }}
+                />
+                <input
+                  type="email"
+                  placeholder="Test Email (e.g. your-email@gmail.com)"
+                  value={newTestEmail}
+                  onChange={(e) => setNewTestEmail(e.target.value)}
+                  style={{ flex: 1, padding: "7px 10px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "12px" }}
+                />
+                <button
+                  type="button"
+                  onClick={handleAddTestRecipient}
+                  style={{ background: "#7c3aed", color: "#ffffff", border: "none", padding: "7px 14px", borderRadius: "6px", fontSize: "12px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" }}
+                >
+                  + Add Test Email
+                </button>
+              </div>
+            </div>
+
+            {/* SEND CONTROLS */}
+            <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={handleSendCampaign}
+                disabled={submitting || totalSelectedCount === 0}
+                style={{
+                  background: totalSelectedCount > 0 ? "#0f766e" : "#94a3b8",
+                  color: "#ffffff",
+                  border: "none",
+                  padding: "10px 20px",
+                  borderRadius: "6px",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  cursor: totalSelectedCount > 0 ? "pointer" : "not-allowed",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "8px"
+                }}
+              >
+                {submitting ? <Loader2 size={14} className="spinning" /> : <Send size={14} />}
+                <span>Send Re-engagement Campaign ({totalSelectedCount} Selected)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleOpenInGmail}
+                disabled={totalSelectedCount === 0}
+                style={{
+                  background: "#ffffff",
+                  color: "#ea4335",
+                  border: "1px solid #fca5a5",
+                  padding: "9px 16px",
+                  borderRadius: "6px",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  cursor: totalSelectedCount > 0 ? "pointer" : "not-allowed",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px"
+                }}
+                title="Opens Gmail or default email client with all selected recipients in BCC"
+              >
+                <Mail size={14} />
+                <span>Open in Gmail (Manual Send)</span>
+              </button>
+            </div>
+          </div>
+
+          {/* RIGHT: TARGET CANDIDATE POOL (UNHIRED APPLICANTS) */}
+          <div style={{ background: "#ffffff", border: "1px solid var(--line)", borderRadius: "10px", padding: "20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+              <div>
+                <h3 style={{ margin: "0 0 2px", fontSize: "16px" }}>Prior Applicants ({eligibleList.length})</h3>
+                <span style={{ fontSize: "12px", color: "var(--muted)" }}>
+                  Excludes currently hired candidates. Selected: <strong>{totalSelectedCount}</strong>
+                </span>
+              </div>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  type="button"
+                  onClick={handleSelectAll}
+                  style={{ background: "#f1f5f9", border: "1px solid var(--line)", padding: "4px 10px", borderRadius: "4px", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}
+                >
+                  Select All
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeselectAll}
+                  style={{ background: "#f1f5f9", border: "1px solid var(--line)", padding: "4px 10px", borderRadius: "4px", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+
+            {/* CUSTOM TEST RECIPIENTS SECTION */}
+            {customTestRecipients.length > 0 && (
+              <div style={{ marginBottom: "14px", borderBottom: "1px solid #e2e8f0", paddingBottom: "12px" }}>
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "#6d28d9", textTransform: "uppercase", marginBottom: "8px" }}>
+                  Manual Test Recipients ({customTestRecipients.length})
+                </div>
+                {customTestRecipients.map((tester) => (
+                  <div
+                    key={tester.id}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      background: "#faf5ff",
+                      border: "1px solid #e9d5ff",
+                      borderRadius: "6px",
+                      padding: "8px 12px",
+                      marginBottom: "6px"
+                    }}
+                  >
+                    <div>
+                      <strong style={{ fontSize: "13px", color: "#581c87" }}>{tester.candidateName}</strong>
+                      <div style={{ fontSize: "11px", color: "#7e22ce" }}>{tester.email} • <em>Test Mode</em></div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveTestRecipient(tester.id)}
+                      style={{ background: "transparent", border: "none", color: "#9333ea", cursor: "pointer", fontSize: "14px" }}
+                      title="Remove test recipient"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* CANDIDATE CHECKLIST */}
+            <div style={{ maxHeight: "480px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px" }}>
+              {eligibleList.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--muted)", fontSize: "13px" }}>
+                  No prior candidates found in database. Ingest resumes or add test recipients above.
+                </div>
+              ) : (
+                eligibleList.map((cand) => {
+                  const isChecked = selectedAppIds.has(cand.applicationId);
+                  return (
+                    <div
+                      key={cand.applicationId}
+                      onClick={() => toggleCandidate(cand.applicationId)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "12px",
+                        padding: "10px 12px",
+                        borderRadius: "6px",
+                        border: `1px solid ${isChecked ? "#2563eb" : "var(--line)"}`,
+                        background: isChecked ? "#f0fdf4" : "#fff",
+                        cursor: "pointer",
+                        transition: "all 0.15s ease"
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => {}}
+                        style={{ cursor: "pointer", width: "16px", height: "16px" }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "2px" }}>
+                          <strong style={{ fontSize: "13px", color: "#0f172a" }}>{cand.candidateName}</strong>
+                          <span
+                            style={{
+                              fontSize: "10px",
+                              padding: "1px 6px",
+                              borderRadius: "4px",
+                              background: cand.status === "rejected" ? "#fee2e2" : cand.status === "interview" ? "#ede9fe" : "#f1f5f9",
+                              color: cand.status === "rejected" ? "#991b1b" : cand.status === "interview" ? "#6d28d9" : "#475569",
+                              fontWeight: 600
+                            }}
+                          >
+                            {cand.status.replace("_", " ")}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: "11px", color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {cand.email} • {cand.role}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* PREVIEW TAB */}
+      {activeTab === "preview" && (
+        <div style={{ background: "#ffffff", border: "1px solid var(--line)", borderRadius: "10px", padding: "28px", maxWidth: "800px", margin: "0 auto" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--line)", paddingBottom: "14px", marginBottom: "18px" }}>
+            <h3 style={{ margin: 0, fontSize: "18px" }}>Live Email Preview</h3>
+            <span style={{ fontSize: "12px", color: "var(--muted)" }}>
+              Rendered for sample: <strong>{sampleCandidate.name}</strong> ({sampleCandidate.email})
+            </span>
+          </div>
+
+          <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: "8px", padding: "16px", marginBottom: "18px" }}>
+            <div style={{ fontSize: "12px", color: "#64748b", marginBottom: "6px" }}>
+              <strong>To:</strong> {sampleCandidate.name} &lt;{sampleCandidate.email}&gt;
+            </div>
+            <div style={{ fontSize: "12px", color: "#64748b", marginBottom: "6px" }}>
+              <strong>Subject:</strong> {previewSubject}
+            </div>
+            <div style={{ fontSize: "12px", color: "#64748b" }}>
+              <strong>From:</strong> Nexerra Talent OS &lt;careers@company.com&gt;
+            </div>
+          </div>
+
+          <div style={{ padding: "16px 20px", background: "#fff", border: "1px solid var(--line)", borderRadius: "8px", fontSize: "14px", lineHeight: 1.6, whiteSpace: "pre-wrap", color: "#1e293b" }}>
+            {previewBody}
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "20px" }}>
+            <button
+              type="button"
+              onClick={() => setActiveTab("compose")}
+              style={{ background: "#f1f5f9", border: "1px solid var(--line)", padding: "8px 16px", borderRadius: "6px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}
+            >
+              Back to Edit
+            </button>
+            <button
+              type="button"
+              onClick={handleSendCampaign}
+              disabled={submitting || totalSelectedCount === 0}
+              style={{ background: "#0f766e", color: "#fff", border: "none", padding: "8px 18px", borderRadius: "6px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}
+            >
+              Send to {totalSelectedCount} Recipients
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* HISTORY TAB */}
+      {activeTab === "history" && (
+        <div style={{ background: "#ffffff", border: "1px solid var(--line)", borderRadius: "10px", padding: "24px" }}>
+          <h3 style={{ margin: "0 0 16px", fontSize: "18px" }}>Recent Outreach Campaigns</h3>
+          {campaigns.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "40px 20px", color: "var(--muted)", fontSize: "13px" }}>
+              No outreach campaigns sent yet. Create your first campaign above!
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              {campaigns.map((c) => (
+                <div
+                  key={c.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    border: "1px solid var(--line)",
+                    borderRadius: "8px",
+                    padding: "16px 20px",
+                    background: "#fff"
+                  }}
+                >
+                  <div>
+                    <strong style={{ fontSize: "15px", display: "block", marginBottom: "4px" }}>{c.title}</strong>
+                    <div style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "4px" }}>
+                      Subject: "{c.subject}"
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#94a3b8" }}>
+                      Created: {formatDate(c.createdAt)}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <span
+                      style={{
+                        display: "inline-block",
+                        padding: "3px 10px",
+                        borderRadius: "12px",
+                        fontSize: "11px",
+                        fontWeight: 600,
+                        background: c.status === "sent" ? "#dcfce7" : "#f1f5f9",
+                        color: c.status === "sent" ? "#166534" : "#475569",
+                        marginBottom: "6px"
+                      }}
+                    >
+                      {c.status.toUpperCase()}
+                    </span>
+                    <div style={{ fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+                      Sent: {c.sentCount} / {c.totalRecipients}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

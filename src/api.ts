@@ -376,6 +376,7 @@ export async function createCampaign(input: {
   subject: string;
   body: string;
   applicationIds?: string[];
+  customRecipients?: Array<{ candidateName?: string; email: string; role?: string }>;
 }): Promise<{ campaign: EmailCampaign; providerConfigured: boolean }> {
   return request<{ campaign: EmailCampaign; providerConfigured: boolean }>("/api/campaigns", {
     method: "POST",

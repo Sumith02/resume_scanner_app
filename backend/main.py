@@ -452,10 +452,31 @@ def create_campaign(payload: CampaignCreateRequest, context: Context) -> dict[st
     if payload.jobId and not any(job["id"] == payload.jobId for job in repository.list_jobs(context)):
         raise AppError("Opening not found in this workspace.", 404, "not_found")
     eligible = _eligible(repository.list_applications(context))
-    selected = set(payload.applicationIds or [])
-    recipients = [candidate for candidate in eligible if not selected or candidate["applicationId"] in selected]
+    recipients: list[dict[str, Any]] = []
+    if payload.applicationIds is not None:
+        selected = set(payload.applicationIds)
+        recipients = [candidate for candidate in eligible if candidate["applicationId"] in selected]
+    elif not payload.customRecipients:
+        recipients = list(eligible)
+
+    if payload.customRecipients:
+        for cr in payload.customRecipients:
+            email = str(cr.get("email") or "").strip().lower()
+            if email and "@" in email and not any(r["email"].lower() == email for r in recipients):
+                recipients.append(
+                    {
+                        "applicationId": str(uuid.uuid4()),
+                        "candidateName": str(cr.get("candidateName") or email.split("@")[0].capitalize()),
+                        "email": email,
+                        "role": str(cr.get("role") or "Candidate"),
+                        "status": "custom",
+                        "isCustom": True,
+                        "primarySkill": "General",
+                    }
+                )
+
     if not recipients:
-        raise AppError("Select at least one eligible candidate.", 400, "no_campaign_recipients")
+        raise AppError("Select at least one eligible candidate or add a test recipient.", 400, "no_campaign_recipients")
     if len(recipients) > 500:
         raise AppError(
             "A campaign can include at most 500 recipients. Narrow the selection and create another campaign.",
