@@ -283,3 +283,25 @@ def test_master_bootstrap_endpoint(tmp_path: Path, monkeypatch) -> None:
     assert short_res.status_code == 422
 
 
+def test_provision_email_unconfigured_response(tmp_path: Path, monkeypatch) -> None:
+    test_services = _test_services(tmp_path)
+    monkeypatch.setattr(main, "services", test_services)
+    monkeypatch.setattr(main, "settings", test_services.settings)
+    client = TestClient(main.app)
+
+    res = client.post(
+        "/api/team/provision",
+        json={
+            "email": "new.recruit@company.com",
+            "fullName": "New Recruit",
+            "role": "recruiter",
+        },
+    )
+    assert res.status_code == 201
+    payload = res.json()
+    assert payload["emailSent"] is False
+    assert "Email service is unconfigured" in payload["emailMessage"]
+    assert len(payload["temporaryPassword"]) >= 8
+
+
+

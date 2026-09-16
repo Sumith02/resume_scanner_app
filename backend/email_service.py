@@ -64,14 +64,14 @@ class EmailService:
         temporary_password: str,
         role: str,
         organization_name: str,
-    ) -> bool:
+    ) -> tuple[bool, str]:
         """Dispatches account confirmation and temporary password to a newly provisioned user."""
         if not self.settings.email_configured:
-            return False
+            return False, "Email service is unconfigured on server (missing RESEND_API_KEY or SMTP credentials)."
 
         display_name = full_name.strip() or email.split("@")[0].title()
         role_label = role.replace("_", " ").title()
-        subject = "Your Nexerra Talent OS Account Credentials (Temporary Password)"
+        subject = f"Your {organization_name} Account Credentials (Temporary Password)"
         html_content = (
             f"<div style='font-family: Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 28px; border: 1px solid #e2e8f0; border-radius: 8px;'>"
             f"<div style='margin-bottom: 20px;'>"
@@ -93,25 +93,60 @@ class EmailService:
             f"</div>"
         )
 
-        try:
-            response = httpx.post(
-                "https://api.resend.com/emails",
-                headers={
-                    "Authorization": f"Bearer {self.settings.resend_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "from": self.settings.mail_from,
-                    "to": [email],
-                    "subject": subject,
-                    "html": html_content,
-                },
-                timeout=15,
-            )
-            response.raise_for_status()
-            return True
-        except Exception:
-            return False
+        # 1. Try SMTP if configured
+        if self.settings.smtp_configured:
+            try:
+                import smtplib
+                from email.mime.multipart import MIMEMultipart
+                from email.mime.text import MIMEText
+
+                sender = self.settings.smtp_from or self.settings.smtp_user or self.settings.mail_from
+                msg = MIMEMultipart("alternative")
+                msg["Subject"] = subject
+                msg["From"] = sender
+                msg["To"] = email
+                msg.attach(MIMEText(html_content, "html"))
+
+                port = self.settings.smtp_port or 587
+                if port == 465:
+                    with smtplib.SMTP_SSL(self.settings.smtp_host, port, timeout=12) as server:
+                        if self.settings.smtp_user and self.settings.smtp_password:
+                            server.login(self.settings.smtp_user, self.settings.smtp_password)
+                        server.sendmail(sender, [email], msg.as_string())
+                else:
+                    with smtplib.SMTP(self.settings.smtp_host, port, timeout=12) as server:
+                        server.starttls()
+                        if self.settings.smtp_user and self.settings.smtp_password:
+                            server.login(self.settings.smtp_user, self.settings.smtp_password)
+                        server.sendmail(sender, [email], msg.as_string())
+                return True, "Email sent successfully via SMTP."
+            except Exception as exc:
+                if not (self.settings.resend_api_key and self.settings.mail_from):
+                    return False, f"SMTP delivery failed: {exc}"
+
+        # 2. Try Resend if configured
+        if self.settings.resend_api_key and self.settings.mail_from:
+            try:
+                response = httpx.post(
+                    "https://api.resend.com/emails",
+                    headers={
+                        "Authorization": f"Bearer {self.settings.resend_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "from": self.settings.mail_from,
+                        "to": [email],
+                        "subject": subject,
+                        "html": html_content,
+                    },
+                    timeout=15,
+                )
+                response.raise_for_status()
+                return True, "Email sent successfully via Resend."
+            except Exception as exc:
+                return False, f"Resend API delivery failed: {exc}"
+
+        return False, "No active email provider available."
 
     def _send_batch(self, payload: list[dict[str, Any]], campaign_id: str, batch_number: int) -> httpx.Response:
         response: httpx.Response | None = None

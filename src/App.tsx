@@ -4768,6 +4768,8 @@ function SettingsView({
     details?: ProvisionUserResult;
   } | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [emailConfigured, setEmailConfigured] = useState<boolean | null>(null);
+  const [showConfigGuide, setShowConfigGuide] = useState(false);
 
   function generateSecurePassword() {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%&*";
@@ -4798,6 +4800,14 @@ function SettingsView({
   useEffect(() => {
     generateSecurePassword();
     loadMembers();
+    fetch("/api/system/status")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.checks?.emailConfigured !== undefined) {
+          setEmailConfigured(Boolean(data.checks.emailConfigured));
+        }
+      })
+      .catch(() => {});
   }, []);
 
   async function handleProvision(e: FormEvent) {
@@ -4818,8 +4828,8 @@ function SettingsView({
       setProvisionNotice({
         type: "success",
         message: result.emailSent
-          ? `Account successfully provisioned! An onboarding email with the temporary password has been sent to ${provisionEmail}.`
-          : `Account successfully provisioned! Email service is unconfigured, so please copy the credentials below to deliver to ${provisionEmail}.`,
+          ? `Account successfully provisioned! An automated onboarding email with login credentials has been dispatched to ${provisionEmail.trim()}.`
+          : `Account created, but automated server email could not be sent (${result.emailMessage || "No email provider configured in Vercel"}). Please use the quick delivery buttons below to send the credentials to ${provisionEmail.trim()}.`,
         details: result
       });
 
@@ -4892,40 +4902,191 @@ function SettingsView({
               </div>
             </div>
 
+            {/* EMAIL SERVICE STATUS BAR */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                margin: "12px 0",
+                padding: "8px 12px",
+                background: emailConfigured ? "#f0fdf4" : "#fffbeb",
+                border: `1px solid ${emailConfigured ? "#bbf7d0" : "#fde68a"}`,
+                borderRadius: "6px"
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px" }}>
+                <div
+                  style={{
+                    width: "8px",
+                    height: "8px",
+                    borderRadius: "50%",
+                    background: emailConfigured ? "#22c55e" : "#f59e0b"
+                  }}
+                />
+                <span style={{ color: emailConfigured ? "#15803d" : "#92400e", fontWeight: 600 }}>
+                  {emailConfigured
+                    ? "Automated Server Email: Active (Dispatches directly to user inbox)"
+                    : "Automated Server Email: Unconfigured in Vercel (Manual 1-Click Send Available)"}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowConfigGuide(!showConfigGuide)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#2563eb",
+                  cursor: "pointer",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  textDecoration: "underline",
+                  padding: "0"
+                }}
+              >
+                {showConfigGuide ? "Hide Setup Guide" : "Auto-Send Setup Guide"}
+              </button>
+            </div>
+
+            {/* SETUP GUIDE ACCORDION */}
+            {showConfigGuide && (
+              <div
+                style={{
+                  marginBottom: "16px",
+                  padding: "14px",
+                  background: "#f8fafc",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: "8px",
+                  fontSize: "12px",
+                  color: "#334155"
+                }}
+              >
+                <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: "6px" }}>
+                  How to Enable Automated Server Email Sending in Vercel:
+                </div>
+                <div style={{ lineHeight: 1.5, marginBottom: "8px" }}>
+                  To make the cloud server automatically send onboarding emails into users' inboxes upon account creation, add either of these to your <strong>Vercel Project &gt; Settings &gt; Environment Variables</strong>:
+                </div>
+                <div style={{ fontWeight: 600, color: "#1e40af", marginBottom: "4px" }}>
+                  Option A: Free Gmail SMTP (Recommended)
+                </div>
+                <div
+                  style={{
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                    padding: "10px",
+                    borderRadius: "6px",
+                    fontFamily: "monospace",
+                    fontSize: "11px",
+                    lineHeight: 1.6,
+                    marginBottom: "10px"
+                  }}
+                >
+                  SMTP_HOST = smtp.gmail.com<br />
+                  SMTP_PORT = 587<br />
+                  SMTP_USER = sumithsbhatt@gmail.com<br />
+                  SMTP_PASSWORD = [16-character Google App Password]<br />
+                  SMTP_FROM = Nexerra Talent OS &lt;sumithsbhatt@gmail.com&gt;
+                </div>
+                <div style={{ fontSize: "11px", color: "#64748b", marginBottom: "10px" }}>
+                  * Generate a 16-char Google App Password at: <em>Google Account &gt; Security &gt; 2-Step Verification &gt; App Passwords</em>.
+                </div>
+                <div style={{ fontWeight: 600, color: "#1e40af", marginBottom: "4px" }}>
+                  Option B: Resend API
+                </div>
+                <div
+                  style={{
+                    background: "#0f172a",
+                    color: "#e2e8f0",
+                    padding: "10px",
+                    borderRadius: "6px",
+                    fontFamily: "monospace",
+                    fontSize: "11px",
+                    lineHeight: 1.6
+                  }}
+                >
+                  RESEND_API_KEY = re_...<br />
+                  MAIL_FROM = Nexerra &lt;onboarding@resend.dev&gt;
+                </div>
+              </div>
+            )}
+
             {/* NOTICE BANNER */}
             {provisionNotice && (
               <div
                 style={{
-                  marginTop: "16px",
+                  marginTop: "12px",
                   marginBottom: "16px",
                   padding: "14px",
                   borderRadius: "8px",
-                  background: provisionNotice.type === "success" ? "#f0fdf4" : "#fef2f2",
-                  border: `1px solid ${provisionNotice.type === "success" ? "#bbf7d0" : "#fecaca"}`,
-                  color: provisionNotice.type === "success" ? "#166534" : "#991b1b",
+                  background:
+                    provisionNotice.type === "success"
+                      ? provisionNotice.details?.emailSent
+                        ? "#f0fdf4"
+                        : "#fffbeb"
+                      : "#fef2f2",
+                  border: `1px solid ${
+                    provisionNotice.type === "success"
+                      ? provisionNotice.details?.emailSent
+                        ? "#bbf7d0"
+                        : "#fde68a"
+                      : "#fecaca"
+                  }`,
+                  color:
+                    provisionNotice.type === "success"
+                      ? provisionNotice.details?.emailSent
+                        ? "#166534"
+                        : "#92400e"
+                      : "#991b1b",
                   fontSize: "13px"
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: 600, marginBottom: "4px" }}>
-                  {provisionNotice.type === "success" ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
-                  <span>{provisionNotice.type === "success" ? "User Provisioned" : "Provisioning Failed"}</span>
+                  {provisionNotice.type === "success" ? (
+                    provisionNotice.details?.emailSent ? (
+                      <CheckCircle2 size={16} />
+                    ) : (
+                      <CircleAlert size={16} />
+                    )
+                  ) : (
+                    <CircleAlert size={16} />
+                  )}
+                  <span>
+                    {provisionNotice.type === "success"
+                      ? provisionNotice.details?.emailSent
+                        ? "Account Provisioned & Email Sent"
+                        : "Account Created (Email Action Required)"
+                      : "Provisioning Failed"}
+                  </span>
                 </div>
-                <div>{provisionNotice.message}</div>
+                <div style={{ lineHeight: 1.5 }}>{provisionNotice.message}</div>
 
-                {/* COPYABLE CREDENTIALS CARD */}
+                {/* COPYABLE CREDENTIALS & ACTION BUTTONS */}
                 {provisionNotice.details && (
                   <div
                     style={{
                       marginTop: "12px",
-                      padding: "12px",
+                      padding: "14px",
                       background: "#ffffff",
-                      borderRadius: "6px",
+                      borderRadius: "8px",
                       border: "1px solid #cbd5e1",
                       fontSize: "12px"
                     }}
                   >
-                    <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: "8px" }}>
-                      Generated Login Credentials:
+                    <div
+                      style={{
+                        fontWeight: 700,
+                        color: "#0f172a",
+                        marginBottom: "10px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center"
+                      }}
+                    >
+                      <span>New Account Credentials:</span>
+                      <span style={{ fontSize: "11px", fontWeight: 600, color: "#2563eb", background: "#eff6ff", padding: "2px 8px", borderRadius: "4px" }}>
+                        Role: {provisionNotice.details.member.role.replace("_", " ").toUpperCase()}
+                      </span>
                     </div>
 
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0" }}>
@@ -4974,7 +5135,69 @@ function SettingsView({
                       </div>
                     </div>
 
-                    <div style={{ marginTop: "10px", display: "flex", gap: "8px" }}>
+                    <div
+                      style={{
+                        marginTop: "12px",
+                        paddingTop: "12px",
+                        borderTop: "1px solid #f1f5f9",
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: "8px"
+                      }}
+                    >
+                      <a
+                        href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(
+                          provisionNotice.details.member.email
+                        )}&su=${encodeURIComponent("Your Nexerra Talent OS Account Credentials")}&body=${encodeURIComponent(
+                          `Hello ${provisionNotice.details.member.fullName || ""},\n\nYour account has been created on Nexerra Talent OS.\n\nPortal URL: ${portalUrl}\nEmail: ${provisionNotice.details.member.email}\nTemporary Password: ${provisionNotice.details.temporaryPassword}\n\nSecurity Requirement: You will be required to create your own secure, permanent password immediately upon your first login.\n\nBest regards,\nWorkspace Administrator`
+                        )}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                          flex: "1 1 140px",
+                          padding: "8px 12px",
+                          background: "#2563eb",
+                          color: "#ffffff",
+                          textDecoration: "none",
+                          borderRadius: "6px",
+                          fontSize: "12px",
+                          fontWeight: 700,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: "6px"
+                        }}
+                      >
+                        <ExternalLink size={14} />
+                        <span>Send via Gmail (1-Click)</span>
+                      </a>
+
+                      <a
+                        href={`mailto:${encodeURIComponent(
+                          provisionNotice.details.member.email
+                        )}?subject=${encodeURIComponent("Your Nexerra Talent OS Account Credentials")}&body=${encodeURIComponent(
+                          `Hello ${provisionNotice.details.member.fullName || ""},\n\nYour account has been created on Nexerra Talent OS.\n\nPortal URL: ${portalUrl}\nEmail: ${provisionNotice.details.member.email}\nTemporary Password: ${provisionNotice.details.temporaryPassword}\n\nSecurity Requirement: You will be required to create your own secure, permanent password immediately upon your first login.\n\nBest regards,\nWorkspace Administrator`
+                        )}`}
+                        style={{
+                          flex: "1 1 140px",
+                          padding: "8px 12px",
+                          background: "#f1f5f9",
+                          color: "#0f172a",
+                          textDecoration: "none",
+                          borderRadius: "6px",
+                          fontSize: "12px",
+                          fontWeight: 600,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: "6px",
+                          border: "1px solid #cbd5e1"
+                        }}
+                      >
+                        <Mail size={14} />
+                        <span>Default Mail Client</span>
+                      </a>
+
                       <button
                         type="button"
                         onClick={() => {
@@ -4982,13 +5205,13 @@ function SettingsView({
                           copyText(creds, "all");
                         }}
                         style={{
-                          flex: 1,
-                          padding: "6px 10px",
+                          flex: "1 1 120px",
+                          padding: "8px 12px",
                           background: "#0f172a",
                           color: "#ffffff",
                           border: "none",
-                          borderRadius: "4px",
-                          fontSize: "11px",
+                          borderRadius: "6px",
+                          fontSize: "12px",
                           fontWeight: 600,
                           cursor: "pointer",
                           display: "flex",
@@ -4997,34 +5220,9 @@ function SettingsView({
                           gap: "6px"
                         }}
                       >
-                        {copiedKey === "all" ? <Check size={13} /> : <Copy size={13} />}
-                        <span>{copiedKey === "all" ? "Credentials Copied!" : "Copy Full Invitation"}</span>
+                        {copiedKey === "all" ? <Check size={14} /> : <Copy size={14} />}
+                        <span>{copiedKey === "all" ? "Copied!" : "Copy Full Text"}</span>
                       </button>
-
-                      <a
-                        href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(
-                          provisionNotice.details.member.email
-                        )}&su=${encodeURIComponent("Your Nexerra Talent OS Account Credentials")}&body=${encodeURIComponent(
-                          `Hello,\n\nYour account has been created on Nexerra Talent OS.\n\nPortal: ${portalUrl}\nEmail: ${provisionNotice.details.member.email}\nTemporary Password: ${provisionNotice.details.temporaryPassword}\n\nNote: You will be required to set your own permanent password immediately upon first login.`
-                        )}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{
-                          padding: "6px 12px",
-                          background: "#2563eb",
-                          color: "#ffffff",
-                          textDecoration: "none",
-                          borderRadius: "4px",
-                          fontSize: "11px",
-                          fontWeight: 600,
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "6px"
-                        }}
-                      >
-                        <ExternalLink size={13} />
-                        <span>Open Gmail Draft</span>
-                      </a>
                     </div>
                   </div>
                 )}

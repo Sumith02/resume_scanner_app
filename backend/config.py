@@ -42,6 +42,11 @@ class Settings:
     token_encryption_key: str
     resend_api_key: str
     mail_from: str
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
     max_upload_bytes: int = 14 * 1024 * 1024
     max_upload_files: int = 100
     storage_bucket: str = "resumes"
@@ -67,8 +72,12 @@ class Settings:
         )
 
     @property
+    def smtp_configured(self) -> bool:
+        return bool(self.smtp_host and self.smtp_user and self.smtp_password)
+
+    @property
     def email_configured(self) -> bool:
-        return bool(self.resend_api_key and self.mail_from)
+        return bool((self.resend_api_key and self.mail_from) or self.smtp_configured)
 
     def validate_runtime(self) -> list[str]:
         errors: list[str] = []
@@ -142,4 +151,9 @@ def get_settings() -> Settings:
         token_encryption_key=token_encryption_key,
         resend_api_key=_first("RESEND_API_KEY"),
         mail_from=_first("MAIL_FROM"),
+        smtp_host=_first("SMTP_HOST"),
+        smtp_port=int(_first("SMTP_PORT")) if _first("SMTP_PORT").isdigit() else 587,
+        smtp_user=_first("SMTP_USER", "SMTP_USERNAME"),
+        smtp_password=_first("SMTP_PASSWORD", "SMTP_PASS"),
+        smtp_from=_first("SMTP_FROM", "MAIL_FROM"),
     )

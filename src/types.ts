@@ -312,6 +312,7 @@ export interface ProvisionUserPayload {
 export interface ProvisionUserResult {
   member: TeamMember;
   emailSent: boolean;
+  emailMessage?: string;
   temporaryPassword: string;
   organizationName: string;
 }

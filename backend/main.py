@@ -450,7 +450,7 @@ def provision_team_member(payload: ProvisionUserRequest, context: Context) -> di
         organization_name=org_name,
     )
 
-    email_sent = email_service.send_welcome_account_email(
+    email_sent, email_message = email_service.send_welcome_account_email(
         email=payload.email,
         full_name=payload.fullName or "",
         temporary_password=temp_pass,
@@ -463,12 +463,13 @@ def provision_team_member(payload: ProvisionUserRequest, context: Context) -> di
         "team.user_provisioned",
         "organization_member",
         member["userId"],
-        {"email": payload.email, "role": payload.role, "emailSent": email_sent},
+        {"email": payload.email, "role": payload.role, "emailSent": email_sent, "emailMessage": email_message},
     )
 
     return {
         "member": member,
         "emailSent": email_sent,
+        "emailMessage": email_message,
         "temporaryPassword": temp_pass,
         "organizationName": org_name,
     }
