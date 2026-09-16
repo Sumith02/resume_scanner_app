@@ -67,8 +67,16 @@ def execute_hybrid_search(
     for cand in candidates:
         score = 0
         reasons = []
-        cand_skills = [s.get("skillName", "").lower() for s in cand.get("skills", [])]
-        cand_skills_flat = {s.lower() for s in cand.get("matchedSkills", [])} | set(cand_skills)
+        cand_skills = [
+            s.get("skillName", "").lower()
+            for s in (cand.get("skills") or [])
+            if isinstance(s, dict) and s.get("skillName")
+        ]
+        cand_skills_flat = {
+            s.lower()
+            for s in (cand.get("matchedSkills") or [])
+            if isinstance(s, str)
+        } | set(cand_skills)
         cand_exp = float(cand.get("experienceYears") or 0)
         cand_loc = (cand.get("location") or "").lower()
 
@@ -103,7 +111,7 @@ def execute_hybrid_search(
 
         # Keyword relevance fallback
         q_words = [w for w in query.lower().split() if len(w) > 3]
-        text_haystack = f"{cand.get('canonicalName')} {cand.get('currentTitle')} {cand.get('profileSummary')}".lower()
+        text_haystack = f"{cand.get('canonicalName') or ''} {cand.get('currentTitle') or ''} {cand.get('profileSummary') or ''}".lower()
         if any(w in text_haystack for w in q_words):
             score += 10
 

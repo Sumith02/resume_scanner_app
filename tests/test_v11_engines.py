@@ -104,6 +104,18 @@ def test_natural_language_search_and_copilot():
     assert copilot_res["role"] == "assistant"
     assert len(copilot_res["toolCalls"]) >= 1
 
+    # Test greeting
+    copilot_hello = process_copilot_message("Hello", candidates, [])
+    assert "Welcome to Nexerra" in copilot_hello["content"]
+
+    # Test empty candidate pool
+    copilot_empty = process_copilot_message("Find Python devs", [], [])
+    assert "Candidate Database is Empty" in copilot_empty["content"]
+
+    # Test interview guide generation
+    copilot_interview = process_copilot_message("Generate interview questions", candidates, [])
+    assert "Interview Guide" in copilot_interview["content"]
+
 
 def test_talent_graph_engine():
     from backend.graph_engine import build_candidate_talent_graph, calculate_candidate_similarity

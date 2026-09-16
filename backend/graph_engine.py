@@ -20,8 +20,8 @@ def calculate_candidate_similarity(c1: dict[str, Any], c2: dict[str, Any]) -> tu
     if c1.get("id") == c2.get("id"):
         return 0, []
 
-    skills_1 = set(s.lower() for s in c1.get("matchedSkills", []))
-    skills_2 = set(s.lower() for s in c2.get("matchedSkills", []))
+    skills_1 = set(s.lower() for s in (c1.get("matchedSkills") or []) if isinstance(s, str))
+    skills_2 = set(s.lower() for s in (c2.get("matchedSkills") or []) if isinstance(s, str))
 
     shared_skills = skills_1.intersection(skills_2)
     union_skills = skills_1.union(skills_2)
@@ -29,13 +29,21 @@ def calculate_candidate_similarity(c1: dict[str, Any], c2: dict[str, Any]) -> tu
     skill_jaccard = (len(shared_skills) / len(union_skills)) if union_skills else 0.0
 
     # Companies overlap
-    companies_1 = {exp.get("company", "").strip().lower() for exp in c1.get("experiences", []) if exp.get("company")}
-    companies_2 = {exp.get("company", "").strip().lower() for exp in c2.get("experiences", []) if exp.get("company")}
+    companies_1 = {
+        exp.get("company", "").strip().lower()
+        for exp in (c1.get("experiences") or [])
+        if isinstance(exp, dict) and exp.get("company")
+    }
+    companies_2 = {
+        exp.get("company", "").strip().lower()
+        for exp in (c2.get("experiences") or [])
+        if isinstance(exp, dict) and exp.get("company")
+    }
     shared_companies = companies_1.intersection(companies_2)
 
     # Experience years proximity
-    exp1 = c1.get("experienceYears") or 0.0
-    exp2 = c2.get("experienceYears") or 0.0
+    exp1 = float(c1.get("experienceYears") or 0.0)
+    exp2 = float(c2.get("experienceYears") or 0.0)
     exp_diff = abs(exp1 - exp2)
     exp_score = max(0.0, 1.0 - (exp_diff / 8.0))
 
@@ -108,7 +116,9 @@ def build_candidate_talent_graph(
     )
 
     # 2. Skill Nodes
-    for sk in candidate.get("skills", []):
+    for sk in (candidate.get("skills") or []):
+        if not isinstance(sk, dict):
+            continue
         name = sk.get("skillName", "")
         norm = sk.get("normalizedSkill", name)
         node_id = f"skill:{_slugify(norm)}"
@@ -120,7 +130,9 @@ def build_candidate_talent_graph(
         add_link(cand_id, node_id, "HAS_SKILL", sk.get("proficiency", "Proficient"), weight=1.0)
 
     # 3. Experience: Roles & Companies Nodes
-    for exp in candidate.get("experiences", []):
+    for exp in (candidate.get("experiences") or []):
+        if not isinstance(exp, dict):
+            continue
         company = exp.get("company", "").strip()
         title = exp.get("title", "").strip()
         dates = f"{exp.get('startDate', '')} - {exp.get('endDate', '')}".strip(" -")
@@ -136,7 +148,9 @@ def build_candidate_talent_graph(
             add_link(cand_id, role_node_id, "HELD_ROLE", dates or "Role", weight=0.8)
 
     # 4. Education Nodes
-    for edu in candidate.get("educations", []):
+    for edu in (candidate.get("educations") or []):
+        if not isinstance(edu, dict):
+            continue
         inst = edu.get("institution", "").strip()
         degree = edu.get("degree", "").strip()
         field = edu.get("field", "").strip()
@@ -162,8 +176,8 @@ def build_candidate_talent_graph(
         for job in jobs:
             job_id = job.get("id")
             title = job.get("title")
-            req_skills = set(s.lower() for s in job.get("requiredSkills", []))
-            cand_skills = set(s.lower() for s in candidate.get("matchedSkills", []))
+            req_skills = set(s.lower() for s in (job.get("requiredSkills") or []) if isinstance(s, str))
+            cand_skills = set(s.lower() for s in (candidate.get("matchedSkills") or []) if isinstance(s, str))
             overlap = req_skills.intersection(cand_skills)
 
             # If there is meaningful skill overlap or candidate applied
@@ -255,13 +269,17 @@ def build_talent_network_overview(
         })
 
         # Connect to skills
-        for sk in c.get("matchedSkills", [])[:4]:
+        for sk in (c.get("matchedSkills") or [])[:4]:
+            if not isinstance(sk, str) or not sk.strip():
+                continue
             sk_id = f"skill:{_slugify(sk)}"
             add_n(sk_id, sk, "skill")
             links.append({"source": c_id, "target": sk_id, "relation": "HAS_SKILL", "weight": 1.0})
 
         # Connect to companies
-        for exp in c.get("experiences", [])[:2]:
+        for exp in (c.get("experiences") or [])[:2]:
+            if not isinstance(exp, dict):
+                continue
             comp = exp.get("company", "").strip()
             if comp:
                 comp_id = f"company:{_slugify(comp)}"

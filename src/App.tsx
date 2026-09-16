@@ -1092,6 +1092,36 @@ function CommandCenterView({
 }) {
   const topCandidates = useMemo(() => candidates.slice(0, 6), [candidates]);
 
+  // Dynamic calculations based strictly on real state:
+  const totalTalent = candidates.length;
+  const newToday = report.uploadedToday || candidates.filter((c) => {
+    const today = new Date().toISOString().slice(0, 10);
+    return c.createdAt && c.createdAt.slice(0, 10) === today;
+  }).length;
+  const openJobsCount = jobs.filter((j) => j.status === "open").length || jobs.length;
+  const strongMatchesCount = candidates.filter(
+    (c) => c.status === "shortlisted" || c.status === "interview" || c.status === "offer"
+  ).length;
+  const timeSavedHours = totalTalent > 0 ? (totalTalent * 0.35).toFixed(1) : "0";
+  const rediscoveryPotential = candidates.filter(
+    (c) => ["hold", "rejected", "shortlisted"].includes(c.status) || (c.tags && c.tags.length > 0)
+  ).length;
+  const duplicateCount = report.duplicateCount || 0;
+  const avgDataQuality = totalTalent > 0
+    ? Math.round(candidates.reduce((acc, c) => acc + (c.dataQualityScore || 90), 0) / totalTalent)
+    : 100;
+
+  // Dynamic talent insight based on active requisitions
+  const targetJob = jobs.find((j) => j.status === "open") || jobs[0];
+  const targetRoleTitle = targetJob ? targetJob.title : "Software Engineer";
+  const matchingCandidatesCount = targetJob
+    ? candidates.filter((c) =>
+        c.matchedSkills.some((s) => targetRoleTitle.toLowerCase().includes(s.toLowerCase())) ||
+        c.primaryDomainKey === "backend" ||
+        c.primaryDomainKey === "frontend"
+      ).length
+    : candidates.length;
+
   return (
     <div className="command-center-view">
       <div className="command-center-hero">
@@ -1122,57 +1152,65 @@ function CommandCenterView({
         </button>
       </div>
 
-      {/* 8 V11 KPI CARDS */}
+      {/* 8 DYNAMIC V11 KPI CARDS */}
       <div className="cc-kpi-grid">
         <div className="kpi-card">
           <span className="kpi-title">TOTAL TALENT</span>
-          <span className="kpi-val">{candidates.length ? candidates.length * 142 : "48,291"}</span>
+          <span className="kpi-val">{totalTalent.toLocaleString()}</span>
           <span className="kpi-sub">Private talent intelligence</span>
         </div>
         <div className="kpi-card">
-          <span className="kpi-title">NEW THIS WEEK</span>
-          <span className="kpi-val">{report.uploadedToday ? report.uploadedToday * 42 : "1,284"}</span>
-          <span className="kpi-sub">Across 4 intake channels</span>
+          <span className="kpi-title">NEW TODAY</span>
+          <span className="kpi-val">{newToday.toLocaleString()}</span>
+          <span className="kpi-sub">Across intake channels</span>
         </div>
         <div className="kpi-card">
           <span className="kpi-title">OPEN JOBS</span>
-          <span className="kpi-val">{jobs.length || 42}</span>
-          <span className="kpi-sub">Actively matching</span>
+          <span className="kpi-val">{openJobsCount}</span>
+          <span className="kpi-sub">Actively matching requisitions</span>
         </div>
         <div className="kpi-card">
           <span className="kpi-title">STRONG MATCHES</span>
-          <span className="kpi-val">{Math.round((candidates.length || 20) * 8.4)}</span>
-          <span className="kpi-sub">≥80% match threshold</span>
+          <span className="kpi-val">{strongMatchesCount}</span>
+          <span className="kpi-sub">Shortlisted & interviewing</span>
         </div>
         <div className="kpi-card">
           <span className="kpi-title">TIME SAVED</span>
-          <span className="kpi-val">124 hrs</span>
-          <span className="kpi-sub">Automated extraction</span>
+          <span className="kpi-val">{timeSavedHours} hrs</span>
+          <span className="kpi-sub">Automated screening</span>
         </div>
         <div className="kpi-card">
-          <span className="kpi-title">REDISCOVERED</span>
-          <span className="kpi-val">327</span>
-          <span className="kpi-sub">From historical records</span>
+          <span className="kpi-title">REDISCOVERABLE</span>
+          <span className="kpi-val">{rediscoveryPotential}</span>
+          <span className="kpi-sub">From historical pipeline</span>
         </div>
         <div className="kpi-card">
-          <span className="kpi-title">DUPLICATES</span>
-          <span className="kpi-val">{report.duplicateCount || 12}</span>
-          <span className="kpi-sub">Identified & isolated</span>
+          <span className="kpi-title">DUPLICATES BLOCKED</span>
+          <span className="kpi-val">{duplicateCount}</span>
+          <span className="kpi-sub">Prevented & isolated</span>
         </div>
         <div className="kpi-card">
           <span className="kpi-title">DATA QUALITY</span>
-          <span className="kpi-val">94%</span>
-          <span className="kpi-sub">Extraction completeness</span>
+          <span className="kpi-val">{avgDataQuality}%</span>
+          <span className="kpi-sub">Average profile completeness</span>
         </div>
       </div>
 
-      {/* NEXERRA INSIGHT CALLOUT */}
+      {/* DYNAMIC NEXERRA INSIGHT CALLOUT */}
       <div className="insight-callout-card">
         <div className="insight-callout-text">
           <h4>NEXERRA TALENT INSIGHT</h4>
           <p>
-            You have <strong>14 strong candidates</strong> for <em>"Senior Backend Engineer"</em> already in your database.
-            Reactivate them without spending on external job postings.
+            {totalTalent > 0 ? (
+              <>
+                You have <strong>{matchingCandidatesCount} candidates</strong> aligned with <em>"{targetRoleTitle}"</em> in your private database.
+                Reactivate and engage them without spending on external job postings.
+              </>
+            ) : (
+              <>
+                Your private talent database is ready. Connect your company Gmail inbox or upload resumes in the Intake Center to start automated talent matching.
+              </>
+            )}
           </p>
         </div>
         <button
@@ -1197,34 +1235,40 @@ function CommandCenterView({
             </button>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-            {topCandidates.map((c) => (
-              <div
-                key={c.id}
-                onClick={() => onSelectCandidate(c.id)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "10px 12px",
-                  borderRadius: "6px",
-                  background: "#f8fafc",
-                  cursor: "pointer",
-                  border: "1px solid #f1f5f9"
-                }}
-              >
-                <div>
-                  <strong style={{ fontSize: "13px" }}>{c.canonicalName}</strong>
-                  <div style={{ fontSize: "12px", color: "#64748b" }}>
-                    {c.currentTitle} • {c.experienceYears ? `${c.experienceYears} yrs` : "Experienced"} • {c.location}
+            {topCandidates.length === 0 ? (
+              <div style={{ padding: "28px 16px", textAlign: "center", color: "#64748b", fontSize: "13px" }}>
+                No resumes imported yet. Connect Gmail or upload resumes to see talent dossiers here.
+              </div>
+            ) : (
+              topCandidates.map((c) => (
+                <div
+                  key={c.id}
+                  onClick={() => onSelectCandidate(c.id)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "10px 12px",
+                    borderRadius: "6px",
+                    background: "#f8fafc",
+                    cursor: "pointer",
+                    border: "1px solid #f1f5f9"
+                  }}
+                >
+                  <div>
+                    <strong style={{ fontSize: "13px" }}>{c.canonicalName}</strong>
+                    <div style={{ fontSize: "12px", color: "#64748b" }}>
+                      {c.currentTitle} • {c.experienceYears ? `${c.experienceYears} yrs` : "Experienced"} • {c.location}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--brand)" }}>
+                      {c.dataQualityScore}% Quality
+                    </span>
                   </div>
                 </div>
-                <div style={{ textAlign: "right" }}>
-                  <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--brand)" }}>
-                    {c.dataQualityScore}% Quality
-                  </span>
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
 
@@ -1233,19 +1277,19 @@ function CommandCenterView({
           <div style={{ display: "flex", flexDirection: "column", gap: "12px", fontSize: "13px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
               <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#10b981" }} />
-              <span><strong>1,284 resumes</strong> received via Gmail and direct upload</span>
+              <span><strong>{totalTalent} resume{totalTalent !== 1 ? "s" : ""}</strong> indexed in private database</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
               <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#3b82f6" }} />
-              <span><strong>312 candidates</strong> scored and matched against active requisitions</span>
+              <span><strong>{candidates.filter((c) => c.status !== "needs_review").length} candidates</strong> parsed with deep skill extraction</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
               <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#8b5cf6" }} />
-              <span><strong>46 historical candidates</strong> rediscovered for Senior Developer role</span>
+              <span><strong>{strongMatchesCount} candidate{strongMatchesCount !== 1 ? "s" : ""}</strong> in active review / interview pipeline</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
               <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#f59e0b" }} />
-              <span><strong>18 candidate screenings</strong> in progress across active pipeline</span>
+              <span><strong>{duplicateCount} duplicate submission{duplicateCount !== 1 ? "s" : ""}</strong> automatically isolated & skipped</span>
             </div>
           </div>
         </div>

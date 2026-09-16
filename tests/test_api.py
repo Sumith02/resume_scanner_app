@@ -83,6 +83,45 @@ def test_application_workflow(tmp_path: Path, monkeypatch) -> None:
     assert delete.status_code == 204
 
 
+def test_duplicate_applications_are_skipped(tmp_path: Path, monkeypatch) -> None:
+    test_services = _test_services(tmp_path)
+    monkeypatch.setattr(main, "services", test_services)
+    monkeypatch.setattr(main, "settings", test_services.settings)
+    client = TestClient(main.app)
+
+    # First upload
+    res1 = client.post(
+        "/api/applications",
+        data={"role": "Backend Engineer", "source": "Test upload"},
+        files={
+            "resumes": (
+                "dev.txt",
+                b"Rohan Varma\nrohan@example.com\nPython Docker Kubernetes\n4 years",
+                "text/plain",
+            )
+        },
+    )
+    assert res1.status_code == 201
+    assert len(res1.json()["applications"]) == 1
+
+    # Second upload with same candidate email & checksum
+    res2 = client.post(
+        "/api/applications",
+        data={"role": "Backend Engineer", "source": "Test upload"},
+        files={
+            "resumes": (
+                "dev.txt",
+                b"Rohan Varma\nrohan@example.com\nPython Docker Kubernetes\n4 years",
+                "text/plain",
+            )
+        },
+    )
+    assert res2.status_code == 201
+    # Must be skipped, NOT duplicated in applications list
+    assert len(res2.json()["applications"]) == 0
+
+
+
 def test_signed_storage_upload_workflow(tmp_path: Path, monkeypatch) -> None:
     test_services = _test_services(tmp_path, production_storage=True)
     monkeypatch.setattr(main, "services", test_services)

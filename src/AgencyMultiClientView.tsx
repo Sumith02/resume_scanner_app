@@ -55,6 +55,32 @@ export function AgencyMultiClientView({
         </div>
       </div>
 
+      {/* WHAT IS MULTI-CLIENT OS EXPLANATION */}
+      <div
+        style={{
+          background: "linear-gradient(135deg, rgba(15, 118, 110, 0.06), rgba(59, 130, 246, 0.06))",
+          border: "1px solid rgba(45, 212, 191, 0.3)",
+          borderRadius: "8px",
+          padding: "12px 16px",
+          marginBottom: "20px",
+          fontSize: "13px",
+          lineHeight: "1.5",
+          color: "#0f172a"
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+          <Shield size={16} color="var(--brand)" />
+          <strong>What is Multi-Client OS?</strong>
+          <span style={{ fontSize: "11px", background: "rgba(15, 118, 110, 0.15)", color: "#0f766e", padding: "2px 6px", borderRadius: "4px", fontWeight: 600 }}>Agency Feature</span>
+        </div>
+        <div>
+          This module is designed for <strong>Recruitment Agencies, Headhunters, & Staffing Firms</strong> managing multiple client corporate accounts simultaneously under one roof. It isolates candidates, jobs, and recruiters per client to prevent data leaks.
+        </div>
+        <div style={{ marginTop: "4px", color: "#64748b", fontSize: "12px" }}>
+          👉 <em>Note for Direct Employers:</em> If your company is hiring directly for your own team, you do not need this view. Your team manages candidates directly in the <strong>Talent Database</strong> and <strong>Command Center</strong>.
+        </div>
+      </div>
+
       {/* AGENCY KPI GRID */}
       <div className="cc-kpi-grid" style={{ marginBottom: "24px" }}>
         <div className="kpi-card">

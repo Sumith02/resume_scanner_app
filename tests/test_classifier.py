@@ -54,3 +54,33 @@ def test_is_candidate_resume_accepts_valid_resumes() -> None:
     valid, reason = is_candidate_resume(resume_text, "aarav_nair_resume.pdf")
     assert valid is True
 
+
+def test_is_candidate_resume_rejects_tickets_newsletters_and_flyers() -> None:
+    ticket_text = """
+    BOARDING PASS / E-TICKET
+    Passenger Name: John Smith
+    Flight Number: AI 202
+    Gate / Seat: 12A
+    Baggage Allowance: 25kg
+    """
+    valid, reason = is_candidate_resume(ticket_text, "flight_ticket.pdf")
+    assert valid is False
+
+    newsletter_text = """
+    Weekly Tech Digest!
+    Here are the top stories this week in technology.
+    To stop receiving these emails, unsubscribe or update your email preferences.
+    View in browser.
+    """
+    valid2, reason2 = is_candidate_resume(newsletter_text, "newsletter_may.pdf")
+    assert valid2 is False
+
+    flyer_text = """
+    Grand Summer Clearance Sale!
+    Visit our flagship store this weekend for 50% discounts on all accessories.
+    Contact us at support@retailcorp.com or call +1-800-555-0199.
+    """
+    valid3, reason3 = is_candidate_resume(flyer_text, "flyer_promo.pdf")
+    assert valid3 is False
+
+

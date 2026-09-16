@@ -18,7 +18,11 @@ from .repository import Repository, utc_now
 from .resume_service import ALLOWED_EXTENSIONS, MIME_BY_EXTENSION, ResumeService
 
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
-DEFAULT_QUERY = "has:attachment (filename:pdf OR filename:docx OR filename:txt) newer_than:30d"
+DEFAULT_QUERY = (
+    "has:attachment (filename:pdf OR filename:docx OR filename:txt) "
+    "(resume OR cv OR \"curriculum vitae\" OR applicant OR application OR candidate OR \"job application\" OR apply) "
+    "newer_than:60d"
+)
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"

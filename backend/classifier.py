@@ -454,16 +454,81 @@ NON_RESUME_FILENAMES = [
     "ticket",
     "boarding_pass",
     "boardingpass",
+    "eticket",
+    "e-ticket",
+    "booking",
+    "itinerary",
     "agreement",
     "nda",
     "contract",
     "license",
     "brochure",
     "flyer",
+    "newsletter",
     "presentation",
     "slides",
     "timesheet",
     "expense",
+    "manual",
+    "specification",
+    "order_confirmation",
+]
+
+NON_RESUME_DOC_MARKERS = [
+    # Invoices & billing
+    "tax invoice",
+    "commercial invoice",
+    "proforma invoice",
+    "invoice no",
+    "invoice #",
+    "invoice date",
+    "bill to",
+    "billed to",
+    "ship to",
+    "shipped to",
+    "amount due",
+    "total due",
+    "subtotal",
+    "balance due",
+    "payment terms",
+    "due date",
+    "purchase order",
+    "po number",
+    "unit price",
+    "vat number",
+    "vat no",
+    "gstin",
+    "gst no",
+    "hsn/sac",
+    "bank details",
+    "ifsc code",
+    "swift code",
+    "remit to",
+    "terms of payment",
+    "total payable",
+    "net amount",
+    # Travel & tickets
+    "boarding pass",
+    "e-ticket",
+    "booking confirmation",
+    "passenger name",
+    "flight number",
+    "pnr:",
+    "pnr no",
+    "gate / seat",
+    "baggage allowance",
+    # Banking & accounts
+    "bank statement",
+    "statement of account",
+    "account summary",
+    "transaction history",
+    "available balance",
+    "opening balance",
+    "closing balance",
+    # Marketing / Newsletters
+    "unsubscribe",
+    "view in browser",
+    "email preferences",
 ]
 
 INVOICE_KEYWORDS = [
@@ -506,6 +571,8 @@ RESUME_SECTION_MARKERS = [
     "work experience",
     "employment history",
     "professional experience",
+    "work history",
+    "career history",
     "education",
     "academic background",
     "qualification",
@@ -514,6 +581,7 @@ RESUME_SECTION_MARKERS = [
     "technical skills",
     "core competencies",
     "key skills",
+    "technologies",
     "projects",
     "personal projects",
     "academic projects",
@@ -521,12 +589,37 @@ RESUME_SECTION_MARKERS = [
     "professional summary",
     "executive summary",
     "career objective",
+    "about me",
     "certifications",
     "licenses & certifications",
     "curriculum vitae",
     "resume",
     "curriculum-vitae",
+    "bio-data",
+    "biodata",
 ]
+
+
+CAREER_TITLE_MARKERS = [
+    "engineer",
+    "developer",
+    "programmer",
+    "designer",
+    "architect",
+    "manager",
+    "consultant",
+    "analyst",
+    "specialist",
+    "administrator",
+    "coordinator",
+    "scientist",
+    "intern",
+    "lead",
+    "officer",
+    "director",
+]
+
+CAREER_EXPERIENCE_REGEX = re.compile(r"\b\d+(?:\.\d+)?\s*\+?\s*(?:years?|yrs?)\b", re.I)
 
 
 def is_candidate_resume(text: str, filename: str) -> tuple[bool, str]:
@@ -534,22 +627,28 @@ def is_candidate_resume(text: str, filename: str) -> tuple[bool, str]:
     for non_resume_kw in NON_RESUME_FILENAMES:
         if non_resume_kw in lower_name:
             if "resume" not in lower_name and "cv" not in lower_name:
-                return False, f"File rejected: filename indicates an invoice, receipt, or non-resume document ('{filename}')."
+                return False, f"File rejected: filename indicates a non-resume document ('{filename}')."
 
     normalized = _normalize_text(text).lower()
 
-    invoice_hits = [kw for kw in INVOICE_KEYWORDS if kw in normalized]
-    if len(invoice_hits) >= 2:
-        return False, f"File rejected: document contains invoice/billing markers ({', '.join(invoice_hits[:3])})."
+    non_resume_hits = [kw for kw in NON_RESUME_DOC_MARKERS if kw in normalized]
+    if len(non_resume_hits) >= 2:
+        return False, f"File rejected: document contains non-resume/billing markers ({', '.join(non_resume_hits[:3])})."
 
     resume_hits = [marker for marker in RESUME_SECTION_MARKERS if marker in normalized]
-    email_match = re.search(r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}", normalized, re.I)
-    phone_match = re.search(r"(?:\+?\d[\d\s().-]{7,}\d)", normalized)
+    title_hits = [title for title in CAREER_TITLE_MARKERS if title in normalized]
+    has_exp_pattern = bool(CAREER_EXPERIENCE_REGEX.search(normalized))
+    has_tech_skills = any(
+        kw in normalized
+        for cat in SKILL_CATEGORIES
+        for kw in cat["keywords"]
+    )
 
-    if len(resume_hits) == 0 and not email_match and not phone_match:
-        return False, "File rejected: document lacks candidate resume sections (Experience, Education, Skills) or contact information."
+    has_candidate_signal = bool(resume_hits or title_hits or has_exp_pattern or has_tech_skills)
+    if not has_candidate_signal:
+        return False, "File rejected: document lacks candidate resume sections, job titles, or professional skills."
 
-    if len(normalized) < 30:
+    if len(normalized) < 25:
         return False, "File rejected: document text is too brief to be a candidate resume."
 
     return True, "Valid candidate resume"

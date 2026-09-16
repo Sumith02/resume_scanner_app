@@ -62,6 +62,12 @@ class ResumeService:
                     continue
                 analysis = analyze_resume(text, original_name)
                 duplicate = _find_duplicate(existing + created, analysis["email"], analysis["phone"], checksum)
+                if duplicate:
+                    if storage_path:
+                        self.repository.delete_resume_objects([storage_path])
+                    skipped += 1
+                    continue
+
                 application_id = str(uuid.uuid4())
                 object_path = storage_path or (
                     f"{context.organization_id}/{application_id}/{safe_file_name(original_name)}"
@@ -83,7 +89,7 @@ class ResumeService:
                     "status": "needs_review" if int(analysis["resumeTextLength"]) < 80 else "new",
                     "notes": "",
                     "tags": [],
-                    "duplicateOf": duplicate.get("id") if duplicate else None,
+                    "duplicateOf": None,
                 }
                 if not storage_path:
                     self.repository.upload_resume(object_path, content, mime_type)
@@ -138,12 +144,22 @@ def extract_resume_text(content: bytes, name: str) -> str:
 def _find_duplicate(
     applications: list[dict[str, Any]], email: object, phone: object, checksum: str
 ) -> dict[str, Any] | None:
-    normalized_email = str(email or "").lower()
-    normalized_phone = re.sub(r"\D", "", str(phone or ""))[-10:]
+    normalized_email = str(email or "").strip().lower()
+    raw_phone = re.sub(r"\D", "", str(phone or ""))
+    normalized_phone = raw_phone[-10:] if len(raw_phone) >= 7 else ""
+    clean_checksum = str(checksum or "").strip()
+
     for application in applications:
-        email_match = normalized_email and application.get("email", "").lower() == normalized_email
-        phone_match = normalized_phone and re.sub(r"\D", "", application.get("phone", ""))[-10:] == normalized_phone
-        checksum_match = checksum and application.get("fileChecksum") == checksum
+        app_email = str(application.get("email") or "").strip().lower()
+        email_match = bool(normalized_email and app_email and app_email == normalized_email)
+
+        app_raw_phone = re.sub(r"\D", "", str(application.get("phone") or ""))
+        app_norm_phone = app_raw_phone[-10:] if len(app_raw_phone) >= 7 else ""
+        phone_match = bool(normalized_phone and app_norm_phone and app_norm_phone == normalized_phone)
+
+        app_checksum = str(application.get("fileChecksum") or "").strip()
+        checksum_match = bool(clean_checksum and app_checksum and app_checksum == clean_checksum)
+
         if email_match or phone_match or checksum_match:
             return application
     return None

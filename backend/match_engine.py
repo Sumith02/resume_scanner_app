@@ -57,9 +57,15 @@ def compute_multidimensional_match(
     min_exp = job_reqs["minExperience"]
 
     candidate_skills = {
-        s.get("skillName", "").lower(): s for s in candidate.get("skills", [])
+        s.get("skillName", "").lower(): s
+        for s in (candidate.get("skills") or [])
+        if isinstance(s, dict) and s.get("skillName")
     }
-    candidate_skills_flat = {s.lower() for s in candidate.get("matchedSkills", [])}
+    candidate_skills_flat = {
+        s.lower()
+        for s in (candidate.get("matchedSkills") or [])
+        if isinstance(s, str)
+    }
     candidate_skills_flat.update(candidate_skills.keys())
 
     # 1. Required Skills Score (35%)
