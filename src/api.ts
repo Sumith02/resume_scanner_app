@@ -167,6 +167,10 @@ export async function mergeDuplicateCandidates(primaryId: string, secondaryId: s
   });
 }
 
+export async function deleteCandidate(candidateId: string): Promise<void> {
+  await request<void>(`/api/candidates/${candidateId}`, { method: "DELETE" });
+}
+
 export async function fetchReport(): Promise<ReportSummary> {
   const data = await request<{ report: ReportSummary }>("/api/reports/summary");
   return data.report;

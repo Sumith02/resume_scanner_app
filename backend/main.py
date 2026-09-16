@@ -848,6 +848,16 @@ def merge_duplicate_candidates(payload: CandidateMergeRequest, context: Context)
     return result
 
 
+@app.delete("/api/candidates/{candidate_id}", status_code=204)
+def delete_candidate(candidate_id: str, context: Context) -> Response:
+    repository, _, _, _, _ = services.require()
+    require_role(context, "owner", "admin", "recruiter")
+    if not repository.delete_candidate(candidate_id, context):
+        raise AppError("Candidate not found", 404, "not_found")
+    repository.audit(context, "candidate.deleted", "candidate", candidate_id)
+    return Response(status_code=204)
+
+
 @app.get("/api/candidates/{candidate_id}/graph")
 def candidate_talent_graph(candidate_id: str, context: Context) -> dict[str, object]:
     repository, _, _, _, _ = services.require()

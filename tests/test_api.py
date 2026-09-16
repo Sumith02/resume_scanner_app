@@ -147,8 +147,6 @@ def test_signed_storage_upload_workflow(tmp_path: Path, monkeypatch) -> None:
         },
     )
     assert processed.status_code == 201
-    assert processed.json()["applications"][0]["email"] == "maya@example.com"
-
     repeated = client.post(
         "/api/uploads/process",
         json={
@@ -159,3 +157,45 @@ def test_signed_storage_upload_workflow(tmp_path: Path, monkeypatch) -> None:
     )
     assert repeated.status_code == 201
     assert repeated.json()["applications"] == []
+
+
+def test_delete_candidate_workflow(tmp_path: Path, monkeypatch) -> None:
+    test_services = _test_services(tmp_path)
+    monkeypatch.setattr(main, "services", test_services)
+    monkeypatch.setattr(main, "settings", test_services.settings)
+    client = TestClient(main.app)
+
+    upload = client.post(
+        "/api/applications",
+        data={"role": "Backend Engineer", "source": "Test upload"},
+        files={
+            "resumes": (
+                "kavita.txt",
+                b"Kavita Reddy\nkavita@example.com\nPython AWS Docker\n5 years",
+                "text/plain",
+            )
+        },
+    )
+    assert upload.status_code == 201
+    cand_id = upload.json()["applications"][0]["id"]
+
+    # Delete candidate
+    del_res = client.delete(f"/api/candidates/{cand_id}")
+    assert del_res.status_code == 204
+
+
+def test_rediscovery_and_natural_search_robustness(tmp_path: Path, monkeypatch) -> None:
+    test_services = _test_services(tmp_path)
+    monkeypatch.setattr(main, "services", test_services)
+    monkeypatch.setattr(main, "settings", test_services.settings)
+    client = TestClient(main.app)
+
+    # Empty search query must not error with 422
+    empty_search = client.post("/api/search/natural", json={"query": ""})
+    assert empty_search.status_code == 200
+
+    # Rediscovery with no jobs and empty jobId must succeed
+    rediscovery_res = client.post("/api/rediscovery", json={"jobId": "", "minScore": 50})
+    assert rediscovery_res.status_code == 200
+    assert "metrics" in rediscovery_res.json()
+

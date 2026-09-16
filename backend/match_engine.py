@@ -46,6 +46,18 @@ def parse_job_requirements(job_title: str, description: str) -> dict[str, Any]:
     }
 
 
+def safe_float(val: Any, default: float = 0.0) -> float:
+    if val is None:
+        return default
+    if isinstance(val, (int, float)):
+        return float(val)
+    try:
+        cleaned = re.sub(r"[^\d.]", "", str(val))
+        return float(cleaned) if cleaned else default
+    except (ValueError, TypeError):
+        return default
+
+
 def compute_multidimensional_match(
     candidate: dict[str, Any],
     job: dict[str, Any],
@@ -54,7 +66,7 @@ def compute_multidimensional_match(
     job_reqs = parse_job_requirements(job.get("title", ""), job.get("description", ""))
     required = job_reqs["requiredSkills"]
     preferred = job_reqs["preferredSkills"]
-    min_exp = job_reqs["minExperience"]
+    min_exp = safe_float(job_reqs["minExperience"], 3.0)
 
     candidate_skills = {
         s.get("skillName", "").lower(): s
@@ -81,7 +93,7 @@ def compute_multidimensional_match(
     score_preferred = round(pref_ratio * 15)
 
     # 3. Experience Fit (15%)
-    cand_exp = float(candidate.get("experienceYears") or 0)
+    cand_exp = safe_float(candidate.get("experienceYears"), 0.0)
     if cand_exp >= min_exp:
         exp_ratio = 1.0
     elif cand_exp >= min_exp * 0.7:
@@ -97,9 +109,12 @@ def compute_multidimensional_match(
     score_education = 10 if has_degree else 7
 
     # 5. Semantic Relevance (20%)
+    primary_domain = str(candidate.get("primaryDomainKey") or "").strip().lower()
+    primary_skill = str(candidate.get("primarySkillKey") or "").strip().lower()
+    job_title = str(job.get("title") or "").strip().lower()
     domain_match = (
-        candidate.get("primaryDomainKey") == "backend"
-        or candidate.get("primarySkillKey") in job.get("title", "").lower()
+        primary_domain == "backend"
+        or (bool(primary_skill) and primary_skill in job_title)
     )
     score_semantic = 18 if domain_match else 14
 

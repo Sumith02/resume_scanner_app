@@ -151,8 +151,8 @@ class Repository(Protocol):
     def create_talent_pool(self, name: str, description: str, context: RequestContext) -> dict[str, Any]: ...
     def add_to_talent_pool(self, pool_id: str, candidate_ids: list[str], context: RequestContext) -> int: ...
     def remove_from_talent_pool(self, pool_id: str, candidate_id: str, context: RequestContext) -> bool: ...
-    def list_processing_jobs(self, context: RequestContext) -> list[dict[str, Any]]: ...
     def merge_candidates(self, primary_id: str, secondary_id: str, context: RequestContext) -> dict[str, Any]: ...
+    def delete_candidate(self, candidate_id: str, context: RequestContext) -> bool: ...
 
 
 
@@ -676,6 +676,15 @@ class SupabaseRepository:
     def merge_candidates(self, primary_id: str, secondary_id: str, context: RequestContext) -> dict[str, Any]:
         return {"primaryId": primary_id, "mergedId": secondary_id, "status": "merged"}
 
+    def delete_candidate(self, candidate_id: str, context: RequestContext) -> bool:
+        cand = self.get_candidate(candidate_id, context)
+        if not cand:
+            return False
+        app_ids = cand.get("applicationIds", []) or [candidate_id]
+        if app_ids:
+            self.delete_applications(app_ids, context)
+        return True
+
 
 
 class LocalRepository:
@@ -1165,6 +1174,19 @@ class LocalRepository:
             self.record_candidate_event(primary_id, "merged_duplicate", context.user_id, {"mergedCandidateId": secondary_id}, context)
             return {"primaryId": primary_id, "mergedId": secondary_id, "status": "merged"}
         return {"status": "not_found"}
+
+    def delete_candidate(self, candidate_id: str, context: RequestContext) -> bool:
+        data = self._read()
+        target = next((c for c in data.get("candidates", []) if c["id"] == candidate_id), None)
+        if not target:
+            return False
+        app_ids = set(target.get("applicationIds", []) or [candidate_id])
+        data["candidates"] = [c for c in data.get("candidates", []) if c["id"] != candidate_id]
+        removed_apps = [a for a in data.get("applications", []) if a["id"] in app_ids]
+        data["applications"] = [a for a in data.get("applications", []) if a["id"] not in app_ids]
+        self._write(data)
+        self.delete_resume_objects([item.get("storedName", "") for item in removed_apps if item.get("storedName")])
+        return True
 
 
 

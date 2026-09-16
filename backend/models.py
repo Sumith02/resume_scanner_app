@@ -132,7 +132,7 @@ class UploadCompleteRequest(BaseModel):
 
 
 class NaturalSearchRequest(BaseModel):
-    query: str = Field(min_length=1, max_length=1000)
+    query: str = Field(default="", max_length=1000)
 
 
 class RediscoveryRequest(BaseModel):

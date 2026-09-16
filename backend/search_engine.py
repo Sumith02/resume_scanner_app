@@ -5,9 +5,21 @@ from typing import Any
 from .talent_engine import CANONICAL_SKILLS_MAP
 
 
-def parse_natural_language_query(query: str) -> dict[str, Any]:
+def safe_float(val: Any, default: float = 0.0) -> float:
+    if val is None:
+        return default
+    if isinstance(val, (int, float)):
+        return float(val)
+    try:
+        cleaned = re.sub(r"[^\d.]", "", str(val))
+        return float(cleaned) if cleaned else default
+    except (ValueError, TypeError):
+        return default
+
+
+def parse_natural_language_query(query: str | None) -> dict[str, Any]:
     """Interprets recruiter conversational queries into structured parameters."""
-    normalized = query.lower()
+    normalized = (query or "").lower().strip()
     
     # 1. Detect skills mentioned
     detected_skills = []
@@ -42,7 +54,7 @@ def parse_natural_language_query(query: str) -> dict[str, Any]:
         seniority = "Junior"
 
     return {
-        "rawQuery": query,
+        "rawQuery": query or "",
         "parsedCriteria": {
             "skills": detected_skills,
             "minExperience": min_exp,
@@ -53,11 +65,13 @@ def parse_natural_language_query(query: str) -> dict[str, Any]:
 
 
 def execute_hybrid_search(
-    query: str,
+    query: str | None,
     candidates: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Parses query and performs hybrid scoring against candidates."""
-    parsed = parse_natural_language_query(query)
+    candidates = candidates or []
+    query_str = (query or "").strip()
+    parsed = parse_natural_language_query(query_str)
     criteria = parsed["parsedCriteria"]
     target_skills = [s.lower() for s in criteria["skills"]]
     min_exp = criteria["minExperience"]
@@ -77,7 +91,7 @@ def execute_hybrid_search(
             for s in (cand.get("matchedSkills") or [])
             if isinstance(s, str)
         } | set(cand_skills)
-        cand_exp = float(cand.get("experienceYears") or 0)
+        cand_exp = safe_float(cand.get("experienceYears"), 0.0)
         cand_loc = (cand.get("location") or "").lower()
 
         # Skill match score

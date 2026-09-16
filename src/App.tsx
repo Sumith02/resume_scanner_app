@@ -23,6 +23,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Tags,
+  Trash2,
   UploadCloud,
   UsersRound,
   X,
@@ -42,6 +43,7 @@ import {
   fetchAgencyClients,
   fetchCampaigns,
   fetchCandidate,
+  deleteCandidate,
   fetchCandidates,
   fetchEligibleCandidates,
   fetchGmailAuthUrl,
@@ -287,13 +289,16 @@ export default function App() {
   }, [activeCandidateId]);
 
   // Handle Global Natural Search
-  async function handleGlobalSearch(e?: FormEvent) {
+  async function handleGlobalSearch(e?: FormEvent, queryOverride?: string) {
     if (e) e.preventDefault();
-    if (!globalQuery.trim()) return;
+    const q = (queryOverride !== undefined ? queryOverride : globalQuery).trim();
+    if (queryOverride !== undefined) {
+      setGlobalQuery(queryOverride);
+    }
     setIsSearching(true);
     setActiveView("search");
     try {
-      const result = await executeNaturalSearch(globalQuery.trim());
+      const result = await executeNaturalSearch(q);
       setNaturalSearchResult(result);
     } catch (err) {
       setError("Search failed: " + (err instanceof Error ? err.message : "Error"));
@@ -793,6 +798,13 @@ export default function App() {
                   results={rediscoveryResults}
                   onRun={handleRunRediscovery}
                   onSelectCandidate={(id) => setActiveCandidateId(id)}
+                  onActivateCandidate={async (candId, name) => {
+                    await updateCandidateProfile(candId, { status: "shortlisted" });
+                    setCandidates((prev) =>
+                      prev.map((c) => (c.id === candId ? { ...c, status: "shortlisted" } : c))
+                    );
+                    setNotice(`Candidate ${name} activated and moved to Shortlisted stage!`);
+                  }}
                   onReopenOutreach={(jobId) => {
                     setCampaignPreselectedJobId(jobId);
                     setActiveView("campaigns");
@@ -833,9 +845,12 @@ export default function App() {
               {activeView === "search" && (
                 <TalentSearchView
                   query={globalQuery}
+                  onQueryChange={setGlobalQuery}
+                  onSearch={(q) => handleGlobalSearch(undefined, q)}
                   isSearching={isSearching}
                   result={naturalSearchResult}
                   onSelectCandidate={(id) => setActiveCandidateId(id)}
+                  allCandidates={candidates}
                 />
               )}
 
@@ -891,6 +906,10 @@ export default function App() {
                     setTalentPools([...talentPools, pool]);
                     setNotice("Talent pool created.");
                   }}
+                  onExplorePool={(poolName) => {
+                    setActiveView("candidates");
+                    setNotice(`Exploring candidates in pool: ${poolName}`);
+                  }}
                 />
               )}
 
@@ -928,6 +947,11 @@ export default function App() {
                     await mergeDuplicateCandidates(pId, sId);
                     await loadWorkspace();
                     setNotice("Duplicate candidate merged successfully.");
+                  }}
+                  onDeleteCandidate={async (candId) => {
+                    await deleteCandidate(candId);
+                    await loadWorkspace();
+                    setNotice("Candidate record permanently deleted.");
                   }}
                 />
               )}
@@ -1492,6 +1516,7 @@ function TalentRediscoveryView({
   results,
   onRun,
   onSelectCandidate,
+  onActivateCandidate,
   onReopenOutreach
 }: {
   jobs: JobOpening[];
@@ -1502,6 +1527,7 @@ function TalentRediscoveryView({
   results: RediscoveryResult[];
   onRun: () => void;
   onSelectCandidate: (id: string) => void;
+  onActivateCandidate?: (id: string, name: string) => void;
   onReopenOutreach?: (jobId: string) => void;
 }) {
   return (
@@ -1526,7 +1552,7 @@ function TalentRediscoveryView({
             onClick={onRun}
             disabled={loading}
             className="button"
-            style={{ background: "#0f766e", color: "#fff", border: "none", padding: "8px 16px", borderRadius: "6px", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px" }}
+            style={{ background: "#0f766e", color: "#fff", border: "none", padding: "8px 16px", borderRadius: "6px", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}
           >
             {loading ? <Loader2 size={14} className="spinning" /> : <Zap size={14} />}
             <span>Run Rediscovery Engine</span>
@@ -1585,58 +1611,79 @@ function TalentRediscoveryView({
       )}
 
       {/* RESULTS LIST */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-        {results.map((item) => (
-          <div
-            key={item.candidate.id}
-            style={{
-              background: "#fff",
-              border: "1px solid var(--line)",
-              borderRadius: "8px",
-              padding: "16px 20px",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center"
-            }}
+      {results.length === 0 ? (
+        <div style={{ background: "#fff", border: "1px dashed var(--line)", borderRadius: "8px", padding: "40px 24px", textAlign: "center" }}>
+          <Sparkles size={32} color="#0f766e" style={{ margin: "0 auto 12px" }} />
+          <h3 style={{ margin: "0 0 6px 0", fontSize: "16px" }}>No Rediscovered Candidates Found</h3>
+          <p style={{ margin: "0 auto 18px", color: "var(--muted)", fontSize: "13px", maxWidth: "480px" }}>
+            Select an open job opening above and click "Run Rediscovery Engine" to automatically match historical candidates and unselected finalists.
+          </p>
+          <button
+            onClick={onRun}
+            disabled={loading}
+            className="button"
+            style={{ background: "#0f766e", color: "#fff", border: "none", padding: "8px 18px", borderRadius: "6px", fontSize: "13px", display: "inline-flex", alignItems: "center", gap: "8px", cursor: "pointer" }}
           >
-            <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
-              <div style={{ fontSize: "20px", fontWeight: 700, color: "var(--brand)", minWidth: "50px" }}>
-                {item.overallScore}%
+            {loading ? <Loader2 size={14} className="spinning" /> : <Zap size={14} />}
+            <span>Run Rediscovery Engine</span>
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+          {results.map((item) => (
+            <div
+              key={item.candidate.id}
+              style={{
+                background: "#fff",
+                border: "1px solid var(--line)",
+                borderRadius: "8px",
+                padding: "16px 20px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center"
+              }}
+            >
+              <div style={{ display: "flex", gap: "16px", alignItems: "center" }}>
+                <div style={{ fontSize: "20px", fontWeight: 700, color: "var(--brand)", minWidth: "50px" }}>
+                  {item.overallScore}%
+                </div>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                    <strong style={{ fontSize: "14px" }}>{item.candidate.canonicalName}</strong>
+                    <span className={`historical-tag ${item.historicalTag.includes("interview") ? "interviewed" : "shortlisted"}`}>
+                      {item.historicalTag}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: "13px", color: "var(--muted)", marginBottom: "6px" }}>
+                    {item.candidate.currentTitle} • {item.candidate.experienceYears ? `${item.candidate.experienceYears} yrs` : "Experienced"} • {item.candidate.location}
+                  </div>
+                  <div style={{ fontSize: "12px", color: "#475569" }}>
+                    <strong>Rediscovery Signal:</strong> {item.rediscoveryReason}
+                  </div>
+                </div>
               </div>
-              <div>
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
-                  <strong style={{ fontSize: "14px" }}>{item.candidate.canonicalName}</strong>
-                  <span className={`historical-tag ${item.historicalTag.includes("interview") ? "interviewed" : "shortlisted"}`}>
-                    {item.historicalTag}
-                  </span>
-                </div>
-                <div style={{ fontSize: "13px", color: "var(--muted)", marginBottom: "6px" }}>
-                  {item.candidate.currentTitle} • {item.candidate.experienceYears ? `${item.candidate.experienceYears} yrs` : "Experienced"} • {item.candidate.location}
-                </div>
-                <div style={{ fontSize: "12px", color: "#475569" }}>
-                  <strong>Rediscovery Signal:</strong> {item.rediscoveryReason}
-                </div>
-              </div>
-            </div>
 
-            <div style={{ display: "flex", gap: "8px" }}>
-              <button
-                onClick={() => onSelectCandidate(item.candidate.id)}
-                className="button"
-                style={{ background: "#f8fafc", border: "1px solid var(--line)", padding: "6px 12px", borderRadius: "6px", fontSize: "12px" }}
-              >
-                View Evidence
-              </button>
-              <button
-                className="button"
-                style={{ background: "#111827", color: "#fff", border: "none", padding: "6px 14px", borderRadius: "6px", fontSize: "12px" }}
-              >
-                Activate Candidate
-              </button>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  onClick={() => onSelectCandidate(item.candidate.id)}
+                  className="button"
+                  style={{ background: "#f8fafc", border: "1px solid var(--line)", padding: "6px 12px", borderRadius: "6px", fontSize: "12px", cursor: "pointer" }}
+                >
+                  View Evidence
+                </button>
+                <button
+                  onClick={() => onActivateCandidate && onActivateCandidate(item.candidate.id, item.candidate.canonicalName)}
+                  className="button"
+                  style={{ background: "#0f766e", color: "#fff", border: "none", padding: "6px 14px", borderRadius: "6px", fontSize: "12px", cursor: "pointer" }}
+                  title="Move candidate to Shortlisted stage for this opening"
+                >
+                  Activate Candidate
+                </button>
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1647,29 +1694,146 @@ function TalentRediscoveryView({
 
 function TalentSearchView({
   query,
+  onQueryChange,
+  onSearch,
   isSearching,
   result,
-  onSelectCandidate
+  onSelectCandidate,
+  allCandidates = []
 }: {
   query: string;
+  onQueryChange: (q: string) => void;
+  onSearch: (q: string) => void;
   isSearching: boolean;
   result: NaturalSearchResult | null;
   onSelectCandidate: (id: string) => void;
+  allCandidates?: Candidate[];
 }) {
+  const [localQuery, setLocalQuery] = useState(query || "");
+
+  useEffect(() => {
+    setLocalQuery(query || "");
+  }, [query]);
+
+  const quickPrompts = [
+    "Senior Python Developer (5+ yrs)",
+    "Frontend React / TypeScript",
+    "Cloud & DevOps Architect (AWS/GCP)",
+    "Full Stack Engineer (Bengaluru)",
+    "Machine Learning & GenAI Specialist"
+  ];
+
+  function handleSubmit(e?: FormEvent) {
+    if (e) e.preventDefault();
+    onQueryChange(localQuery);
+    onSearch(localQuery);
+  }
+
+  function handleQuickPrompt(promptText: string) {
+    setLocalQuery(promptText);
+    onQueryChange(promptText);
+    onSearch(promptText);
+  }
+
   return (
     <div className="talent-search-view">
       <div style={{ marginBottom: "20px" }}>
         <h2 style={{ margin: "0 0 6px 0", fontSize: "20px" }}>Natural Language Talent Search</h2>
         <p style={{ margin: 0, color: "var(--muted)", fontSize: "13px" }}>
-          Interprets recruiter requirements and scores candidate profiles using structured criteria and semantic alignment.
-          {query ? <span> Searching for: <strong>"{query}"</strong></span> : null}
+          Describe the exact role, required technologies, experience level, and location in plain English. The AI parses structured criteria and ranks candidates.
         </p>
       </div>
 
+      {/* DEDICATED SEARCH BAR */}
+      <form onSubmit={handleSubmit} style={{ display: "flex", gap: "10px", marginBottom: "16px" }}>
+        <div style={{ flex: 1, position: "relative" }}>
+          <input
+            type="text"
+            placeholder="e.g. Senior Backend Engineer with 5+ years Python and Docker in Bengaluru..."
+            value={localQuery}
+            onChange={(e) => setLocalQuery(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "12px 16px",
+              borderRadius: "8px",
+              border: "1px solid var(--line)",
+              fontSize: "14px",
+              background: "#fff",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.05)"
+            }}
+          />
+          {localQuery && (
+            <button
+              type="button"
+              onClick={() => {
+                setLocalQuery("");
+                onQueryChange("");
+              }}
+              style={{
+                position: "absolute",
+                right: "12px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                background: "none",
+                border: "none",
+                color: "#94a3b8",
+                cursor: "pointer"
+              }}
+            >
+              <X size={16} />
+            </button>
+          )}
+        </div>
+        <button
+          type="submit"
+          disabled={isSearching}
+          style={{
+            background: "var(--brand)",
+            color: "#fff",
+            border: "none",
+            padding: "0 22px",
+            borderRadius: "8px",
+            fontSize: "14px",
+            fontWeight: 600,
+            cursor: "pointer",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "8px"
+          }}
+        >
+          {isSearching ? <Loader2 size={16} className="spinning" /> : <Search size={16} />}
+          <span>Search Talent</span>
+        </button>
+      </form>
+
+      {/* QUICK PRESET CHIPS */}
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "24px" }}>
+        <span style={{ fontSize: "12px", color: "var(--muted)", fontWeight: 600 }}>Quick Presets:</span>
+        {quickPrompts.map((p, idx) => (
+          <button
+            key={idx}
+            type="button"
+            onClick={() => handleQuickPrompt(p)}
+            style={{
+              background: "#f1f5f9",
+              border: "1px solid #e2e8f0",
+              color: "#334155",
+              padding: "4px 10px",
+              borderRadius: "6px",
+              fontSize: "12px",
+              cursor: "pointer",
+              transition: "all 0.15s ease"
+            }}
+          >
+            {p}
+          </button>
+        ))}
+      </div>
+
       {isSearching && (
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", padding: "20px" }}>
-          <Loader2 size={18} className="spinning" />
-          <span>Interpreting request and ranking candidates...</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", padding: "24px", background: "#fff", borderRadius: "8px", border: "1px solid var(--line)", marginBottom: "20px" }}>
+          <Loader2 size={20} className="spinning" color="var(--brand)" />
+          <span style={{ fontSize: "14px", color: "#334155" }}>Analyzing natural language requirements and scoring candidates...</span>
         </div>
       )}
 
@@ -1701,23 +1865,81 @@ function TalentSearchView({
                   Seniority: {result.parsedCriteria.seniority}
                 </span>
               )}
+              {result.parsedCriteria.skills.length === 0 && !result.parsedCriteria.minExperience && !result.parsedCriteria.location && !result.parsedCriteria.seniority && (
+                <span style={{ fontSize: "12px", color: "#64748b" }}>Broad Semantic Search across all candidate profiles</span>
+              )}
             </div>
           </div>
 
           <h3 style={{ fontSize: "15px", marginBottom: "14px" }}>
-            Found {result.totalFound} matching candidates
+            Found {result.totalFound} matching candidate{result.totalFound === 1 ? "" : "s"}
           </h3>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-            {result.results.map((item) => (
+          {result.results.length === 0 ? (
+            <div style={{ background: "#fff", border: "1px dashed var(--line)", borderRadius: "8px", padding: "32px", textAlign: "center", color: "var(--muted)" }}>
+              No candidates in your database currently meet all parsed criteria. Try broader keywords or click one of the quick presets above.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              {result.results.map((item) => (
+                <div
+                  key={item.candidate.id}
+                  onClick={() => onSelectCandidate(item.candidate.id)}
+                  style={{
+                    background: "#fff",
+                    border: "1px solid var(--line)",
+                    borderRadius: "8px",
+                    padding: "16px 20px",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    cursor: "pointer",
+                    transition: "border-color 0.15s ease"
+                  }}
+                >
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                      <strong style={{ fontSize: "14px" }}>{item.candidate.canonicalName}</strong>
+                      <span style={{ fontSize: "12px", color: "var(--muted)" }}>{item.candidate.currentTitle}</span>
+                      {item.candidate.location && (
+                        <span style={{ fontSize: "11px", color: "#64748b", background: "#f1f5f9", padding: "2px 6px", borderRadius: "4px" }}>
+                          {item.candidate.location}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: "12px", color: "#475569" }}>
+                      {item.reasons.join(" • ")}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--brand)" }}>
+                      {item.relevanceScore}%
+                    </div>
+                    <span style={{ fontSize: "11px", color: "var(--muted)" }}>Relevance</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* IF NO SEARCH PERFORMED YET, SHOW CANDIDATE POOL PREVIEW */}
+      {!result && !isSearching && allCandidates.length > 0 && (
+        <div style={{ marginTop: "10px" }}>
+          <h3 style={{ fontSize: "15px", marginBottom: "12px", color: "#334155" }}>
+            Available Candidates in Private Pool ({allCandidates.length})
+          </h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+            {allCandidates.slice(0, 5).map((c) => (
               <div
-                key={item.candidate.id}
-                onClick={() => onSelectCandidate(item.candidate.id)}
+                key={c.id}
+                onClick={() => onSelectCandidate(c.id)}
                 style={{
                   background: "#fff",
                   border: "1px solid var(--line)",
                   borderRadius: "8px",
-                  padding: "16px 20px",
+                  padding: "14px 18px",
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "center",
@@ -1725,17 +1947,17 @@ function TalentSearchView({
                 }}
               >
                 <div>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
-                    <strong style={{ fontSize: "14px" }}>{item.candidate.canonicalName}</strong>
-                    <span style={{ fontSize: "12px", color: "var(--muted)" }}>{item.candidate.currentTitle}</span>
-                  </div>
-                  <div style={{ fontSize: "12px", color: "#475569" }}>
-                    {item.reasons.join(" • ")}
+                  <strong style={{ fontSize: "14px" }}>{c.canonicalName}</strong>
+                  <div style={{ fontSize: "12px", color: "var(--muted)", marginTop: "2px" }}>
+                    {c.currentTitle} • {c.location} • {c.experienceYears ? `${c.experienceYears} yrs` : "Experienced"}
                   </div>
                 </div>
-                <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--brand)" }}>
-                  {item.relevanceScore}%
-                </div>
+                <button
+                  type="button"
+                  style={{ background: "#f8fafc", border: "1px solid var(--line)", padding: "4px 10px", borderRadius: "6px", fontSize: "12px", cursor: "pointer" }}
+                >
+                  View Dossier →
+                </button>
               </div>
             ))}
           </div>
@@ -2095,18 +2317,50 @@ function JobsIntelligenceView({
 
 function TalentPoolsView({
   pools,
-  candidates: _candidates,
-  onSelectCandidate: _onSelectCandidate,
-  onCreatePool
+  candidates = [],
+  onSelectCandidate,
+  onCreatePool,
+  onExplorePool
 }: {
   pools: TalentPool[];
   candidates?: Candidate[];
   onSelectCandidate?: (id: string) => void;
   onCreatePool: (name: string, desc: string) => void;
+  onExplorePool?: (poolName: string) => void;
 }) {
   const [showModal, setShowModal] = useState(false);
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
+  const [activePool, setActivePool] = useState<TalentPool | null>(null);
+
+  // Match candidates to active pool based on title, skills, or status
+  const poolCandidates = useMemo(() => {
+    if (!activePool || !candidates.length) return [];
+    const lowerName = activePool.name.toLowerCase();
+    const lowerDesc = activePool.description.toLowerCase();
+
+    return candidates.filter((c) => {
+      const skills = (c.matchedSkills || []).map((s) => s.toLowerCase());
+      const title = (c.currentTitle || "").toLowerCase();
+      const domain = (c.primaryDomain || "").toLowerCase();
+      const status = c.status || "";
+
+      if (lowerName.includes("silver") || lowerName.includes("finalist")) {
+        return ["interview", "shortlisted", "offer", "hold"].includes(status);
+      }
+      if (lowerName.includes("react") || lowerName.includes("frontend")) {
+        return skills.some((s) => s.includes("react") || s.includes("front")) || title.includes("react") || title.includes("front");
+      }
+      if (lowerName.includes("python") || lowerName.includes("backend")) {
+        return skills.some((s) => s.includes("python") || s.includes("back") || s.includes("django") || s.includes("fastapi")) || title.includes("backend");
+      }
+      return (
+        skills.some((s) => lowerName.includes(s) || lowerDesc.includes(s)) ||
+        title.includes(lowerName) ||
+        domain.includes(lowerName)
+      );
+    });
+  }, [activePool, candidates]);
 
   return (
     <div className="talent-pools-view">
@@ -2120,7 +2374,7 @@ function TalentPoolsView({
         <button
           onClick={() => setShowModal(true)}
           className="button"
-          style={{ background: "#111827", color: "#fff", border: "none", padding: "8px 16px", borderRadius: "6px", fontSize: "13px" }}
+          style={{ background: "#111827", color: "#fff", border: "none", padding: "8px 16px", borderRadius: "6px", fontSize: "13px", cursor: "pointer" }}
         >
           + Create Talent Pool
         </button>
@@ -2160,10 +2414,10 @@ function TalentPoolsView({
             />
           </div>
           <div style={{ display: "flex", gap: "8px" }}>
-            <button type="submit" style={{ background: "#0f766e", color: "#fff", border: "none", padding: "6px 14px", borderRadius: "4px" }}>
+            <button type="submit" style={{ background: "#0f766e", color: "#fff", border: "none", padding: "6px 14px", borderRadius: "4px", cursor: "pointer" }}>
               Save Pool
             </button>
-            <button type="button" onClick={() => setShowModal(false)} style={{ background: "#f1f5f9", border: "none", padding: "6px 12px", borderRadius: "4px" }}>
+            <button type="button" onClick={() => setShowModal(false)} style={{ background: "#f1f5f9", border: "none", padding: "6px 12px", borderRadius: "4px", cursor: "pointer" }}>
               Cancel
             </button>
           </div>
@@ -2183,12 +2437,85 @@ function TalentPoolsView({
               </span>
             </div>
             <p style={{ margin: "0 0 12px 0", fontSize: "12px", color: "var(--muted)" }}>{p.description}</p>
-            <button style={{ border: "none", background: "none", color: "var(--brand)", fontSize: "12px", padding: 0, cursor: "pointer" }}>
-              Explore candidates in pool →
+            <button
+              type="button"
+              onClick={() => setActivePool(p)}
+              style={{ border: "none", background: "none", color: "var(--brand)", fontSize: "12px", padding: 0, cursor: "pointer", fontWeight: 600 }}
+            >
+              Explore candidates in pool ({p.memberCount}) →
             </button>
           </div>
         ))}
       </div>
+
+      {activePool && (
+        <div style={{ marginTop: "24px", background: "#fff", border: "1px solid var(--line)", borderRadius: "8px", padding: "20px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: "16px" }}>Candidates in "{activePool.name}" Pool</h3>
+              <p style={{ margin: "2px 0 0", fontSize: "12px", color: "var(--muted)" }}>{activePool.description}</p>
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              {onExplorePool && (
+                <button
+                  type="button"
+                  onClick={() => onExplorePool(activePool.name)}
+                  className="button"
+                  style={{ background: "#0f766e", color: "#fff", border: "none", padding: "6px 14px", borderRadius: "6px", fontSize: "12px", cursor: "pointer" }}
+                >
+                  View in Talent Database →
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setActivePool(null)}
+                style={{ background: "#f1f5f9", border: "none", padding: "6px 10px", borderRadius: "6px", cursor: "pointer" }}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+
+          {poolCandidates.length === 0 ? (
+            <div style={{ padding: "24px", textAlign: "center", color: "var(--muted)", fontSize: "13px", background: "#f8fafc", borderRadius: "6px" }}>
+              No candidates currently match this pool in the active workspace. Ingest more candidates or update candidate stages.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              {poolCandidates.map((c) => (
+                <div
+                  key={c.id}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "12px 16px",
+                    background: "#f8fafc",
+                    borderRadius: "6px",
+                    border: "1px solid var(--line)"
+                  }}
+                >
+                  <div>
+                    <strong style={{ fontSize: "14px" }}>{c.canonicalName}</strong>
+                    <div style={{ fontSize: "12px", color: "var(--muted)", marginTop: "2px" }}>
+                      {c.currentTitle} • {c.location} • Stage: <strong>{c.status}</strong>
+                    </div>
+                  </div>
+                  {onSelectCandidate && (
+                    <button
+                      type="button"
+                      onClick={() => onSelectCandidate(c.id)}
+                      style={{ background: "#fff", border: "1px solid var(--line)", padding: "5px 12px", borderRadius: "4px", fontSize: "12px", cursor: "pointer" }}
+                    >
+                      View Dossier →
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -2649,70 +2976,210 @@ function IntakeCenterView({
 
 function DuplicatesCenterView({
   candidates,
-  onMerge
+  onMerge,
+  onDeleteCandidate
 }: {
   candidates: Candidate[];
-  onMerge: (primaryId: string, secondaryId: string) => void;
+  onMerge: (primaryId: string, secondaryId: string) => Promise<void> | void;
+  onDeleteCandidate?: (id: string) => Promise<void> | void;
 }) {
+  const [dismissedPairKeys, setDismissedPairKeys] = useState<Set<string>>(new Set());
+  const [busyActionKey, setBusyActionKey] = useState<string | null>(null);
+
   const pairs = useMemo(() => {
-    const list: Array<{ c1: Candidate; c2: Candidate; similarity: number }> = [];
-    if (candidates.length >= 2) {
-      list.push({ c1: candidates[0], c2: candidates[1], similarity: 96 });
+    const list: Array<{ c1: Candidate; c2: Candidate; similarity: number; reason: string; key: string }> = [];
+    const seenPairs = new Set<string>();
+
+    for (let i = 0; i < candidates.length; i++) {
+      for (let j = i + 1; j < candidates.length; j++) {
+        const c1 = candidates[i];
+        const c2 = candidates[j];
+        const pairKey = [c1.id, c2.id].sort().join("::");
+        if (seenPairs.has(pairKey) || dismissedPairKeys.has(pairKey)) continue;
+
+        let similarity = 0;
+        let reason = "";
+
+        const email1 = (c1.email || "").trim().toLowerCase();
+        const email2 = (c2.email || "").trim().toLowerCase();
+        const phone1 = (c1.phone || "").replace(/\D/g, "");
+        const phone2 = (c2.phone || "").replace(/\D/g, "");
+        const name1 = (c1.canonicalName || "").trim().toLowerCase();
+        const name2 = (c2.canonicalName || "").trim().toLowerCase();
+
+        // 1. Exact email match
+        if (email1 && email2 && email1 === email2) {
+          similarity = 99;
+          reason = `Matching email address (${c1.email})`;
+        } else if (phone1 && phone2 && phone1.length >= 7 && phone1 === phone2) {
+          // 2. Exact phone match
+          similarity = 96;
+          reason = `Matching phone number (${c1.phone})`;
+        } else if (name1 && name2 && name1 === name2) {
+          // 3. Name match with matching location or role
+          const sameLoc = c1.location && c2.location && c1.location.toLowerCase() === c2.location.toLowerCase();
+          const sameTitle = c1.currentTitle && c2.currentTitle && c1.currentTitle.toLowerCase() === c2.currentTitle.toLowerCase();
+          if (sameLoc || sameTitle) {
+            similarity = 88;
+            reason = `Identical candidate name (${c1.canonicalName}) with matching ${sameLoc ? "location" : "title"}`;
+          }
+        }
+
+        if (similarity > 0) {
+          seenPairs.add(pairKey);
+          list.push({ c1, c2, similarity, reason, key: pairKey });
+        }
+      }
     }
     return list;
-  }, [candidates]);
+  }, [candidates, dismissedPairKeys]);
+
+  function handleDismiss(key: string) {
+    setDismissedPairKeys((prev) => new Set(prev).add(key));
+  }
+
+  async function handleDelete(candId: string, candName: string, actionKey: string) {
+    if (!window.confirm(`Are you sure you want to permanently delete candidate "${candName}"? This action cannot be undone.`)) {
+      return;
+    }
+    if (!onDeleteCandidate) return;
+    setBusyActionKey(actionKey);
+    try {
+      await onDeleteCandidate(candId);
+    } finally {
+      setBusyActionKey(null);
+    }
+  }
+
+  async function handleMerge(pId: string, sId: string, actionKey: string) {
+    setBusyActionKey(actionKey);
+    try {
+      await onMerge(pId, sId);
+    } finally {
+      setBusyActionKey(null);
+    }
+  }
 
   return (
     <div className="duplicates-center-view">
       <div style={{ marginBottom: "20px" }}>
         <h2 style={{ margin: "0 0 4px 0", fontSize: "20px" }}>Duplicate Resolution Center</h2>
         <p style={{ margin: 0, color: "var(--muted)", fontSize: "13px" }}>
-          Never silently merge candidate records. Review high-probability identity duplicates and maintain clean data integrity.
+          Review high-probability identity duplicates detected across your candidate database. Merge profiles or permanently delete duplicate records.
         </p>
       </div>
 
-      {pairs.map((pair, idx) => (
-        <div
-          key={idx}
-          style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "8px", padding: "20px", marginBottom: "16px" }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
-            <span style={{ fontSize: "13px", fontWeight: 700, color: "#d97706" }}>
-              Possible Identity Duplicate ({pair.similarity}% confidence)
-            </span>
-            <div style={{ display: "flex", gap: "8px" }}>
-              <button
-                onClick={() => onMerge(pair.c1.id, pair.c2.id)}
-                className="button"
-                style={{ background: "#0f766e", color: "#fff", border: "none", padding: "6px 14px", borderRadius: "6px", fontSize: "12px" }}
-              >
-                Merge Profiles
-              </button>
-              <button
-                className="button"
-                style={{ background: "#f1f5f9", border: "none", padding: "6px 12px", borderRadius: "6px", fontSize: "12px" }}
-              >
-                Keep Separate
-              </button>
-            </div>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", fontSize: "13px" }}>
-            <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "6px" }}>
-              <strong>Candidate A: {pair.c1.canonicalName}</strong>
-              <div>Email: {pair.c1.email || "—"}</div>
-              <div>Location: {pair.c1.location}</div>
-              <div>Experience: {pair.c1.experienceYears} years</div>
-            </div>
-            <div style={{ background: "#f8fafc", padding: "12px", borderRadius: "6px" }}>
-              <strong>Candidate B: {pair.c2.canonicalName}</strong>
-              <div>Email: {pair.c2.email || "—"}</div>
-              <div>Location: {pair.c2.location}</div>
-              <div>Experience: {pair.c2.experienceYears} years</div>
-            </div>
-          </div>
+      {pairs.length === 0 ? (
+        <div style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "8px", padding: "48px 24px", textAlign: "center" }}>
+          <ShieldCheck size={36} color="#15803d" style={{ margin: "0 auto 12px" }} />
+          <h3 style={{ margin: "0 0 6px 0", fontSize: "16px", color: "#166534" }}>Clean Talent Database</h3>
+          <p style={{ margin: 0, color: "var(--muted)", fontSize: "13px" }}>
+            No identity duplicates detected among {candidates.length} candidates. Incoming resumes are automatically deduplicated by email and phone fingerprints.
+          </p>
         </div>
-      ))}
+      ) : (
+        pairs.map((pair) => (
+          <div
+            key={pair.key}
+            style={{ background: "#fff", border: "1px solid var(--line)", borderRadius: "8px", padding: "20px", marginBottom: "16px" }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px", flexWrap: "wrap", gap: "10px" }}>
+              <div>
+                <span style={{ fontSize: "13px", fontWeight: 700, color: "#d97706", display: "block" }}>
+                  Possible Identity Duplicate ({pair.similarity}% confidence)
+                </span>
+                <span style={{ fontSize: "12px", color: "#64748b" }}>
+                  Detected via: {pair.reason}
+                </span>
+              </div>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  disabled={busyActionKey !== null}
+                  onClick={() => handleMerge(pair.c1.id, pair.c2.id, `merge-${pair.key}`)}
+                  className="button"
+                  style={{ background: "#0f766e", color: "#fff", border: "none", padding: "6px 14px", borderRadius: "6px", fontSize: "12px", cursor: "pointer" }}
+                >
+                  {busyActionKey === `merge-${pair.key}` ? "Merging..." : "Merge Profiles (Keep A)"}
+                </button>
+                {onDeleteCandidate && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={busyActionKey !== null}
+                      onClick={() => handleDelete(pair.c2.id, pair.c2.canonicalName, `del-b-${pair.key}`)}
+                      style={{
+                        background: "#fff",
+                        color: "#b91c1c",
+                        border: "1px solid #fecaca",
+                        padding: "6px 12px",
+                        borderRadius: "6px",
+                        fontSize: "12px",
+                        cursor: "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "4px"
+                      }}
+                      title="Permanently delete Candidate B"
+                    >
+                      <Trash2 size={12} />
+                      <span>{busyActionKey === `del-b-${pair.key}` ? "Deleting..." : "Delete B"}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busyActionKey !== null}
+                      onClick={() => handleDelete(pair.c1.id, pair.c1.canonicalName, `del-a-${pair.key}`)}
+                      style={{
+                        background: "#fff",
+                        color: "#b91c1c",
+                        border: "1px solid #fecaca",
+                        padding: "6px 12px",
+                        borderRadius: "6px",
+                        fontSize: "12px",
+                        cursor: "pointer",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "4px"
+                      }}
+                      title="Permanently delete Candidate A"
+                    >
+                      <Trash2 size={12} />
+                      <span>{busyActionKey === `del-a-${pair.key}` ? "Deleting..." : "Delete A"}</span>
+                    </button>
+                  </>
+                )}
+                <button
+                  type="button"
+                  onClick={() => handleDismiss(pair.key)}
+                  className="button"
+                  style={{ background: "#f1f5f9", border: "1px solid var(--line)", padding: "6px 12px", borderRadius: "6px", fontSize: "12px", cursor: "pointer" }}
+                >
+                  Keep Separate
+                </button>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", fontSize: "13px" }}>
+              <div style={{ background: "#f8fafc", padding: "14px", borderRadius: "6px", border: "1px solid var(--line)" }}>
+                <strong style={{ fontSize: "14px", display: "block", marginBottom: "6px", color: "#0f172a" }}>Candidate A: {pair.c1.canonicalName}</strong>
+                <div><strong>Email:</strong> {pair.c1.email || "—"}</div>
+                <div><strong>Phone:</strong> {pair.c1.phone || "—"}</div>
+                <div><strong>Location:</strong> {pair.c1.location || "—"}</div>
+                <div><strong>Title:</strong> {pair.c1.currentTitle || "—"}</div>
+                <div><strong>Experience:</strong> {pair.c1.experienceYears ? `${pair.c1.experienceYears} years` : "—"}</div>
+              </div>
+              <div style={{ background: "#f8fafc", padding: "14px", borderRadius: "6px", border: "1px solid var(--line)" }}>
+                <strong style={{ fontSize: "14px", display: "block", marginBottom: "6px", color: "#0f172a" }}>Candidate B: {pair.c2.canonicalName}</strong>
+                <div><strong>Email:</strong> {pair.c2.email || "—"}</div>
+                <div><strong>Phone:</strong> {pair.c2.phone || "—"}</div>
+                <div><strong>Location:</strong> {pair.c2.location || "—"}</div>
+                <div><strong>Title:</strong> {pair.c2.currentTitle || "—"}</div>
+                <div><strong>Experience:</strong> {pair.c2.experienceYears ? `${pair.c2.experienceYears} years` : "—"}</div>
+              </div>
+            </div>
+          </div>
+        ))
+      )}
     </div>
   );
 }
@@ -3009,12 +3476,20 @@ function CampaignsView({
   const [newTestName, setNewTestName] = useState("");
   const [newTestEmail, setNewTestEmail] = useState("");
   const [activeTab, setActiveTab] = useState<"compose" | "preview" | "history">("compose");
+  const [dispatchMode, setDispatchMode] = useState<"auto" | "manual">("auto");
   const [submitting, setSubmitting] = useState(false);
   const [feedbackNotice, setFeedbackNotice] = useState("");
   const [feedbackError, setFeedbackError] = useState("");
 
   const targetJob = useMemo(() => jobs.find((j) => j.id === selectedJobId), [jobs, selectedJobId]);
   const targetJobTitle = targetJob ? targetJob.title : "Software Developer";
+
+  const matchingPriorCandidates = useMemo(() => {
+    const lower = targetJobTitle.toLowerCase();
+    return eligibleList.filter(
+      (c) => c.status !== "hired" && (c.role.toLowerCase().includes(lower) || lower.includes(c.role.toLowerCase()))
+    );
+  }, [eligibleList, targetJobTitle]);
 
   // Load campaigns and eligible candidates from backend
   useEffect(() => {
@@ -3205,6 +3680,54 @@ Talent Team`
     window.open(`mailto:?bcc=${bcc}&subject=${sub}&body=${text}`, "_blank");
   }
 
+  // Manual single candidate direct email action
+  function handleEmailSingleCandidate(cand: EligibleCandidate) {
+    const sub = encodeURIComponent(subject.replace(/\{\{name\}\}/gi, cand.candidateName).replace(/\{\{role\}\}/gi, targetJobTitle));
+    const text = encodeURIComponent(body.replace(/\{\{name\}\}/gi, cand.candidateName).replace(/\{\{role\}\}/gi, targetJobTitle));
+    window.open(`mailto:${cand.email}?subject=${sub}&body=${text}`, "_blank");
+  }
+
+  // Automatic 1-click campaign dispatch to past finalists
+  async function handleAutoDispatch() {
+    const targetSet = matchingPriorCandidates.length > 0 ? matchingPriorCandidates : eligibleList;
+    const targetIds = Array.from(new Set(targetSet.map((c) => c.applicationId)));
+
+    if (targetIds.length === 0 && customTestRecipients.length === 0) {
+      setFeedbackError("No eligible prior applicants found for this vacancy. Add test recipients to dispatch.");
+      return;
+    }
+
+    setSubmitting(true);
+    setFeedbackError("");
+    setFeedbackNotice("");
+    try {
+      const res = await createCampaign({
+        jobId: selectedJobId || undefined,
+        title: title || `Auto-Reopen Outreach: ${targetJobTitle}`,
+        subject,
+        body,
+        applicationIds: targetIds,
+        customRecipients: customTestRecipients.map((r) => ({
+          candidateName: r.candidateName,
+          email: r.email,
+          role: r.role
+        }))
+      });
+      const updatedCampaigns = await fetchCampaigns();
+      setCampaigns(updatedCampaigns);
+      const totalSent = targetIds.length + customTestRecipients.length;
+      if (res.providerConfigured) {
+        setFeedbackNotice(`⚡ Automatic campaign dispatched successfully to ${totalSent} past finalists!`);
+      } else {
+        setFeedbackNotice(`⚡ Automatic campaign queued for ${totalSent} past finalists (saved as local draft).`);
+      }
+    } catch (err) {
+      setFeedbackError(err instanceof Error ? err.message : "Failed to auto-dispatch campaign.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   // Sample candidate for preview
   const sampleCandidate = useMemo(() => {
     if (customTestRecipients.length > 0) {
@@ -3307,6 +3830,101 @@ Talent Team`
         <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "24px", alignItems: "start" }}>
           {/* LEFT: EMAIL COMPOSER & TEMPLATES */}
           <div style={{ background: "#ffffff", border: "1px solid var(--line)", borderRadius: "10px", padding: "24px" }}>
+            {/* DISPATCH MODE SELECTOR: AUTO VS MANUAL */}
+            <div style={{ marginBottom: "20px", background: "#f8fafc", padding: "14px 16px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+              <div style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", color: "#475569", marginBottom: "8px", letterSpacing: "0.5px" }}>
+                Campaign Dispatch Mode
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                <button
+                  type="button"
+                  onClick={() => setDispatchMode("auto")}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: "6px",
+                    border: dispatchMode === "auto" ? "2px solid #2563eb" : "1px solid var(--line)",
+                    background: dispatchMode === "auto" ? "#eff6ff" : "#fff",
+                    color: dispatchMode === "auto" ? "#1d4ed8" : "#475569",
+                    fontWeight: 600,
+                    fontSize: "12px",
+                    cursor: "pointer",
+                    textAlign: "left"
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "3px" }}>
+                    <Zap size={14} color="#2563eb" />
+                    <strong>⚡ Automatic Mode</strong>
+                  </div>
+                  <div style={{ fontSize: "11px", fontWeight: 400, opacity: 0.85 }}>
+                    Auto-matches past finalists & 1-click broadcasts priority notification.
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setDispatchMode("manual")}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: "6px",
+                    border: dispatchMode === "manual" ? "2px solid #2563eb" : "1px solid var(--line)",
+                    background: dispatchMode === "manual" ? "#eff6ff" : "#fff",
+                    color: dispatchMode === "manual" ? "#1d4ed8" : "#475569",
+                    fontWeight: 600,
+                    fontSize: "12px",
+                    cursor: "pointer",
+                    textAlign: "left"
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "3px" }}>
+                    <SlidersHorizontal size={14} color="#2563eb" />
+                    <strong>✍️ Manual Review Mode</strong>
+                  </div>
+                  <div style={{ fontSize: "11px", fontWeight: 400, opacity: 0.85 }}>
+                    Custom recipient selection, test units, direct 1-on-1 emails & drafts.
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* AUTOMATIC MODE HIGHLIGHT BANNER */}
+            {dispatchMode === "auto" && (
+              <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px", padding: "14px 16px", marginBottom: "18px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                  <strong style={{ fontSize: "13px", color: "#166534" }}>
+                    ⚡ Automatic Vacancy Re-engagement Ready
+                  </strong>
+                  <span style={{ fontSize: "11px", background: "#dcfce7", color: "#15803d", padding: "2px 8px", borderRadius: "12px", fontWeight: 600 }}>
+                    {matchingPriorCandidates.length} Prior Finalists Identified
+                  </span>
+                </div>
+                <p style={{ margin: "0 0 12px", fontSize: "12px", color: "#166534", lineHeight: 1.4 }}>
+                  When an employee leaves and this vacancy reopens, 1-click auto-dispatch immediately reaches all {matchingPriorCandidates.length > 0 ? matchingPriorCandidates.length : eligibleList.length} qualified prior finalists who interviewed or were shortlisted.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleAutoDispatch}
+                  disabled={submitting}
+                  style={{
+                    background: "linear-gradient(135deg, #15803d 0%, #166534 100%)",
+                    color: "#fff",
+                    border: "none",
+                    padding: "9px 18px",
+                    borderRadius: "6px",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    boxShadow: "0 2px 6px rgba(22, 101, 52, 0.25)"
+                  }}
+                >
+                  {submitting ? <Loader2 size={14} className="spinning" /> : <Zap size={14} />}
+                  <span>1-Click Auto-Dispatch Campaign ({matchingPriorCandidates.length > 0 ? matchingPriorCandidates.length : eligibleList.length} Finalists)</span>
+                </button>
+              </div>
+            )}
+
             {/* TARGET ROLE SELECTOR */}
             <div style={{ marginBottom: "18px" }}>
               <label style={{ fontSize: "12px", fontWeight: 700, color: "#334155", display: "block", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
@@ -3629,6 +4247,32 @@ Talent Team`
                           {cand.email} • {cand.role}
                         </div>
                       </div>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEmailSingleCandidate(cand);
+                        }}
+                        style={{
+                          background: "#eff6ff",
+                          border: "1px solid #bfdbfe",
+                          color: "#1d4ed8",
+                          borderRadius: "4px",
+                          padding: "3px 8px",
+                          fontSize: "11px",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          whiteSpace: "nowrap"
+                        }}
+                        title={`Send direct individual email to ${cand.candidateName}`}
+                      >
+                        <Mail size={12} />
+                        <span>Email</span>
+                      </button>
                     </div>
                   );
                 })
