@@ -402,3 +402,152 @@ export interface AgencyOverview {
   activeClientId: string;
   clients: AgencyClient[];
 }
+
+export interface InterviewPlan {
+  id: string;
+  candidateId: string;
+  candidateName?: string;
+  jobId?: string;
+  jobTitle?: string;
+  title: string;
+  interviewType: "screening" | "technical" | "system_design" | "cultural" | "executive";
+  interviewerName: string;
+  scheduledAt: string;
+  status: "scheduled" | "in_progress" | "completed" | "cancelled";
+  meetingLink: string;
+  notes: string;
+  createdAt: string;
+  scorecardCount?: number;
+}
+
+export interface InterviewScorecard {
+  id: string;
+  interviewPlanId: string;
+  candidateId: string;
+  interviewerName: string;
+  technicalRating: number;
+  communicationRating: number;
+  problemSolvingRating: number;
+  cultureFitRating: number;
+  overallRecommendation: "strong_hire" | "hire" | "neutral" | "no_hire" | "strong_no_hire";
+  strengths: string;
+  concerns: string;
+  detailedFeedback: string;
+  submittedAt: string;
+}
+
+export interface CandidateStageHistory {
+  id: string;
+  candidateId: string;
+  jobId?: string;
+  fromStage: string;
+  toStage: string;
+  changedBy: string;
+  reason: string;
+  durationInStageHours?: number;
+  createdAt: string;
+}
+
+export interface JobOffer {
+  id: string;
+  candidateId: string;
+  candidateName?: string;
+  jobId?: string;
+  jobTitle?: string;
+  baseSalary: number;
+  currency: string;
+  bonus: number;
+  equity: string;
+  joiningDate: string;
+  expirationDate: string;
+  status: "draft" | "pending_approval" | "sent" | "accepted" | "declined" | "revoked";
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface OnboardingRecord {
+  id: string;
+  candidateId: string;
+  candidateName?: string;
+  offerId?: string;
+  backgroundCheckStatus: "pending" | "passed" | "flagged";
+  documentsVerified: boolean;
+  equipmentProvisioned: boolean;
+  startDate: string;
+  buddyAssigned: string;
+  status: "in_progress" | "completed";
+  createdAt: string;
+}
+
+export interface RecruiterFeedback {
+  id: string;
+  candidateId: string;
+  jobId: string;
+  recruiterId: string;
+  overrideScore: number;
+  feedbackCategory: "skill_accuracy" | "experience_relevance" | "false_positive" | "false_negative" | "general";
+  comments: string;
+  createdAt: string;
+}
+
+export interface ClientJob {
+  id: string;
+  clientId: string;
+  title: string;
+  department: string;
+  status: string;
+  targetHires: number;
+  filledHires: number;
+  feePercentage: number;
+  createdAt: string;
+}
+
+export interface ClientShortlist {
+  id: string;
+  clientId: string;
+  candidateId: string;
+  candidateName?: string;
+  jobId?: string;
+  sharedAt: string;
+  clientStatus: "pending_review" | "accepted" | "rejected" | "interview_requested";
+  clientFeedback: string;
+}
+
+export interface PlacementRecord {
+  id: string;
+  clientId: string;
+  clientName?: string;
+  candidateId: string;
+  candidateName?: string;
+  jobId?: string;
+  placedDate: string;
+  baseSalary: number;
+  placementFee: number;
+  guaranteeDays: number;
+  invoiceStatus: "unbilled" | "invoiced" | "paid";
+  createdAt: string;
+}
+
+export interface AgencyInvoice {
+  id: string;
+  clientId: string;
+  clientName?: string;
+  invoiceNumber: string;
+  amount: number;
+  currency: string;
+  dueDate: string;
+  status: "unpaid" | "draft" | "sent" | "paid" | "overdue";
+  issuedAt: string;
+  paidAt?: string;
+}
+
+export interface RetentionPolicy {
+  id: string;
+  policyName: string;
+  dataType: "resumes" | "audit_logs" | "rejected_candidates";
+  retentionDays: number;
+  action: "delete" | "anonymize" | "archive";
+  isActive: boolean;
+  createdAt: string;
+}
+

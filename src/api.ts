@@ -1,26 +1,37 @@
 import type {
   AgencyClient,
+  AgencyInvoice,
   AgencyOverview,
   ApplicationStatus,
   Candidate,
   CandidateApplication,
   CandidateEvent,
   CandidateJobMatch,
+  CandidateStageHistory,
+  ClientJob,
+  ClientShortlist,
   EligibleCandidate,
   EmailCampaign,
   GmailImportResult,
   GmailStatus,
+  InterviewPlan,
+  InterviewScorecard,
+  JobOffer,
   JobOpening,
   NaturalSearchResult,
+  OnboardingRecord,
+  PlacementRecord,
   ProcessingJob,
-  RediscoveryResponse,
-  ReportSummary,
-  TalentGraphData,
-  TalentPool,
-  TeamMember,
   ProvisionUserPayload,
   ProvisionUserResult,
+  RecruiterFeedback,
+  RediscoveryResponse,
+  ReportSummary,
+  RetentionPolicy,
+  TalentGraphData,
+  TalentPool,
   TaxonomyResponse,
+  TeamMember,
   UploadResult
 } from "./types";
 import { isSupabaseBrowserConfigured, supabase } from "./supabaseClient";
@@ -452,6 +463,220 @@ export async function switchAgencyClient(clientId: string): Promise<{ activeClie
     method: "POST"
   });
 }
+
+// 1. Interviews & Scorecards
+export async function fetchInterviews(): Promise<InterviewPlan[]> {
+  const data = await request<{ interviews: InterviewPlan[] }>("/api/interviews");
+  return data.interviews;
+}
+
+export async function scheduleInterview(payload: Partial<InterviewPlan>): Promise<InterviewPlan> {
+  const data = await request<{ interview: InterviewPlan }>("/api/interviews", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload)
+  });
+  return data.interview;
+}
+
+export async function submitScorecard(payload: Partial<InterviewScorecard>): Promise<InterviewScorecard> {
+  const data = await request<{ scorecard: InterviewScorecard }>(`/api/interviews/${payload.interviewPlanId}/scorecard`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload)
+  });
+  return data.scorecard;
+}
+
+export async function fetchCandidateInterviews(candidateId: string): Promise<{
+  interviews: InterviewPlan[];
+  scorecards: InterviewScorecard[];
+}> {
+  return request<{ interviews: InterviewPlan[]; scorecards: InterviewScorecard[] }>(`/api/candidates/${candidateId}/interviews`);
+}
+
+// 2. Pipeline & Stage History
+export async function moveCandidatePipelineStage(
+  candidateId: string,
+  toStage: ApplicationStatus,
+  reason: string = "Recruiter pipeline movement",
+  jobId?: string
+): Promise<{ success: boolean; candidate: Candidate; stageHistory: CandidateStageHistory }> {
+  return request<{ success: boolean; candidate: Candidate; stageHistory: CandidateStageHistory }>("/api/pipeline/move", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({ candidateId, toStage, reason, jobId })
+  });
+}
+
+export async function fetchCandidateStageHistory(candidateId: string): Promise<CandidateStageHistory[]> {
+  const data = await request<{ history: CandidateStageHistory[] }>(`/api/candidates/${candidateId}/stage-history`);
+  return data.history;
+}
+
+// 3. Offers & Onboarding
+export async function fetchOffers(): Promise<JobOffer[]> {
+  const data = await request<{ offers: JobOffer[] }>("/api/offers");
+  return data.offers;
+}
+
+export async function createJobOffer(payload: Partial<JobOffer>): Promise<JobOffer> {
+  const data = await request<{ offer: JobOffer }>("/api/offers", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload)
+  });
+  return data.offer;
+}
+
+export async function updateJobOfferStatus(offerId: string, status: JobOffer["status"]): Promise<JobOffer> {
+  const data = await request<{ offer: JobOffer }>(`/api/offers/${offerId}/status`, {
+    method: "PATCH",
+    headers: jsonHeaders,
+    body: JSON.stringify({ status })
+  });
+  return data.offer;
+}
+
+export async function fetchOnboardingRecords(): Promise<OnboardingRecord[]> {
+  const data = await request<{ records: OnboardingRecord[] }>("/api/onboarding");
+  return data.records;
+}
+
+export async function updateOnboardingRecord(
+  onboardingId: string,
+  updates: Partial<OnboardingRecord>
+): Promise<OnboardingRecord> {
+  const data = await request<{ record: OnboardingRecord }>(`/api/onboarding/${onboardingId}`, {
+    method: "PATCH",
+    headers: jsonHeaders,
+    body: JSON.stringify(updates)
+  });
+  return data.record;
+}
+
+// 4. Recruiter Match Feedback
+export async function submitRecruiterMatchFeedback(payload: {
+  candidateId: string;
+  jobId: string;
+  overrideScore: number;
+  feedbackCategory?: string;
+  comments: string;
+}): Promise<RecruiterFeedback> {
+  const data = await request<{ feedback: RecruiterFeedback }>("/api/matching/feedback", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload)
+  });
+  return data.feedback;
+}
+
+// 5. Agency Client Jobs, Shortlists & Billing
+export async function fetchClientJobs(clientId: string): Promise<ClientJob[]> {
+  const data = await request<{ jobs: ClientJob[] }>(`/api/agency/clients/${clientId}/jobs`);
+  return data.jobs;
+}
+
+export async function createClientJob(payload: Partial<ClientJob>): Promise<ClientJob> {
+  const data = await request<{ job: ClientJob }>(`/api/agency/clients/${payload.clientId}/jobs`, {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload)
+  });
+  return data.job;
+}
+
+export async function shareCandidateWithClient(payload: {
+  clientId: string;
+  candidateId: string;
+  jobId?: string;
+}): Promise<ClientShortlist> {
+  const data = await request<{ shortlist: ClientShortlist }>("/api/agency/shortlists/share", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload)
+  });
+  return data.shortlist;
+}
+
+export async function recordClientFeedback(
+  shortlistId: string,
+  status: ClientShortlist["clientStatus"],
+  feedback: string
+): Promise<ClientShortlist> {
+  const data = await request<{ shortlist: ClientShortlist }>(`/api/agency/shortlists/${shortlistId}/feedback`, {
+    method: "PATCH",
+    headers: jsonHeaders,
+    body: JSON.stringify({ status, feedback })
+  });
+  return data.shortlist;
+}
+
+export async function fetchPlacements(): Promise<PlacementRecord[]> {
+  const data = await request<{ placements: PlacementRecord[] }>("/api/agency/placements");
+  return data.placements;
+}
+
+export async function recordPlacement(payload: Partial<PlacementRecord>): Promise<PlacementRecord> {
+  const data = await request<{ placement: PlacementRecord }>("/api/agency/placements", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload)
+  });
+  return data.placement;
+}
+
+export async function fetchAgencyInvoices(): Promise<AgencyInvoice[]> {
+  const data = await request<{ invoices: AgencyInvoice[] }>("/api/agency/invoices");
+  return data.invoices;
+}
+
+export async function generateInvoice(payload: Partial<AgencyInvoice>): Promise<AgencyInvoice> {
+  const data = await request<{ invoice: AgencyInvoice }>("/api/agency/invoices", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload)
+  });
+  return data.invoice;
+}
+
+// 6. Compliance, GDPR/DPDP, Data Export & Deletion
+export async function exportComplianceData(
+  exportType: "candidates_full" | "audit_logs" | "compliance_dump" = "candidates_full",
+  format: "json" | "csv" = "json"
+): Promise<{ exportId: string; downloadUrl: string; rowCount: number; message: string }> {
+  return request<{ exportId: string; downloadUrl: string; rowCount: number; message: string }>("/api/compliance/export", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({ exportType, format })
+  });
+}
+
+export async function executeComplianceDeletion(
+  candidateId: string,
+  reason: string = "Candidate GDPR Right to be forgotten request"
+): Promise<{ status: string; message: string }> {
+  return request<{ status: string; message: string }>("/api/compliance/delete-candidate", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify({ candidateId, reason })
+  });
+}
+
+export async function fetchRetentionPolicies(): Promise<RetentionPolicy[]> {
+  const data = await request<{ policies: RetentionPolicy[] }>("/api/compliance/retention-policies");
+  return data.policies;
+}
+
+export async function createRetentionPolicy(payload: Partial<RetentionPolicy>): Promise<RetentionPolicy> {
+  const data = await request<{ policy: RetentionPolicy }>("/api/compliance/retention-policies", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload)
+  });
+  return data.policy;
+}
+
 
 
 async function request<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {

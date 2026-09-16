@@ -129,19 +129,20 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
           ? "Logged in as Master Administrator! Launching workspace..."
           : "Connected in Local Mode! Launching workspace..."
       );
+      const userEmail = email.trim() || (isMasterAdmin ? "sumithsbhatt@gmail.com" : "admin@workspace.local");
       setTimeout(() => {
         onAuthSuccess({
-          access_token: "local-token",
+          access_token: `local:${userEmail}`,
           token_type: "bearer",
           expires_in: 3600,
           refresh_token: "local-refresh",
           user: {
-            id: isMasterAdmin ? "master-admin" : "local-user",
+            id: isMasterAdmin ? "master-admin" : `usr-${userEmail.replace(/[^a-zA-Z0-9]/g, "").slice(0, 12)}`,
             app_metadata: {},
-            user_metadata: { full_name: isMasterAdmin ? "Sumith Bhatt (Master Admin)" : "Local Admin", role: "owner" },
+            user_metadata: { full_name: isMasterAdmin ? "Sumith Bhatt (Master Admin)" : userEmail.split("@")[0], role: isMasterAdmin ? "owner" : "recruiter" },
             aud: "authenticated",
             created_at: new Date().toISOString(),
-            email: email.trim() || (isMasterAdmin ? "sumithsbhatt@gmail.com" : "admin@workspace.local")
+            email: userEmail
           }
         } as Session);
       }, 400);

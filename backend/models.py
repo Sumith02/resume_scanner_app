@@ -211,3 +211,133 @@ class CandidateUpdateRequest(BaseModel):
     tags: list[str] | None = None
     status: ApplicationStatus | None = None
 
+
+class InterviewCreateRequest(BaseModel):
+    candidateId: str
+    jobId: str | None = None
+    title: str = Field(default="Technical Interview", max_length=180)
+    interviewType: Literal["screening", "technical", "system_design", "cultural", "executive"] = "technical"
+    interviewerName: str = Field(default="", max_length=180)
+    scheduledAt: str = Field(default="", max_length=60)
+    meetingLink: str = Field(default="", max_length=500)
+    notes: str = Field(default="", max_length=2000)
+
+
+class ScorecardSubmitRequest(BaseModel):
+    interviewPlanId: str
+    candidateId: str
+    interviewerName: str = Field(default="", max_length=180)
+    technicalRating: int = Field(default=3, ge=1, le=5)
+    communicationRating: int = Field(default=3, ge=1, le=5)
+    problemSolvingRating: int = Field(default=3, ge=1, le=5)
+    cultureFitRating: int = Field(default=3, ge=1, le=5)
+    overallRecommendation: Literal["strong_hire", "hire", "neutral", "no_hire", "strong_no_hire"] = "hire"
+    strengths: str = Field(default="", max_length=2000)
+    concerns: str = Field(default="", max_length=2000)
+    detailedFeedback: str = Field(default="", max_length=10000)
+
+
+class PipelineMoveRequest(BaseModel):
+    candidateId: str
+    toStage: ApplicationStatus
+    jobId: str | None = None
+    reason: str = Field(default="", max_length=500)
+
+
+class OfferCreateRequest(BaseModel):
+    candidateId: str
+    jobId: str | None = None
+    baseSalary: float = Field(ge=0)
+    currency: str = Field(default="INR", max_length=10)
+    bonus: float = Field(default=0, ge=0)
+    equity: str = Field(default="", max_length=120)
+    joiningDate: str = Field(default="", max_length=60)
+    expirationDate: str = Field(default="", max_length=60)
+
+
+class OfferStatusUpdateRequest(BaseModel):
+    status: Literal["draft", "pending_approval", "sent", "accepted", "declined", "revoked"]
+
+
+class OnboardingUpdateRequest(BaseModel):
+    backgroundCheckStatus: Literal["pending", "passed", "flagged"] | None = None
+    documentsVerified: bool | None = None
+    equipmentProvisioned: bool | None = None
+    startDate: str | None = None
+    buddyAssigned: str | None = None
+    status: Literal["in_progress", "completed"] | None = None
+
+
+class RecruiterFeedbackRequest(BaseModel):
+    candidateId: str
+    jobId: str
+    overrideScore: int = Field(ge=0, le=100)
+    feedbackCategory: Literal["skill_accuracy", "experience_relevance", "false_positive", "false_negative", "general"] = "general"
+    comments: str = Field(default="", max_length=2000)
+
+
+class AgencyClientCreateRequest(BaseModel):
+    code: str = Field(min_length=2, max_length=40)
+    name: str = Field(min_length=2, max_length=180)
+    industry: str = Field(default="Technology", max_length=180)
+    tier: Literal["Enterprise Retained", "Exclusive Search", "High-Volume Contingency", "Standard"] = "Standard"
+    slaHours: int = Field(default=24, ge=1, le=168)
+    primaryRecruiter: str = Field(default="", max_length=180)
+
+
+class ClientJobCreateRequest(BaseModel):
+    clientId: str
+    title: str = Field(min_length=1, max_length=180)
+    department: str = Field(default="", max_length=180)
+    targetHires: int = Field(default=1, ge=1, le=500)
+    feePercentage: float = Field(default=15.0, ge=0, le=100)
+
+
+class ShortlistShareRequest(BaseModel):
+    clientId: str
+    candidateId: str
+    jobId: str | None = None
+
+
+class ClientFeedbackRequest(BaseModel):
+    shortlistId: str
+    status: Literal["pending_review", "accepted", "rejected", "interview_requested"]
+    feedback: str = Field(default="", max_length=2000)
+
+
+class PlacementRecordRequest(BaseModel):
+    clientId: str
+    candidateId: str
+    jobId: str | None = None
+    placedDate: str = Field(default="", max_length=60)
+    baseSalary: float = Field(ge=0)
+    placementFee: float = Field(ge=0)
+    guaranteeDays: int = Field(default=90, ge=0, le=365)
+
+
+class InvoiceCreateRequest(BaseModel):
+    clientId: str
+    invoiceNumber: str = Field(min_length=1, max_length=60)
+    amount: float = Field(gt=0)
+    currency: str = Field(default="INR", max_length=10)
+    dueDate: str = Field(default="", max_length=60)
+
+
+class ComplianceExportRequest(BaseModel):
+    exportType: Literal["candidates_full", "audit_logs", "compliance_dump"] = "candidates_full"
+    format: Literal["json", "csv"] = "json"
+
+
+class ComplianceDeleteRequest(BaseModel):
+    candidateId: str
+    reason: str = Field(default="Candidate GDPR/DPDP Right to be Forgotten", max_length=500)
+
+
+class RetentionPolicyRequest(BaseModel):
+    policyName: str = Field(min_length=1, max_length=180)
+    dataType: Literal["resumes", "audit_logs", "rejected_candidates"] = "resumes"
+    retentionDays: int = Field(default=730, ge=30, le=3650)
+    action: Literal["delete", "anonymize", "archive"] = "anonymize"
+    isActive: bool = True
+
+

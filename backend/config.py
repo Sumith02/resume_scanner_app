@@ -98,7 +98,6 @@ class Settings:
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     environment = _first("APP_ENV", "VERCEL_ENV") or "development"
-    production = environment == "production"
     supabase_url = _first("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL", "VITE_SUPABASE_URL").rstrip("/")
     supabase_public_key = _first(
         "SUPABASE_PUBLIC_KEY",
@@ -124,8 +123,8 @@ def get_settings() -> Settings:
 
     # Derive 32+ char fallback secrets from supabase_secret_key if not explicitly configured in env
     fallback_seed = supabase_secret_key or supabase_url or "nexerra-talent-os-state-encryption-key-seed"
-    fallback_state_secret = hashlib.sha256(f"nexerra-state-{fallback_seed}".encode("utf-8")).hexdigest()
-    fallback_encryption_key = hashlib.sha256(f"nexerra-token-{fallback_seed}".encode("utf-8")).hexdigest()
+    fallback_state_secret = hashlib.sha256(f"nexerra-state-{fallback_seed}".encode()).hexdigest()
+    fallback_encryption_key = hashlib.sha256(f"nexerra-token-{fallback_seed}".encode()).hexdigest()
 
     oauth_state_secret = (
         _first("RESUMEFLOW_OAUTH_STATE_SECRET", "OAUTH_STATE_SECRET", "GOOGLE_OAUTH_STATE_SECRET")

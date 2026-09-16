@@ -61,6 +61,9 @@ import {
   fetchTeamMembers,
   importGmailResumes,
   mergeDuplicateCandidates,
+  moveCandidatePipelineStage,
+  exportComplianceData,
+  executeComplianceDeletion,
   provisionUserAccount,
   rediscoverTalent,
   removeTeamMember,
@@ -94,6 +97,7 @@ import {
 import { formatDate, formatFileSize } from "./utils";
 import { TalentGraphView } from "./TalentGraphView";
 import { AgencyMultiClientView } from "./AgencyMultiClientView";
+import { CandidateDossierDrawer } from "./CandidateDossierDrawer";
 
 type ViewKey =
   | "command_center"
@@ -795,6 +799,11 @@ export default function App() {
         onSignOut={async () => {
           if (supabase) await supabase.auth.signOut();
           setSession(null);
+          setApiAccessToken("");
+          setCandidates([]);
+          setJobs([]);
+          setTalentPools([]);
+          setAgencyClients([]);
         }}
       />
     );
@@ -987,6 +996,13 @@ export default function App() {
                 onClick={async () => {
                   if (supabase) await supabase.auth.signOut();
                   setSession(null);
+                  setApiAccessToken("");
+                  setCandidates([]);
+                  setJobs([]);
+                  setTalentPools([]);
+                  setProcessingQueue([]);
+                  setAgencyClients([]);
+                  setReport(emptyReport);
                   setNotice("Signed out of Nexerra Talent OS.");
                 }}
                 title="Sign Out"
@@ -1176,11 +1192,11 @@ export default function App() {
                   blindMode={blindReviewMode}
                   onSelectCandidate={(id) => setActiveCandidateId(id)}
                   onStatusChange={async (candId, newStatus) => {
-                    await updateCandidateProfile(candId, { status: newStatus });
+                    await moveCandidatePipelineStage(candId, newStatus, "Recruiter drag & drop stage transition");
                     setCandidates((prev) =>
                       prev.map((c) => (c.id === candId ? { ...c, status: newStatus } : c))
                     );
-                    setNotice("Candidate stage updated.");
+                    setNotice(`Candidate stage updated to ${STATUS_LABELS[newStatus] || newStatus} and logged in compliance audit.`);
                   }}
                 />
               )}
@@ -1383,6 +1399,7 @@ export default function App() {
         <CandidateDossierDrawer
           detail={activeCandidateDetail}
           blindMode={blindReviewMode}
+          jobs={jobs}
           onClose={() => setActiveCandidateId(null)}
           onRevealIdentity={() => handleRevealCandidate(activeCandidateId)}
           onSave={async (updates) => {
@@ -3571,200 +3588,10 @@ function DataQualityCenterView({
     </div>
   );
 }
-
 // ==========================================
-// 12. CANDIDATE DOSSIER DRAWER (ENRICHED V11)
+// 12. CANDIDATE DOSSIER DRAWER
+// Modularized in src/CandidateDossierDrawer.tsx with Interviews, Offers, Onboarding, and AI Calibration
 // ==========================================
-
-function CandidateDossierDrawer({
-  detail,
-  blindMode,
-  onClose,
-  onRevealIdentity,
-  onSave
-}: {
-  detail: { candidate: Candidate; events: CandidateEvent[] } | null;
-  blindMode: boolean;
-  onClose: () => void;
-  onRevealIdentity: () => void;
-  onSave: (updates: Partial<Candidate>) => void;
-}) {
-  const [tab, setTab] = useState<"overview" | "evidence" | "experience" | "skills" | "activity">("overview");
-  if (!detail) return null;
-  const cand = detail.candidate;
-
-  return (
-    <div
-      style={{
-        position: "fixed",
-        top: 0,
-        right: 0,
-        width: "560px",
-        height: "100vh",
-        background: "#fff",
-        boxShadow: "-12px 0 36px rgba(0, 0, 0, 0.15)",
-        zIndex: 100,
-        display: "flex",
-        flexDirection: "column"
-      }}
-    >
-      {/* HEADER */}
-      <div style={{ padding: "20px 24px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
-          {blindMode ? (
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <div className="blind-badge" style={{ fontSize: "14px", padding: "4px 8px" }}>
-                #{cand.blindId}
-              </div>
-              <button
-                onClick={onRevealIdentity}
-                style={{ fontSize: "12px", background: "none", border: "1px solid var(--line)", padding: "4px 8px", borderRadius: "4px", cursor: "pointer" }}
-              >
-                Reveal Identity (Logs Audit)
-              </button>
-            </div>
-          ) : (
-            <div>
-              <h2 style={{ margin: 0, fontSize: "18px" }}>{cand.canonicalName}</h2>
-              <div style={{ fontSize: "13px", color: "var(--muted)", marginTop: "2px" }}>
-                {cand.currentTitle} • {cand.location}
-              </div>
-            </div>
-          )}
-        </div>
-        <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer" }}>
-          <X size={20} />
-        </button>
-      </div>
-
-      {/* TABS */}
-      <div style={{ display: "flex", borderBottom: "1px solid var(--line)", padding: "0 24px" }}>
-        {(["overview", "evidence", "experience", "skills", "activity"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            style={{
-              padding: "10px 14px",
-              border: "none",
-              background: "none",
-              borderBottom: tab === t ? "2px solid var(--brand)" : "none",
-              color: tab === t ? "var(--brand)" : "var(--muted)",
-              fontWeight: tab === t ? 600 : 400,
-              fontSize: "13px",
-              cursor: "pointer",
-              textTransform: "capitalize"
-            }}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
-
-      {/* BODY */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
-        {tab === "overview" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "16px", fontSize: "13px" }}>
-            <div style={{ background: "#f8fafc", padding: "14px", borderRadius: "6px" }}>
-              <strong style={{ display: "block", marginBottom: "6px" }}>Profile Intelligence</strong>
-              <p style={{ margin: 0, color: "#334155" }}>{cand.profileSummary || "Profile intelligence extracted from resume."}</p>
-            </div>
-
-            <div>
-              <strong style={{ display: "block", marginBottom: "6px" }}>Candidate Stage</strong>
-              <select
-                value={cand.status}
-                onChange={(e) => onSave({ status: e.target.value as ApplicationStatus })}
-                style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--line)", background: "#fff" }}
-              >
-                {Object.entries(STATUS_LABELS).map(([k, v]) => (
-                  <option key={k} value={k}>{v}</option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <strong style={{ display: "block", marginBottom: "8px" }}>Data Quality Completeness</strong>
-              <div style={{ background: "#e2e8f0", height: "8px", borderRadius: "4px", overflow: "hidden", marginBottom: "6px" }}>
-                <div style={{ width: `${cand.dataQualityScore}%`, background: "var(--brand)", height: "100%" }} />
-              </div>
-              <span style={{ fontSize: "12px", color: "var(--muted)" }}>{cand.dataQualityScore}% profile health</span>
-            </div>
-          </div>
-        )}
-
-        {tab === "evidence" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "16px", fontSize: "13px" }}>
-            <div style={{ background: "#f0fdfa", border: "1px solid #ccfbf1", padding: "14px", borderRadius: "6px" }}>
-              <h4 style={{ margin: "0 0 6px", color: "var(--brand-strong)" }}>Why 94% Match?</h4>
-              <p style={{ margin: 0, color: "#134e4a" }}>
-                Evaluated against core requisition: <strong>35/35</strong> Required Skills, <strong>15/15</strong> Experience Fit, <strong>10/10</strong> Education, <strong>18/20</strong> Semantic Fit.
-              </p>
-            </div>
-
-            <div>
-              <strong style={{ display: "block", marginBottom: "8px" }}>Verified Skill Quotes</strong>
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                {cand.skills.map((s, idx) => (
-                  <div key={idx} style={{ background: "#f8fafc", padding: "10px", borderRadius: "4px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
-                      <strong>{s.skillName}</strong>
-                      <span style={{ color: "var(--green)", fontWeight: 600 }}>{s.proficiency}</span>
-                    </div>
-                    <div style={{ fontSize: "12px", color: "var(--muted)", fontStyle: "italic" }}>
-                      "{s.evidenceText}"
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {tab === "experience" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "16px", fontSize: "13px" }}>
-            <strong style={{ fontSize: "14px" }}>Structured Career Timeline</strong>
-            {cand.experiences.map((exp) => (
-              <div key={exp.id} style={{ borderLeft: "2px solid var(--brand)", paddingLeft: "14px" }}>
-                <strong style={{ display: "block" }}>{exp.title}</strong>
-                <div style={{ fontSize: "12px", color: "var(--muted)", marginBottom: "4px" }}>
-                  {exp.company} • {exp.startDate} – {exp.endDate}
-                </div>
-                <p style={{ margin: 0, color: "#475569" }}>{exp.description}</p>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {tab === "skills" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "12px", fontSize: "13px" }}>
-            <strong style={{ fontSize: "14px" }}>Global Skills Taxonomy Matrix</strong>
-            {cand.skills.map((s, idx) => (
-              <div key={idx} style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px" }}>
-                <span>{s.skillName}</span>
-                <span style={{ color: "var(--brand)", fontWeight: 600 }}>{s.proficiency}</span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {tab === "activity" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "12px", fontSize: "13px" }}>
-            <strong style={{ fontSize: "14px" }}>Longitudinal Event Audit</strong>
-            {detail.events.map((ev) => (
-              <div key={ev.id} style={{ padding: "8px 12px", background: "#f8fafc", borderRadius: "6px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <strong>{ev.eventType}</strong>
-                  <span style={{ fontSize: "11px", color: "var(--muted)" }}>{formatDate(ev.createdAt)}</span>
-                </div>
-                <div style={{ fontSize: "12px", color: "var(--muted)" }}>Actor: {ev.actorId}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 // ==========================================
 // 13. CAMPAIGNS & REPORTS WRAPPERS
@@ -4771,6 +4598,51 @@ function SettingsView({
   const [emailConfigured, setEmailConfigured] = useState<boolean | null>(null);
   const [showConfigGuide, setShowConfigGuide] = useState(false);
 
+  // Compliance & GDPR state
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [deleteCandidateId, setDeleteCandidateId] = useState("");
+  const [deleteReason, setDeleteReason] = useState("Candidate Right to be Forgotten Request (GDPR Art. 17)");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteNotice, setDeleteNotice] = useState<string | null>(null);
+
+  async function handleComplianceExport() {
+    setExporting(true);
+    setExportNotice(null);
+    try {
+      const res = await exportComplianceData("candidates_full", "json");
+      setExportNotice(`Export ready: ${res.rowCount} records generated. Download: ${res.downloadUrl}`);
+    } catch (err) {
+      setExportNotice("Export failed: " + (err instanceof Error ? err.message : "Unknown error"));
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function handleCandidateErasure(e: FormEvent) {
+    e.preventDefault();
+    if (!deleteCandidateId.trim()) return;
+    if (
+      !confirm(
+        `Are you sure you want to permanently erase candidate "${deleteCandidateId}" and all associated scorecards, offers, and parsing data? This action cannot be undone.`
+      )
+    )
+      return;
+
+    setDeleting(true);
+    setDeleteNotice(null);
+    try {
+      const res = await executeComplianceDeletion(deleteCandidateId.trim(), deleteReason);
+      setDeleteNotice(`Candidate ${deleteCandidateId} erased. Status: ${res.status}. Message: ${res.message}`);
+      setDeleteCandidateId("");
+      onRefreshWorkspace();
+    } catch (err) {
+      setDeleteNotice("Erasure failed: " + (err instanceof Error ? err.message : "Unknown error"));
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   function generateSecurePassword() {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%&*";
     let pwd = "Nex!";
@@ -5526,6 +5398,118 @@ function SettingsView({
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* GDPR & COMPLIANCE OPERATIONS CARD */}
+          <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", border: "1px solid var(--line)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+              <ShieldCheck size={20} color="var(--brand)" />
+              <h3 style={{ margin: 0, fontSize: "16px" }}>GDPR, DPDP & Compliance Operations</h3>
+            </div>
+            <p style={{ margin: "0 0 16px 0", color: "#64748b", fontSize: "13px" }}>
+              Data subject rights enforcement, automated retention policies, and verifiable deletion audits.
+            </p>
+
+            {/* EXPORT DATA DUMP */}
+            <div style={{ background: "#f8fafc", padding: "14px", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "16px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <strong style={{ fontSize: "13px" }}>GDPR Article 20 Data Portability Export</strong>
+                  <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>
+                    Generate structured JSON dump of all workspace candidates, scores, and event logs.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleComplianceExport}
+                  disabled={exporting}
+                  style={{
+                    background: "#0f172a",
+                    color: "#fff",
+                    border: "none",
+                    padding: "8px 14px",
+                    borderRadius: "6px",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    cursor: exporting ? "not-allowed" : "pointer"
+                  }}
+                >
+                  {exporting ? "Generating Dump..." : "Generate Export Dump"}
+                </button>
+              </div>
+              {exportNotice && (
+                <div style={{ marginTop: "10px", fontSize: "12px", color: "#166534", background: "#dcfce7", padding: "8px 12px", borderRadius: "4px" }}>
+                  {exportNotice}
+                </div>
+              )}
+            </div>
+
+            {/* RIGHT TO BE FORGOTTEN FORM */}
+            <form onSubmit={handleCandidateErasure} style={{ background: "#f8fafc", padding: "14px", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "16px" }}>
+              <strong style={{ fontSize: "13px", display: "block", marginBottom: "4px" }}>
+                Right to be Forgotten (Candidate Erasure)
+              </strong>
+              <p style={{ margin: "0 0 10px 0", fontSize: "12px", color: "#64748b" }}>
+                Irreversibly purges candidate resume documents, PII, embeddings, and scorecards per GDPR Article 17.
+              </p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "10px" }}>
+                <div>
+                  <label style={{ fontSize: "11px", color: "#64748b" }}>Candidate ID or Blind ID</label>
+                  <input
+                    type="text"
+                    value={deleteCandidateId}
+                    placeholder="e.g. app-1 or cand-uuid"
+                    onChange={(e) => setDeleteCandidateId(e.target.value)}
+                    required
+                    style={{ width: "100%", padding: "6px 8px", borderRadius: "4px", border: "1px solid var(--line)", fontSize: "12px" }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: "11px", color: "#64748b" }}>Erasure Legal Reason</label>
+                  <select
+                    value={deleteReason}
+                    onChange={(e) => setDeleteReason(e.target.value)}
+                    style={{ width: "100%", padding: "6px 8px", borderRadius: "4px", border: "1px solid var(--line)", fontSize: "12px" }}
+                  >
+                    <option value="Candidate Right to be Forgotten Request (GDPR Art. 17)">Candidate Right to be Forgotten (GDPR Art. 17)</option>
+                    <option value="Consent Withdrawn by Data Subject">Consent Withdrawn by Data Subject</option>
+                    <option value="Statutory Retention Period Expired">Statutory Retention Period Expired</option>
+                    <option value="Legal Compliance Order">Legal Compliance Order</option>
+                  </select>
+                </div>
+              </div>
+              <button
+                type="submit"
+                disabled={deleting}
+                style={{
+                  background: "#dc2626",
+                  color: "#fff",
+                  border: "none",
+                  padding: "6px 14px",
+                  borderRadius: "4px",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  cursor: deleting ? "not-allowed" : "pointer"
+                }}
+              >
+                {deleting ? "Purging Records..." : "Permanently Erase Candidate Records"}
+              </button>
+              {deleteNotice && (
+                <div style={{ marginTop: "10px", fontSize: "12px", color: "#991b1b", background: "#fee2e2", padding: "8px 12px", borderRadius: "4px" }}>
+                  {deleteNotice}
+                </div>
+              )}
+            </form>
+
+            {/* RETENTION POLICIES */}
+            <div style={{ fontSize: "12px", color: "#475569" }}>
+              <strong style={{ display: "block", marginBottom: "6px", color: "#0f172a" }}>Active Automated Retention Rules:</strong>
+              <ul style={{ margin: 0, paddingLeft: "18px", display: "flex", flexDirection: "column", gap: "4px" }}>
+                <li><strong>Unhired Resumes:</strong> Automatically archived after 180 days with candidate consent.</li>
+                <li><strong>Interview Audio/Transcripts:</strong> Automatically anonymized after 90 days.</li>
+                <li><strong>Blind Screening PII:</strong> Salted SHA-256 pseudonymization on initial ingestion.</li>
+              </ul>
             </div>
           </div>
         </div>

@@ -16,15 +16,15 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 
 from .auth import AuthService, require_role
 from .classifier import SKILL_CATEGORIES
-from .config import Settings, get_settings
 from .client_service import agency_client_service
+from .config import Settings, get_settings
 from .copilot_engine import process_copilot_message
 from .crypto import SignedState
 from .email_service import EmailService
 from .errors import AppError, ServiceUnavailableError
 from .gmail_service import GmailService
 from .graph_engine import build_candidate_talent_graph, build_talent_network_overview
-from .match_engine import compute_multidimensional_match, parse_job_requirements
+from .match_engine import compute_multidimensional_match
 from .models import (
     APPLICATION_STATUSES,
     ApplicationUpdate,
@@ -35,14 +35,29 @@ from .models import (
     CandidateCompareRequest,
     CandidateMergeRequest,
     CandidateUpdateRequest,
+    ClientFeedbackRequest,
+    ClientJobCreateRequest,
+    ComplianceDeleteRequest,
+    ComplianceExportRequest,
     CopilotChatRequest,
     GmailImportRequest,
+    InterviewCreateRequest,
+    InvoiceCreateRequest,
     JobCreateRequest,
     MasterBootstrapRequest,
     NaturalSearchRequest,
+    OfferCreateRequest,
+    OfferStatusUpdateRequest,
+    OnboardingUpdateRequest,
+    PipelineMoveRequest,
+    PlacementRecordRequest,
     ProvisionUserRequest,
+    RecruiterFeedbackRequest,
     RediscoveryRequest,
     RequestContext,
+    RetentionPolicyRequest,
+    ScorecardSubmitRequest,
+    ShortlistShareRequest,
     TalentPoolAddRequest,
     TalentPoolCreateRequest,
     TeamInviteRequest,
@@ -52,8 +67,7 @@ from .models import (
 from .rediscovery_engine import rediscover_candidates_for_job
 from .repository import Repository, build_repository, safe_file_name, utc_now
 from .resume_service import ResumeService
-from .search_engine import execute_hybrid_search, parse_natural_language_query
-from .talent_engine import extract_candidate_intelligence
+from .search_engine import execute_hybrid_search
 
 logger = logging.getLogger("nexerra")
 
@@ -978,6 +992,243 @@ def create_agency_client(payload: dict[str, Any], context: Context) -> dict[str,
 def switch_agency_client(client_id: str) -> dict[str, object]:
     result = agency_client_service.set_active_client(client_id)
     return result
+
+
+# ---------------------------------------------------------------------------
+# ENTERPRISE ATS: INTERVIEWS, SCORECARDS & STAGE PROGRESSION
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/interviews")
+def list_interviews(context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    interviews = repository.list_interviews(context)
+    return {"interviews": interviews}
+
+
+@app.post("/api/interviews", status_code=201)
+def schedule_interview(payload: InterviewCreateRequest, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    require_role(context, "owner", "admin", "recruiter")
+    created = repository.create_interview(payload.model_dump(), context)
+    repository.audit(context, "interview.scheduled", "interview", created["id"], {"candidateId": payload.candidateId})
+    return {"interview": created}
+
+
+@app.post("/api/interviews/{interview_id}/scorecard", status_code=201)
+def submit_scorecard(interview_id: str, payload: ScorecardSubmitRequest, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    require_role(context, "owner", "admin", "recruiter", "hiring_manager")
+    data = payload.model_dump()
+    data["interviewPlanId"] = interview_id
+    scorecard = repository.submit_scorecard(data, context)
+    repository.audit(context, "interview.scorecard_submitted", "scorecard", scorecard["id"], {"candidateId": payload.candidateId})
+    return {"scorecard": scorecard}
+
+
+@app.get("/api/candidates/{candidate_id}/interviews")
+def candidate_interviews(candidate_id: str, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    all_plans = repository.list_interviews(context)
+    cand_plans = [p for p in all_plans if p.get("candidateId") == candidate_id or p.get("candidate_id") == candidate_id]
+    scorecards = repository.list_scorecards(candidate_id, context)
+    return {"interviews": cand_plans, "scorecards": scorecards}
+
+
+@app.post("/api/pipeline/move")
+def move_candidate_pipeline_stage(payload: PipelineMoveRequest, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    require_role(context, "owner", "admin", "recruiter")
+    res = repository.move_candidate_stage(payload.candidateId, payload.toStage, payload.jobId, payload.reason, context)
+    repository.audit(
+        context,
+        "candidate.stage_changed",
+        "candidate",
+        payload.candidateId,
+        {"toStage": payload.toStage, "reason": payload.reason},
+    )
+    return res
+
+
+@app.get("/api/candidates/{candidate_id}/stage-history")
+def candidate_stage_history(candidate_id: str, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    history = repository.list_stage_history(candidate_id, context)
+    return {"history": history}
+
+
+# ---------------------------------------------------------------------------
+# OFFERS & ONBOARDING
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/offers")
+def list_offers(context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    offers = repository.list_offers(context)
+    return {"offers": offers}
+
+
+@app.post("/api/offers", status_code=201)
+def create_offer(payload: OfferCreateRequest, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    require_role(context, "owner", "admin", "recruiter")
+    created = repository.create_offer(payload.model_dump(), context)
+    repository.audit(context, "offer.created", "offer", created["id"], {"candidateId": payload.candidateId})
+    return {"offer": created}
+
+
+@app.patch("/api/offers/{offer_id}/status")
+def update_offer_status(offer_id: str, payload: OfferStatusUpdateRequest, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    require_role(context, "owner", "admin", "recruiter")
+    updated = repository.update_offer_status(offer_id, payload.status, context)
+    repository.audit(context, "offer.status_updated", "offer", offer_id, {"status": payload.status})
+    return {"offer": updated}
+
+
+@app.get("/api/onboarding")
+def list_onboarding(context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    records = repository.list_onboarding(context)
+    return {"records": records}
+
+
+@app.patch("/api/onboarding/{onboarding_id}")
+def update_onboarding(onboarding_id: str, payload: OnboardingUpdateRequest, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    require_role(context, "owner", "admin", "recruiter")
+    updated = repository.update_onboarding(onboarding_id, payload.model_dump(exclude_none=True), context)
+    return {"record": updated}
+
+
+# ---------------------------------------------------------------------------
+# RECRUITER CALIBRATION & MATCH FEEDBACK
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/matching/feedback", status_code=201)
+def record_match_feedback(payload: RecruiterFeedbackRequest, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    require_role(context, "owner", "admin", "recruiter")
+    saved = repository.record_recruiter_feedback(payload.model_dump(), context)
+    repository.audit(
+        context,
+        "match.feedback_recorded",
+        "candidate",
+        payload.candidateId,
+        {"jobId": payload.jobId, "overrideScore": payload.overrideScore},
+    )
+    return {"feedback": saved}
+
+
+# ---------------------------------------------------------------------------
+# AGENCY MULTI-CLIENT EXTENSIONS: JOBS, SHORTLISTS, PLACEMENTS, INVOICES
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/agency/clients/{client_id}/jobs")
+def list_client_jobs(client_id: str, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    jobs = repository.list_client_jobs(client_id, context)
+    return {"jobs": jobs}
+
+
+@app.post("/api/agency/clients/{client_id}/jobs", status_code=201)
+def create_client_job(client_id: str, payload: ClientJobCreateRequest, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    require_role(context, "owner", "admin", "recruiter")
+    data = payload.model_dump()
+    data["clientId"] = client_id
+    created = repository.create_client_job(data, context)
+    return {"job": created}
+
+
+@app.post("/api/agency/shortlists/share", status_code=201)
+def share_shortlist(payload: ShortlistShareRequest, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    require_role(context, "owner", "admin", "recruiter")
+    shared = repository.share_client_shortlist(payload.model_dump(), context)
+    repository.audit(context, "shortlist.shared_with_client", "candidate", payload.candidateId, {"clientId": payload.clientId})
+    return {"shortlist": shared}
+
+
+@app.patch("/api/agency/shortlists/{shortlist_id}/feedback")
+def update_shortlist_feedback(shortlist_id: str, payload: ClientFeedbackRequest, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    updated = repository.record_client_feedback(shortlist_id, payload.status, payload.feedback, context)
+    return {"shortlist": updated}
+
+
+@app.get("/api/agency/placements")
+def list_placements(context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    placements = repository.list_placements(context)
+    return {"placements": placements}
+
+
+@app.post("/api/agency/placements", status_code=201)
+def record_placement(payload: PlacementRecordRequest, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    require_role(context, "owner", "admin", "recruiter")
+    recorded = repository.record_placement(payload.model_dump(), context)
+    repository.audit(context, "placement.recorded", "candidate", payload.candidateId, {"clientId": payload.clientId})
+    return {"placement": recorded}
+
+
+@app.get("/api/agency/invoices")
+def list_invoices(context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    invoices = repository.list_invoices(context)
+    return {"invoices": invoices}
+
+
+@app.post("/api/agency/invoices", status_code=201)
+def create_invoice(payload: InvoiceCreateRequest, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    require_role(context, "owner", "admin", "recruiter")
+    created = repository.create_invoice(payload.model_dump(), context)
+    repository.audit(context, "invoice.created", "invoice", created["id"], {"clientId": payload.clientId})
+    return {"invoice": created}
+
+
+# ---------------------------------------------------------------------------
+# COMPLIANCE, GDPR/DPDP, DATA EXPORT & RETENTION
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/compliance/export")
+def compliance_export(payload: ComplianceExportRequest, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    require_role(context, "owner", "admin", "recruiter")
+    result = repository.create_data_export(payload.exportType, payload.format, context)
+    repository.audit(context, "compliance.data_exported", "organization", context.organization_id, {"type": payload.exportType})
+    return result
+
+
+@app.post("/api/compliance/delete-candidate")
+def compliance_delete_candidate(payload: ComplianceDeleteRequest, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    require_role(context, "owner", "admin", "recruiter")
+    result = repository.execute_compliance_deletion(payload.candidateId, payload.reason, context)
+    repository.audit(context, "compliance.candidate_erased", "candidate", payload.candidateId, {"reason": payload.reason})
+    return result
+
+
+@app.get("/api/compliance/retention-policies")
+def list_retention_policies(context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    policies = repository.list_retention_policies(context)
+    return {"policies": policies}
+
+
+@app.post("/api/compliance/retention-policies", status_code=201)
+def create_retention_policy(payload: RetentionPolicyRequest, context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    require_role(context, "owner", "admin", "recruiter")
+    created = repository.create_retention_policy(payload.model_dump(), context)
+    repository.audit(context, "compliance.retention_policy_created", "policy", created["id"])
+    return {"policy": created}
 
 
 dist_dir = Path(__file__).resolve().parent.parent / "dist"

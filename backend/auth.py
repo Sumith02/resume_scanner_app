@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from fastapi import Header
 
 from supabase import ClientOptions, create_client
@@ -8,7 +10,6 @@ from .config import Settings
 from .errors import AppError, ServiceUnavailableError
 from .models import RequestContext
 from .repository import LocalRepository, Repository, SupabaseRepository
-
 
 MASTER_ADMIN_EMAILS = {"sumithsbhatt@gmail.com"}
 
@@ -34,12 +35,35 @@ class AuthService:
     def authenticate(self, authorization: str | None) -> RequestContext:
         if not self.settings.auth_required:
             if isinstance(self.repository, LocalRepository):
+                token = _bearer_token(authorization)
+                user_email = "sumithsbhatt@gmail.com"
+                user_id = "local-user"
+                org_id = "local-organization"
+                role = "owner"
+
+                if token:
+                    # Parse user identity from local token format (e.g. 'local:<email>')
+                    raw_email = ""
+                    if ":" in token:
+                        _, _, candidate_email = token.partition(":")
+                        if "@" in candidate_email:
+                            raw_email = candidate_email.strip().lower()
+                    elif "@" in token:
+                        raw_email = token.strip().lower()
+
+                    if raw_email:
+                        user_email = raw_email
+                        user_hash = hashlib.md5(user_email.encode("utf-8")).hexdigest()[:8]
+                        user_id = f"usr-{user_hash}"
+                        org_id = f"org-{user_hash}"
+                        role = "owner" if is_master_admin(user_email) else "recruiter"
+
                 return RequestContext(
-                    user_id="local-user",
-                    email="sumithsbhatt@gmail.com",
-                    organization_id="local-organization",
-                    role="owner",
-                    authenticated=False,
+                    user_id=user_id,
+                    email=user_email,
+                    organization_id=org_id,
+                    role=role,
+                    authenticated=bool(token),
                 )
             raise ServiceUnavailableError("Authentication must be enabled when using the production database.")
 

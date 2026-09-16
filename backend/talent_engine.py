@@ -113,7 +113,6 @@ def extract_candidate_intelligence(raw_text: str, analysis: dict[str, Any]) -> d
     # 1. Extracted Skills with Evidence Quotes
     skills: list[dict[str, Any]] = []
     matched_skills = analysis.get("matchedSkills", [])
-    text_lower = raw_text.lower()
     sentences = re.split(r"(?<=[.!?\n])\s+", raw_text)
 
     for skill in matched_skills:

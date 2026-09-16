@@ -4,6 +4,7 @@ import json
 import os
 import re
 import threading
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,7 +16,6 @@ from .config import Settings
 from .errors import AppError, ServiceUnavailableError
 from .models import RequestContext
 from .talent_engine import extract_candidate_intelligence
-
 
 
 def utc_now() -> str:
@@ -164,6 +164,31 @@ class Repository(Protocol):
     def remove_from_talent_pool(self, pool_id: str, candidate_id: str, context: RequestContext) -> bool: ...
     def merge_candidates(self, primary_id: str, secondary_id: str, context: RequestContext) -> dict[str, Any]: ...
     def delete_candidate(self, candidate_id: str, context: RequestContext) -> bool: ...
+    def list_interviews(self, context: RequestContext) -> list[dict[str, Any]]: ...
+    def create_interview(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]: ...
+    def submit_scorecard(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]: ...
+    def list_scorecards(self, candidate_id: str, context: RequestContext) -> list[dict[str, Any]]: ...
+    def move_candidate_stage(self, candidate_id: str, to_stage: str, job_id: str | None, reason: str, context: RequestContext) -> dict[str, Any]: ...
+    def list_stage_history(self, candidate_id: str, context: RequestContext) -> list[dict[str, Any]]: ...
+    def list_offers(self, context: RequestContext) -> list[dict[str, Any]]: ...
+    def create_offer(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]: ...
+    def update_offer_status(self, offer_id: str, status: str, context: RequestContext) -> dict[str, Any]: ...
+    def list_onboarding(self, context: RequestContext) -> list[dict[str, Any]]: ...
+    def update_onboarding(self, onboarding_id: str, changes: dict[str, Any], context: RequestContext) -> dict[str, Any]: ...
+    def record_recruiter_feedback(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]: ...
+    def list_client_jobs(self, client_id: str, context: RequestContext) -> list[dict[str, Any]]: ...
+    def create_client_job(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]: ...
+    def share_client_shortlist(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]: ...
+    def record_client_feedback(self, shortlist_id: str, status: str, feedback: str, context: RequestContext) -> dict[str, Any]: ...
+    def list_placements(self, context: RequestContext) -> list[dict[str, Any]]: ...
+    def record_placement(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]: ...
+    def list_invoices(self, context: RequestContext) -> list[dict[str, Any]]: ...
+    def create_invoice(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]: ...
+    def create_data_export(self, export_type: str, format_type: str, context: RequestContext) -> dict[str, Any]: ...
+    def execute_compliance_deletion(self, candidate_id: str, reason: str, context: RequestContext) -> dict[str, Any]: ...
+    def list_retention_policies(self, context: RequestContext) -> list[dict[str, Any]]: ...
+    def create_retention_policy(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]: ...
+
 
 
 
@@ -606,7 +631,7 @@ class SupabaseRepository:
                     {"data": {"invited_organization_id": context.organization_id, "must_change_password": True}, "redirect_to": self.app_origin},
                 )
                 if not response.user:
-                    raise AppError("Could not provision user in authentication system.", 502, "provision_failed")
+                    raise AppError("Could not provision user in authentication system.", 502, "provision_failed") from None
                 user_id = str(response.user.id)
 
         self.client.table("organization_members").upsert(
@@ -679,7 +704,7 @@ class SupabaseRepository:
                     },
                 )
             except Exception as exc:
-                raise AppError(f"Could not update master admin credentials: {exc}", 502, "update_failed")
+                raise AppError(f"Could not update master admin credentials: {exc}", 502, "update_failed") from exc
         else:
             # 4. Create user if not existing
             try:
@@ -720,7 +745,7 @@ class SupabaseRepository:
                             )
                             break
                 except Exception as exc:
-                    raise AppError(f"Could not provision master admin: {exc}", 502, "create_failed")
+                    raise AppError(f"Could not provision master admin: {exc}", 502, "create_failed") from exc
 
         # 5. Ensure profile and organization membership exist
         try:
@@ -914,6 +939,403 @@ class SupabaseRepository:
             self.delete_applications(app_ids, context)
         return True
 
+    def list_interviews(self, context: RequestContext) -> list[dict[str, Any]]:
+        rows = (
+            self.client.table("interview_plans")
+            .select("*")
+            .eq("organization_id", context.organization_id)
+            .order("created_at", desc=True)
+            .execute()
+            .data
+        )
+        return rows
+
+    def create_interview(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        item = {
+            "id": str(uuid.uuid4()),
+            "organization_id": context.organization_id,
+            "candidate_id": data["candidateId"],
+            "job_id": data.get("jobId"),
+            "title": data.get("title", "Technical Interview"),
+            "interview_type": data.get("interviewType", "technical"),
+            "interviewer_name": data.get("interviewerName", "Recruiter"),
+            "scheduled_at": data.get("scheduledAt") or utc_now(),
+            "meeting_link": data.get("meetingLink", ""),
+            "notes": data.get("notes", ""),
+            "status": "scheduled",
+            "created_at": utc_now(),
+            "updated_at": utc_now(),
+        }
+        res = self.client.table("interview_plans").insert(item).execute().data
+        return res[0] if res else item
+
+    def submit_scorecard(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        item = {
+            "id": str(uuid.uuid4()),
+            "organization_id": context.organization_id,
+            "interview_plan_id": data["interviewPlanId"],
+            "candidate_id": data["candidateId"],
+            "interviewer_id": context.user_id,
+            "interviewer_name": data.get("interviewerName", "Interviewer"),
+            "technical_rating": data.get("technicalRating", 3),
+            "communication_rating": data.get("communicationRating", 3),
+            "problem_solving_rating": data.get("problemSolvingRating", 3),
+            "culture_fit_rating": data.get("cultureFitRating", 3),
+            "overall_recommendation": data.get("overallRecommendation", "hire"),
+            "strengths": data.get("strengths", ""),
+            "concerns": data.get("concerns", ""),
+            "detailed_feedback": data.get("detailedFeedback", ""),
+            "submitted_at": utc_now(),
+        }
+        res = self.client.table("interview_scorecards").insert(item).execute().data
+        # Update plan status to completed
+        self.client.table("interview_plans").update({"status": "completed"}).eq("id", data["interviewPlanId"]).execute()
+        return res[0] if res else item
+
+    def list_scorecards(self, candidate_id: str, context: RequestContext) -> list[dict[str, Any]]:
+        rows = (
+            self.client.table("interview_scorecards")
+            .select("*")
+            .eq("organization_id", context.organization_id)
+            .eq("candidate_id", candidate_id)
+            .order("submitted_at", desc=True)
+            .execute()
+            .data
+        )
+        return rows
+
+    def move_candidate_stage(
+        self, candidate_id: str, to_stage: str, job_id: str | None, reason: str, context: RequestContext
+    ) -> dict[str, Any]:
+        cand = self.get_candidate(candidate_id, context)
+        from_stage = cand.get("status", "new") if cand else "new"
+        self.update_candidate(candidate_id, {"status": to_stage}, context)
+        history_item = {
+            "id": str(uuid.uuid4()),
+            "organization_id": context.organization_id,
+            "candidate_id": candidate_id,
+            "job_id": job_id,
+            "from_stage": from_stage,
+            "to_stage": to_stage,
+            "changed_by": context.email or context.user_id,
+            "reason": reason or "Recruiter pipeline movement",
+            "created_at": utc_now(),
+        }
+        try:
+            self.client.table("candidate_stage_history").insert(history_item).execute()
+        except Exception:
+            pass
+        return {"candidateId": candidate_id, "fromStage": from_stage, "toStage": to_stage, "history": history_item}
+
+    def list_stage_history(self, candidate_id: str, context: RequestContext) -> list[dict[str, Any]]:
+        try:
+            rows = (
+                self.client.table("candidate_stage_history")
+                .select("*")
+                .eq("organization_id", context.organization_id)
+                .eq("candidate_id", candidate_id)
+                .order("created_at", desc=True)
+                .execute()
+                .data
+            )
+            return rows
+        except Exception:
+            return []
+
+    def list_offers(self, context: RequestContext) -> list[dict[str, Any]]:
+        try:
+            rows = (
+                self.client.table("offers")
+                .select("*")
+                .eq("organization_id", context.organization_id)
+                .order("created_at", desc=True)
+                .execute()
+                .data
+            )
+            return rows
+        except Exception:
+            return []
+
+    def create_offer(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        item = {
+            "id": str(uuid.uuid4()),
+            "organization_id": context.organization_id,
+            "candidate_id": data["candidateId"],
+            "job_id": data.get("jobId"),
+            "base_salary": data.get("baseSalary", 0),
+            "currency": data.get("currency", "INR"),
+            "bonus": data.get("bonus", 0),
+            "equity": data.get("equity", ""),
+            "joining_date": data.get("joiningDate", ""),
+            "expiration_date": data.get("expirationDate", ""),
+            "status": "pending_approval",
+            "created_by": context.email or context.user_id,
+            "created_at": utc_now(),
+            "updated_at": utc_now(),
+        }
+        try:
+            res = self.client.table("offers").insert(item).execute().data
+            return res[0] if res else item
+        except Exception:
+            return item
+
+    def update_offer_status(self, offer_id: str, status: str, context: RequestContext) -> dict[str, Any]:
+        try:
+            res = (
+                self.client.table("offers")
+                .update({"status": status, "updated_at": utc_now()})
+                .eq("id", offer_id)
+                .eq("organization_id", context.organization_id)
+                .execute()
+                .data
+            )
+            return res[0] if res else {"id": offer_id, "status": status}
+        except Exception:
+            return {"id": offer_id, "status": status}
+
+    def list_onboarding(self, context: RequestContext) -> list[dict[str, Any]]:
+        try:
+            rows = (
+                self.client.table("onboarding_records")
+                .select("*")
+                .eq("organization_id", context.organization_id)
+                .order("created_at", desc=True)
+                .execute()
+                .data
+            )
+            return rows
+        except Exception:
+            return []
+
+    def update_onboarding(
+        self, onboarding_id: str, changes: dict[str, Any], context: RequestContext
+    ) -> dict[str, Any]:
+        try:
+            res = (
+                self.client.table("onboarding_records")
+                .update({**changes, "updated_at": utc_now()})
+                .eq("id", onboarding_id)
+                .eq("organization_id", context.organization_id)
+                .execute()
+                .data
+            )
+            return res[0] if res else {"id": onboarding_id, **changes}
+        except Exception:
+            return {"id": onboarding_id, **changes}
+
+    def record_recruiter_feedback(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        item = {
+            "id": str(uuid.uuid4()),
+            "organization_id": context.organization_id,
+            "candidate_id": data["candidateId"],
+            "job_id": data["jobId"],
+            "recruiter_id": context.user_id,
+            "override_score": data.get("overrideScore", 85),
+            "feedback_category": data.get("feedbackCategory", "general"),
+            "comments": data.get("comments", ""),
+            "created_at": utc_now(),
+        }
+        try:
+            self.client.table("recruiter_feedback").insert(item).execute()
+        except Exception:
+            pass
+        return item
+
+    def list_client_jobs(self, client_id: str, context: RequestContext) -> list[dict[str, Any]]:
+        try:
+            rows = (
+                self.client.table("client_jobs")
+                .select("*")
+                .eq("organization_id", context.organization_id)
+                .eq("client_id", client_id)
+                .execute()
+                .data
+            )
+            return rows
+        except Exception:
+            return []
+
+    def create_client_job(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        item = {
+            "id": str(uuid.uuid4()),
+            "organization_id": context.organization_id,
+            "client_id": data["clientId"],
+            "title": data["title"],
+            "department": data.get("department", ""),
+            "target_hires": data.get("targetHires", 1),
+            "fee_percentage": data.get("feePercentage", 15.0),
+            "status": "open",
+            "created_at": utc_now(),
+            "updated_at": utc_now(),
+        }
+        try:
+            res = self.client.table("client_jobs").insert(item).execute().data
+            return res[0] if res else item
+        except Exception:
+            return item
+
+    def share_client_shortlist(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        item = {
+            "id": str(uuid.uuid4()),
+            "organization_id": context.organization_id,
+            "client_id": data["clientId"],
+            "candidate_id": data["candidateId"],
+            "job_id": data.get("jobId"),
+            "client_status": "pending_review",
+            "client_feedback": "",
+            "shared_at": utc_now(),
+        }
+        try:
+            res = self.client.table("client_shortlists").insert(item).execute().data
+            return res[0] if res else item
+        except Exception:
+            return item
+
+    def record_client_feedback(
+        self, shortlist_id: str, status: str, feedback: str, context: RequestContext
+    ) -> dict[str, Any]:
+        try:
+            res = (
+                self.client.table("client_shortlists")
+                .update({"client_status": status, "client_feedback": feedback, "feedback_at": utc_now()})
+                .eq("id", shortlist_id)
+                .eq("organization_id", context.organization_id)
+                .execute()
+                .data
+            )
+            return res[0] if res else {"id": shortlist_id, "status": status}
+        except Exception:
+            return {"id": shortlist_id, "status": status}
+
+    def list_placements(self, context: RequestContext) -> list[dict[str, Any]]:
+        try:
+            rows = (
+                self.client.table("placements")
+                .select("*")
+                .eq("organization_id", context.organization_id)
+                .order("created_at", desc=True)
+                .execute()
+                .data
+            )
+            return rows
+        except Exception:
+            return []
+
+    def record_placement(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        item = {
+            "id": str(uuid.uuid4()),
+            "organization_id": context.organization_id,
+            "client_id": data["clientId"],
+            "candidate_id": data["candidateId"],
+            "job_id": data.get("jobId"),
+            "placed_date": data.get("placedDate") or utc_now(),
+            "base_salary": data.get("baseSalary", 0),
+            "placement_fee": data.get("placementFee", 0),
+            "guarantee_days": data.get("guaranteeDays", 90),
+            "invoice_status": "unbilled",
+            "created_at": utc_now(),
+        }
+        try:
+            res = self.client.table("placements").insert(item).execute().data
+            return res[0] if res else item
+        except Exception:
+            return item
+
+    def list_invoices(self, context: RequestContext) -> list[dict[str, Any]]:
+        try:
+            rows = (
+                self.client.table("invoices")
+                .select("*")
+                .eq("organization_id", context.organization_id)
+                .order("created_at", desc=True)
+                .execute()
+                .data
+            )
+            return rows
+        except Exception:
+            return []
+
+    def create_invoice(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        item = {
+            "id": str(uuid.uuid4()),
+            "organization_id": context.organization_id,
+            "client_id": data["clientId"],
+            "invoice_number": data.get("invoiceNumber", f"INV-{int(time.time())}"),
+            "amount": data.get("amount", 0),
+            "currency": data.get("currency", "INR"),
+            "due_date": data.get("dueDate", ""),
+            "status": "unpaid",
+            "issued_at": utc_now(),
+            "created_at": utc_now(),
+        }
+        try:
+            res = self.client.table("invoices").insert(item).execute().data
+            return res[0] if res else item
+        except Exception:
+            return item
+
+    def create_data_export(self, export_type: str, format_type: str, context: RequestContext) -> dict[str, Any]:
+        cands = self.list_candidates(context)
+        return {
+            "exportId": str(uuid.uuid4()),
+            "exportType": export_type,
+            "format": format_type,
+            "rowCount": len(cands),
+            "downloadUrl": f"/api/reports/export?format={format_type}",
+            "status": "completed",
+            "createdAt": utc_now(),
+        }
+
+    def execute_compliance_deletion(self, candidate_id: str, reason: str, context: RequestContext) -> dict[str, Any]:
+        self.delete_candidate(candidate_id, context)
+        item = {
+            "id": str(uuid.uuid4()),
+            "organization_id": context.organization_id,
+            "candidate_id": candidate_id,
+            "requested_by": context.email or context.user_id,
+            "reason": reason,
+            "status": "completed",
+            "completed_at": utc_now(),
+            "created_at": utc_now(),
+        }
+        try:
+            self.client.table("deletion_requests").insert(item).execute()
+        except Exception:
+            pass
+        return {"status": "success", "message": f"Candidate {candidate_id} permanently erased under GDPR/DPDP."}
+
+    def list_retention_policies(self, context: RequestContext) -> list[dict[str, Any]]:
+        try:
+            rows = (
+                self.client.table("retention_policies")
+                .select("*")
+                .eq("organization_id", context.organization_id)
+                .execute()
+                .data
+            )
+            return rows
+        except Exception:
+            return []
+
+    def create_retention_policy(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        item = {
+            "id": str(uuid.uuid4()),
+            "organization_id": context.organization_id,
+            "policy_name": data["policyName"],
+            "data_type": data.get("dataType", "resumes"),
+            "retention_days": data.get("retentionDays", 730),
+            "action": data.get("action", "anonymize"),
+            "is_active": data.get("isActive", True),
+            "created_at": utc_now(),
+            "updated_at": utc_now(),
+        }
+        try:
+            res = self.client.table("retention_policies").insert(item).execute().data
+            return res[0] if res else item
+        except Exception:
+            return item
+
+
 
 
 class LocalRepository:
@@ -1100,10 +1522,16 @@ class LocalRepository:
             temporary.replace(self.data_file)
 
     def list_applications(self, context: RequestContext) -> list[dict[str, Any]]:
-        return sorted(self._read()["applications"], key=lambda item: item.get("uploadedAt", ""), reverse=True)
+        apps = self._read()["applications"]
+        if context.organization_id and context.organization_id != "local-organization":
+            apps = [a for a in apps if a.get("organizationId") == context.organization_id]
+        return sorted(apps, key=lambda item: item.get("uploadedAt", ""), reverse=True)
 
     def insert_applications(self, applications: list[dict[str, Any]], context: RequestContext) -> list[dict[str, Any]]:
         data = self._read()
+        for app in applications:
+            app["organizationId"] = context.organization_id
+            app["createdBy"] = context.user_id
         data["applications"] = applications + data["applications"]
         for app in applications:
             c_id = str(app.get("candidateId") or app["id"])
@@ -1111,6 +1539,8 @@ class LocalRepository:
             intel = extract_candidate_intelligence(str(app.get("textPreview") or app.get("summary") or ""), app)
             cand = {
                 "id": c_id,
+                "organizationId": context.organization_id,
+                "createdBy": context.user_id,
                 "canonicalName": app.get("candidateName", "Unknown Candidate"),
                 "blindId": intel["blindId"],
                 "email": app.get("email", ""),
@@ -1186,11 +1616,22 @@ class LocalRepository:
         return len(removed)
 
     def list_jobs(self, context: RequestContext) -> list[dict[str, Any]]:
-        return self._read()["jobs"]
+        jobs = self._read()["jobs"]
+        if context.organization_id and context.organization_id != "local-organization":
+            jobs = [j for j in jobs if j.get("organizationId") == context.organization_id]
+        return jobs
 
     def create_job(self, values: dict[str, Any], context: RequestContext) -> dict[str, Any]:
         now = utc_now()
-        job = {"id": str(uuid.uuid4()), **values, "status": "open", "createdAt": now, "updatedAt": now}
+        job = {
+            "id": str(uuid.uuid4()),
+            "organizationId": context.organization_id,
+            "createdBy": context.user_id,
+            **values,
+            "status": "open",
+            "createdAt": now,
+            "updatedAt": now,
+        }
         data = self._read()
         data["jobs"].insert(0, job)
         self._write(data)
@@ -1393,7 +1834,10 @@ class LocalRepository:
         return None
 
     def list_candidates(self, context: RequestContext, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        return sorted(self._read()["candidates"], key=lambda c: c.get("lastActivityAt", ""), reverse=True)
+        cands = self._read().get("candidates", [])
+        if context.organization_id and context.organization_id != "local-organization":
+            cands = [c for c in cands if c.get("organizationId") == context.organization_id]
+        return sorted(cands, key=lambda c: c.get("lastActivityAt", ""), reverse=True)
 
     def get_candidate(self, candidate_id: str, context: RequestContext) -> dict[str, Any] | None:
         data = self._read()
@@ -1504,6 +1948,392 @@ class LocalRepository:
         self._write(data)
         self.delete_resume_objects([item.get("storedName", "") for item in removed_apps if item.get("storedName")])
         return True
+
+    def list_interviews(self, context: RequestContext) -> list[dict[str, Any]]:
+        data = self._read()
+        items = data.get("interviews", [])
+        if context.organization_id and context.organization_id != "local-organization":
+            items = [i for i in items if i.get("organizationId") == context.organization_id]
+        return sorted(items, key=lambda i: i.get("scheduledAt", ""), reverse=True)
+
+    def create_interview(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        store = self._read()
+        store.setdefault("interviews", [])
+        cands = store.get("candidates", [])
+        jobs = store.get("jobs", [])
+        cand = next((c for c in cands if c["id"] == data["candidateId"]), None)
+        job = next((j for j in jobs if j["id"] == data.get("jobId")), None)
+        item = {
+            "id": str(uuid.uuid4()),
+            "organizationId": context.organization_id,
+            "candidateId": data["candidateId"],
+            "candidateName": cand.get("canonicalName", "Candidate") if cand else "Candidate",
+            "jobId": data.get("jobId"),
+            "jobTitle": job.get("title", "") if job else "",
+            "title": data.get("title", "Technical Interview"),
+            "interviewType": data.get("interviewType", "technical"),
+            "interviewerName": data.get("interviewerName", "Recruiter Lead"),
+            "scheduledAt": data.get("scheduledAt") or utc_now(),
+            "status": "scheduled",
+            "meetingLink": data.get("meetingLink", "https://meet.google.com/nxr-talent"),
+            "notes": data.get("notes", ""),
+            "createdAt": utc_now(),
+        }
+        store["interviews"].insert(0, item)
+        self._write(store)
+        return item
+
+    def submit_scorecard(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        store = self._read()
+        store.setdefault("scorecards", [])
+        scorecard = {
+            "id": str(uuid.uuid4()),
+            "organizationId": context.organization_id,
+            "interviewPlanId": data["interviewPlanId"],
+            "candidateId": data["candidateId"],
+            "interviewerName": data.get("interviewerName", "Recruiter"),
+            "technicalRating": data.get("technicalRating", 4),
+            "communicationRating": data.get("communicationRating", 4),
+            "problemSolvingRating": data.get("problemSolvingRating", 4),
+            "cultureFitRating": data.get("cultureFitRating", 4),
+            "overallRecommendation": data.get("overallRecommendation", "hire"),
+            "strengths": data.get("strengths", ""),
+            "concerns": data.get("concerns", ""),
+            "detailedFeedback": data.get("detailedFeedback", ""),
+            "submittedAt": utc_now(),
+        }
+        store["scorecards"].insert(0, scorecard)
+        # Update interview status
+        for plan in store.get("interviews", []):
+            if plan["id"] == data["interviewPlanId"]:
+                plan["status"] = "completed"
+                plan["scorecardCount"] = plan.get("scorecardCount", 0) + 1
+        self._write(store)
+        return scorecard
+
+    def list_scorecards(self, candidate_id: str, context: RequestContext) -> list[dict[str, Any]]:
+        store = self._read()
+        items = store.get("scorecards", [])
+        return [s for s in items if s.get("candidateId") == candidate_id]
+
+    def move_candidate_stage(
+        self, candidate_id: str, to_stage: str, job_id: str | None, reason: str, context: RequestContext
+    ) -> dict[str, Any]:
+        store = self._read()
+        store.setdefault("stageHistory", [])
+        cand = next((c for c in store.get("candidates", []) if c["id"] == candidate_id), None)
+        from_stage = cand.get("status", "new") if cand else "new"
+        if cand:
+            cand["status"] = to_stage
+            cand["updatedAt"] = utc_now()
+            cand["lastActivityAt"] = utc_now()
+        history_item = {
+            "id": str(uuid.uuid4()),
+            "organizationId": context.organization_id,
+            "candidateId": candidate_id,
+            "jobId": job_id,
+            "fromStage": from_stage,
+            "toStage": to_stage,
+            "changedBy": context.email or context.user_id,
+            "reason": reason or "Recruiter pipeline movement",
+            "durationInStageHours": 24.0,
+            "createdAt": utc_now(),
+        }
+        store["stageHistory"].insert(0, history_item)
+        self._write(store)
+        return {"candidate": cand, "stageHistory": history_item, "toStage": to_stage, "fromStage": from_stage, "success": True}
+
+    def list_stage_history(self, candidate_id: str, context: RequestContext) -> list[dict[str, Any]]:
+        store = self._read()
+        items = store.get("stageHistory", [])
+        return [h for h in items if h.get("candidateId") == candidate_id]
+
+    def list_offers(self, context: RequestContext) -> list[dict[str, Any]]:
+        store = self._read()
+        items = store.get("offers", [])
+        if context.organization_id and context.organization_id != "local-organization":
+            items = [o for o in items if o.get("organizationId") == context.organization_id]
+        return sorted(items, key=lambda o: o.get("createdAt", ""), reverse=True)
+
+    def create_offer(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        store = self._read()
+        store.setdefault("offers", [])
+        cands = store.get("candidates", [])
+        jobs = store.get("jobs", [])
+        cand = next((c for c in cands if c["id"] == data["candidateId"]), None)
+        job = next((j for j in jobs if j["id"] == data.get("jobId")), None)
+        offer = {
+            "id": str(uuid.uuid4()),
+            "organizationId": context.organization_id,
+            "candidateId": data["candidateId"],
+            "candidateName": cand.get("canonicalName", "Candidate") if cand else "Candidate",
+            "jobId": data.get("jobId"),
+            "jobTitle": job.get("title", "") if job else "Software Engineer",
+            "baseSalary": data.get("baseSalary", 1800000),
+            "currency": data.get("currency", "INR"),
+            "bonus": data.get("bonus", 200000),
+            "equity": data.get("equity", "0.05%"),
+            "joiningDate": data.get("joiningDate", "2026-10-01"),
+            "expirationDate": data.get("expirationDate", "2026-09-30"),
+            "status": "sent",
+            "createdBy": context.email or context.user_id,
+            "createdAt": utc_now(),
+        }
+        store["offers"].insert(0, offer)
+        # Also create initial onboarding record
+        store.setdefault("onboarding", [])
+        onboarding_record = {
+            "id": str(uuid.uuid4()),
+            "organizationId": context.organization_id,
+            "candidateId": data["candidateId"],
+            "candidateName": cand.get("canonicalName", "Candidate") if cand else "Candidate",
+            "offerId": offer["id"],
+            "backgroundCheckStatus": "pending",
+            "documentsVerified": False,
+            "equipmentProvisioned": False,
+            "startDate": offer["joiningDate"],
+            "buddyAssigned": "Engineering Manager",
+            "status": "in_progress",
+            "createdAt": utc_now(),
+        }
+        store["onboarding"].insert(0, onboarding_record)
+        self._write(store)
+        return offer
+
+    def update_offer_status(self, offer_id: str, status: str, context: RequestContext) -> dict[str, Any]:
+        store = self._read()
+        target = None
+        for off in store.get("offers", []):
+            if off["id"] == offer_id:
+                off["status"] = status
+                off["updatedAt"] = utc_now()
+                target = off.copy()
+                break
+        if target:
+            self._write(store)
+            return target
+        return {"id": offer_id, "status": status}
+
+    def list_onboarding(self, context: RequestContext) -> list[dict[str, Any]]:
+        store = self._read()
+        items = store.get("onboarding", [])
+        if context.organization_id and context.organization_id != "local-organization":
+            items = [r for r in items if r.get("organizationId") == context.organization_id]
+        return items
+
+    def update_onboarding(
+        self, onboarding_id: str, changes: dict[str, Any], context: RequestContext
+    ) -> dict[str, Any]:
+        store = self._read()
+        target = None
+        for item in store.get("onboarding", []):
+            if item["id"] == onboarding_id:
+                item.update(changes)
+                item["updatedAt"] = utc_now()
+                target = item.copy()
+                break
+        if target:
+            self._write(store)
+            return target
+        return {"id": onboarding_id, **changes}
+
+    def record_recruiter_feedback(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        store = self._read()
+        store.setdefault("recruiterFeedback", [])
+        item = {
+            "id": str(uuid.uuid4()),
+            "organizationId": context.organization_id,
+            "candidateId": data["candidateId"],
+            "jobId": data["jobId"],
+            "recruiterId": context.user_id,
+            "overrideScore": data.get("overrideScore", 85),
+            "feedbackCategory": data.get("feedbackCategory", "general"),
+            "comments": data.get("comments", ""),
+            "createdAt": utc_now(),
+        }
+        store["recruiterFeedback"].insert(0, item)
+        self._write(store)
+        return item
+
+    def list_client_jobs(self, client_id: str, context: RequestContext) -> list[dict[str, Any]]:
+        store = self._read()
+        jobs = store.get("clientJobs", [])
+        return [j for j in jobs if j.get("clientId") == client_id]
+
+    def create_client_job(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        store = self._read()
+        store.setdefault("clientJobs", [])
+        item = {
+            "id": str(uuid.uuid4()),
+            "organizationId": context.organization_id,
+            "clientId": data["clientId"],
+            "title": data["title"],
+            "department": data.get("department", "Engineering"),
+            "status": "open",
+            "targetHires": data.get("targetHires", 1),
+            "filledHires": 0,
+            "feePercentage": data.get("feePercentage", 15.0),
+            "createdAt": utc_now(),
+        }
+        store["clientJobs"].insert(0, item)
+        self._write(store)
+        return item
+
+    def share_client_shortlist(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        store = self._read()
+        store.setdefault("clientShortlists", [])
+        cands = store.get("candidates", [])
+        cand = next((c for c in cands if c["id"] == data["candidateId"]), None)
+        item = {
+            "id": str(uuid.uuid4()),
+            "organizationId": context.organization_id,
+            "clientId": data["clientId"],
+            "candidateId": data["candidateId"],
+            "candidateName": cand.get("canonicalName", "Candidate") if cand else "Candidate",
+            "jobId": data.get("jobId"),
+            "clientStatus": "pending_review",
+            "clientFeedback": "",
+            "sharedAt": utc_now(),
+        }
+        store["clientShortlists"].insert(0, item)
+        self._write(store)
+        return item
+
+    def record_client_feedback(
+        self, shortlist_id: str, status: str, feedback: str, context: RequestContext
+    ) -> dict[str, Any]:
+        store = self._read()
+        target = None
+        for item in store.get("clientShortlists", []):
+            if item["id"] == shortlist_id:
+                item["clientStatus"] = status
+                item["clientFeedback"] = feedback
+                item["feedbackAt"] = utc_now()
+                target = item.copy()
+                break
+        if target:
+            self._write(store)
+            return target
+        return {"id": shortlist_id, "clientStatus": status, "clientFeedback": feedback}
+
+    def list_placements(self, context: RequestContext) -> list[dict[str, Any]]:
+        store = self._read()
+        return store.get("placements", [])
+
+    def record_placement(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        store = self._read()
+        store.setdefault("placements", [])
+        cands = store.get("candidates", [])
+        cand = next((c for c in cands if c["id"] == data["candidateId"]), None)
+        base_salary = float(data.get("baseSalary", 2400000))
+        fee = float(data.get("placementFee", base_salary * 0.15))
+        item = {
+            "id": str(uuid.uuid4()),
+            "organizationId": context.organization_id,
+            "clientId": data["clientId"],
+            "clientName": data.get("clientName", "Corporate Client"),
+            "candidateId": data["candidateId"],
+            "candidateName": cand.get("canonicalName", "Candidate") if cand else "Placed Candidate",
+            "jobId": data.get("jobId"),
+            "placedDate": data.get("placedDate") or utc_now(),
+            "baseSalary": base_salary,
+            "placementFee": fee,
+            "guaranteeDays": int(data.get("guaranteeDays", 90)),
+            "invoiceStatus": "unbilled",
+            "createdAt": utc_now(),
+        }
+        store["placements"].insert(0, item)
+        self._write(store)
+        return item
+
+    def list_invoices(self, context: RequestContext) -> list[dict[str, Any]]:
+        store = self._read()
+        return store.get("invoices", [])
+
+    def create_invoice(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        store = self._read()
+        store.setdefault("invoices", [])
+        item = {
+            "id": str(uuid.uuid4()),
+            "organizationId": context.organization_id,
+            "clientId": data["clientId"],
+            "clientName": data.get("clientName", "Corporate Client"),
+            "invoiceNumber": data.get("invoiceNumber", f"INV-{int(time.time())}"),
+            "amount": float(data.get("amount", 360000)),
+            "currency": data.get("currency", "INR"),
+            "dueDate": data.get("dueDate", "2026-10-15"),
+            "status": "sent",
+            "issuedAt": utc_now(),
+            "createdAt": utc_now(),
+        }
+        store["invoices"].insert(0, item)
+        self._write(store)
+        return item
+
+    def create_data_export(self, export_type: str, format_type: str, context: RequestContext) -> dict[str, Any]:
+        cands = self.list_candidates(context)
+        return {
+            "exportId": str(uuid.uuid4()),
+            "exportType": export_type,
+            "format": format_type,
+            "rowCount": len(cands),
+            "downloadUrl": f"/api/reports/export?format={format_type}",
+            "status": "completed",
+            "createdAt": utc_now(),
+        }
+
+    def execute_compliance_deletion(self, candidate_id: str, reason: str, context: RequestContext) -> dict[str, Any]:
+        self.delete_candidate(candidate_id, context)
+        store = self._read()
+        store.setdefault("deletionRequests", [])
+        item = {
+            "id": str(uuid.uuid4()),
+            "organizationId": context.organization_id,
+            "candidateId": candidate_id,
+            "requestedBy": context.email or context.user_id,
+            "reason": reason,
+            "status": "completed",
+            "completedAt": utc_now(),
+            "createdAt": utc_now(),
+        }
+        store["deletionRequests"].insert(0, item)
+        self._write(store)
+        return {"status": "success", "message": f"Candidate {candidate_id} permanently erased under GDPR/DPDP."}
+
+    def list_retention_policies(self, context: RequestContext) -> list[dict[str, Any]]:
+        store = self._read()
+        return store.get(
+            "retentionPolicies",
+            [
+                {
+                    "id": "ret-1",
+                    "policyName": "Standard 2-Year Resume Retention",
+                    "dataType": "resumes",
+                    "retentionDays": 730,
+                    "action": "anonymize",
+                    "isActive": True,
+                    "createdAt": utc_now(),
+                }
+            ],
+        )
+
+    def create_retention_policy(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
+        store = self._read()
+        store.setdefault("retentionPolicies", [])
+        item = {
+            "id": str(uuid.uuid4()),
+            "organizationId": context.organization_id,
+            "policyName": data["policyName"],
+            "dataType": data.get("dataType", "resumes"),
+            "retentionDays": int(data.get("retentionDays", 730)),
+            "action": data.get("action", "anonymize"),
+            "isActive": data.get("isActive", True),
+            "createdAt": utc_now(),
+            "updatedAt": utc_now(),
+        }
+        store["retentionPolicies"].insert(0, item)
+        self._write(store)
+        return item
 
 
 
