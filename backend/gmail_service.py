@@ -9,13 +9,13 @@ from typing import Any
 
 import httpx
 
-from .classifier import NON_RESUME_FILENAMES
+from .classifier import NON_RESUME_FILENAMES, is_candidate_resume
 from .config import Settings
 from .crypto import SignedState, TokenCipher
 from .errors import AppError, ServiceUnavailableError
 from .models import RequestContext
 from .repository import Repository, utc_now
-from .resume_service import ALLOWED_EXTENSIONS, MIME_BY_EXTENSION, ResumeService
+from .resume_service import ALLOWED_EXTENSIONS, MIME_BY_EXTENSION, ResumeService, extract_resume_text
 
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 DEFAULT_QUERY = (
@@ -190,18 +190,45 @@ class GmailService:
                 message, connection = self._gmail_get(
                     f"/messages/{message_id}", connection, context, params={"format": "full"}
                 )
-                for part in _flatten_parts(message.get("payload") or {}):
-                    filename = str(part.get("filename") or "")
-                    extension = Path(filename).suffix.lower()
-                    if not filename or extension not in ALLOWED_EXTENSIONS:
-                        if filename:
-                            skipped += 1
+
+                # 1. Collect all attachment parts with supported resume extensions
+                raw_parts = _flatten_parts(message.get("payload") or {})
+                candidate_parts: list[tuple[dict[str, Any], str, str]] = []
+                for part in raw_parts:
+                    filename = str(part.get("filename") or "").strip()
+                    if not filename:
                         continue
+                    extension = Path(filename).suffix.lower()
+                    if extension not in ALLOWED_EXTENSIONS:
+                        skipped += 1
+                        continue
+
                     lower_filename = filename.lower()
+                    # Filter out attachments matching non-resume document patterns
+                    # (e.g. certificates, marksheets, transcripts, diplomas, cover letters, LORs, passports, invoices)
                     if any(non_kw in lower_filename for non_kw in NON_RESUME_FILENAMES):
-                        if "resume" not in lower_filename and "cv" not in lower_filename:
+                        if not any(res_kw in lower_filename for res_kw in ("resume", "cv", "curriculum", "biodata")):
                             skipped += 1
                             continue
+
+                    candidate_parts.append((part, filename, extension))
+
+                if not candidate_parts:
+                    continue
+
+                # 2. Attachment Prioritization per Message:
+                # When candidates submit an application with multiple files (e.g. CV + degree + cover letter),
+                # prioritize explicit resume/CV files and ignore accompanying collateral.
+                explicit_resumes = [
+                    item
+                    for item in candidate_parts
+                    if any(res_kw in item[1].lower() for res_kw in ("resume", "cv", "curriculum", "biodata"))
+                ]
+                parts_to_process = explicit_resumes if explicit_resumes else candidate_parts
+                skipped += len(candidate_parts) - len(parts_to_process)
+
+                # 3. Content verification: download and inspect each candidate attachment
+                for part, filename, extension in parts_to_process:
                     attachments_seen += 1
                     if attachments_seen > self.settings.max_upload_files:
                         skipped += 1
@@ -217,9 +244,27 @@ class GmailService:
                     if not encoded:
                         skipped += 1
                         continue
+
+                    try:
+                        content_bytes = _decode_base64url(str(encoded))
+                    except Exception:
+                        skipped += 1
+                        continue
+
+                    # Pre-validate extracted document text: only candidate resumes are yielded
+                    try:
+                        doc_text = extract_resume_text(content_bytes, filename)
+                        is_valid, _ = is_candidate_resume(doc_text, filename)
+                        if not is_valid:
+                            skipped += 1
+                            continue
+                    except Exception:
+                        skipped += 1
+                        continue
+
                     yield {
                         "name": filename,
-                        "content": _decode_base64url(str(encoded)),
+                        "content": content_bytes,
                         "mimeType": str(part.get("mimeType") or MIME_BY_EXTENSION[extension]),
                         "externalId": f"gmail:{message_id}:{attachment_id or filename}",
                     }

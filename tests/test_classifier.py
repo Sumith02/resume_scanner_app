@@ -84,3 +84,77 @@ def test_is_candidate_resume_rejects_tickets_newsletters_and_flyers() -> None:
     assert valid3 is False
 
 
+def test_is_candidate_resume_rejects_certificates_and_transcripts() -> None:
+    cert_text = """
+    Certificate of Completion
+    This is to certify that Rahul Sharma has successfully completed the course
+    Mastering Python & Microservices at Tech Academy on 15-May-2023.
+    """
+    valid, reason = is_candidate_resume(cert_text, "certificate_python.pdf")
+    assert valid is False
+    assert "rejected" in reason.lower()
+
+    transcript_text = """
+    National Institute of Technology
+    Statement of Marks / Academic Transcript
+    Semester Examination 2023
+    Controller of Examinations
+    Cumulative Grade Point Average (CGPA): 8.9 / 10
+    """
+    valid2, reason2 = is_candidate_resume(transcript_text, "marksheet_sem8.pdf")
+    assert valid2 is False
+    assert "rejected" in reason2.lower()
+
+
+def test_is_candidate_resume_rejects_offer_letters_and_payslips() -> None:
+    offer_text = """
+    Dear Candidate,
+    We are pleased to offer you the position of Senior Backend Engineer at Acme Corp.
+    Letter of Offer and appointment terms:
+    Your gross salary will be $120,000 per annum with a probation period of 3 months.
+    """
+    valid, reason = is_candidate_resume(offer_text, "offer_letter.pdf")
+    assert valid is False
+    assert "rejected" in reason.lower()
+
+    payslip_text = """
+    Acme Software Services Pvt Ltd
+    Payslip for the month of August 2024
+    Employee ID: ACME-901
+    Basic Pay: $5,000.00 | Net Payable: $6,200.00
+    Employee Provident Fund: $400.00
+    """
+    valid2, reason2 = is_candidate_resume(payslip_text, "payslip_aug24.pdf")
+    assert valid2 is False
+    assert "rejected" in reason2.lower()
+
+
+def test_is_candidate_resume_rejects_standalone_cover_letters() -> None:
+    cover_letter_text = """
+    Dear Hiring Manager,
+    I am writing to apply for the Senior DevOps Engineer position at your organization.
+    I have extensive background in Kubernetes and cloud infrastructure.
+    Please find attached my resume for your review.
+    Thank you for your consideration.
+    Sincerely,
+    David Miller
+    """
+    valid, reason = is_candidate_resume(cover_letter_text, "cover_letter.pdf")
+    assert valid is False
+    assert "rejected" in reason.lower()
+
+
+def test_is_candidate_resume_rejects_non_resume_filenames_even_with_text() -> None:
+    text = "John Doe\njohn@example.com\nPython, Docker, SQL\n4 years experience"
+    # An academic certificate filename should be rejected
+    valid, reason = is_candidate_resume(text, "degree_certificate.pdf")
+    assert valid is False
+    assert "filename indicates a non-resume" in reason.lower()
+
+    # A passport or ID scan filename should be rejected
+    valid2, reason2 = is_candidate_resume(text, "passport_copy.pdf")
+    assert valid2 is False
+    assert "filename indicates a non-resume" in reason2.lower()
+
+
+

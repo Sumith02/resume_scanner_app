@@ -431,8 +431,8 @@ def _title_case(value: str) -> str:
         word if word.isupper() and len(word) <= 4 else word[:1].upper() + word[1:].lower() for word in value.split()
     )
 
-
 NON_RESUME_FILENAMES = [
+    # Invoices & billing
     "invoice",
     "receipt",
     "bill",
@@ -443,14 +443,101 @@ NON_RESUME_FILENAMES = [
     "taxinvoice",
     "purchase_order",
     "po_",
+    "order_confirmation",
+    "challan",
+    "timesheet",
+    "expense",
+    # Salary, payroll & tax
     "payslip",
+    "pay_slip",
     "salary_slip",
     "salaryslip",
-    "bank_statement",
-    "gst",
     "form_16",
     "form16",
-    "challan",
+    "form_26as",
+    "w2",
+    "w-2",
+    "w4",
+    "w-4",
+    "1099",
+    "bank_statement",
+    "bank_passbook",
+    "gst",
+    "itr_",
+    "itrv",
+    "cheque",
+    "check",
+    # Academic certificates, transcripts & degrees
+    "certificate",
+    "certification",
+    "marksheet",
+    "mark_sheet",
+    "marks_sheet",
+    "transcript",
+    "degree",
+    "diploma",
+    "grade_card",
+    "gradecard",
+    "convocation",
+    "provisional",
+    "bonafide",
+    # Identity & government records
+    "passport",
+    "visa",
+    "aadhar",
+    "adhaar",
+    "pan_card",
+    "pancard",
+    "driving_licence",
+    "driving_license",
+    "national_id",
+    "id_card",
+    "idcard",
+    "voter_id",
+    "voterid",
+    "ssn",
+    # Company employment letters & contracts
+    "offer_letter",
+    "offerletter",
+    "appointment_letter",
+    "appointmentletter",
+    "relieving_letter",
+    "relievingletter",
+    "experience_letter",
+    "experienceletter",
+    "service_certificate",
+    "hike_letter",
+    "increment_letter",
+    "appraisal_letter",
+    "internship_letter",
+    "joining_letter",
+    "nda",
+    "contract",
+    "agreement",
+    "license",
+    # Letters & work collateral
+    "cover_letter",
+    "coverletter",
+    "cover-letter",
+    "recommendation",
+    "letter_of_recommendation",
+    "lor_",
+    "lor.",
+    "lor-",
+    "portfolio",
+    "project_report",
+    "assignment",
+    "whitepaper",
+    "case_study",
+    "brochure",
+    "flyer",
+    "newsletter",
+    "presentation",
+    "slides",
+    "deck",
+    "manual",
+    "specification",
+    # Travel & tickets
     "ticket",
     "boarding_pass",
     "boardingpass",
@@ -458,20 +545,10 @@ NON_RESUME_FILENAMES = [
     "e-ticket",
     "booking",
     "itinerary",
-    "agreement",
-    "nda",
-    "contract",
-    "license",
-    "brochure",
-    "flyer",
-    "newsletter",
-    "presentation",
-    "slides",
-    "timesheet",
-    "expense",
-    "manual",
-    "specification",
-    "order_confirmation",
+    # Generic scans
+    "camscanner",
+    "scanned_doc",
+    "scan_doc",
 ]
 
 NON_RESUME_DOC_MARKERS = [
@@ -507,6 +584,55 @@ NON_RESUME_DOC_MARKERS = [
     "terms of payment",
     "total payable",
     "net amount",
+    "taxable amount",
+    # Academic certificates, transcripts & marks
+    "certificate of completion",
+    "certificate of achievement",
+    "certificate of participation",
+    "certificate of appreciation",
+    "this is to certify that",
+    "this certificate is awarded to",
+    "has successfully completed the",
+    "has been awarded the degree",
+    "conferred upon",
+    "degree of bachelor",
+    "degree of master",
+    "statement of marks",
+    "marks sheet",
+    "marks card",
+    "academic transcript",
+    "controller of examinations",
+    "cumulative grade point",
+    "semester examination",
+    "grade report",
+    "provisional certificate",
+    "hall ticket",
+    # Employment / HR letters & agreements
+    "to whom it may concern",
+    "to whomsoever it may concern",
+    "we are pleased to offer you",
+    "letter of offer",
+    "letter of appointment",
+    "terms of your employment",
+    "relieving letter",
+    "relieving-cum-experience",
+    "service certificate",
+    "hereby relieved from the services",
+    "probation period",
+    "non-disclosure agreement",
+    "mutual non-disclosure",
+    "confidentiality agreement",
+    # Payslips & compensation
+    "salary slip for the month",
+    "payslip for the month",
+    "basic pay",
+    "gross salary",
+    "net payable",
+    "employee provident fund",
+    "uan no",
+    "pf number",
+    "provident fund organization",
+    "total deductions",
     # Travel & tickets
     "boarding pass",
     "e-ticket",
@@ -529,6 +655,14 @@ NON_RESUME_DOC_MARKERS = [
     "unsubscribe",
     "view in browser",
     "email preferences",
+    # Standalone cover letter phrases
+    "dear hiring manager",
+    "dear recruiter",
+    "i am writing to apply for",
+    "i am writing to express my interest in",
+    "please find attached my resume",
+    "please find enclosed my resume",
+    "thank you for your consideration",
 ]
 
 INVOICE_KEYWORDS = [
@@ -620,36 +754,135 @@ CAREER_TITLE_MARKERS = [
 ]
 
 CAREER_EXPERIENCE_REGEX = re.compile(r"\b\d+(?:\.\d+)?\s*\+?\s*(?:years?|yrs?)\b", re.I)
+CAREER_DATE_RANGE_REGEX = re.compile(
+    r"\b(?:20\d\d|19\d\d)\s*(?:-|–|to)\s*(?:20\d\d|19\d\d|present|current)\b", re.I
+)
+CONTACT_EMAIL_REGEX = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
+CONTACT_PHONE_REGEX = re.compile(r"(?:\+?\d[\d\s().-]{7,}\d)")
 
 
 def is_candidate_resume(text: str, filename: str) -> tuple[bool, str]:
     lower_name = filename.lower()
     for non_resume_kw in NON_RESUME_FILENAMES:
         if non_resume_kw in lower_name:
-            if "resume" not in lower_name and "cv" not in lower_name:
-                return False, f"File rejected: filename indicates a non-resume document ('{filename}')."
+            if "resume" not in lower_name and "cv" not in lower_name and "curriculum" not in lower_name and "biodata" not in lower_name:
+                return False, f"File rejected: filename indicates a non-resume attachment ('{filename}')."
 
     normalized = _normalize_text(text).lower()
 
+    if len(normalized) < 50:
+        return False, "File rejected: document text is too brief to be a candidate resume."
+
+    # 1. Non-resume marker checks
     non_resume_hits = [kw for kw in NON_RESUME_DOC_MARKERS if kw in normalized]
     if len(non_resume_hits) >= 2:
-        return False, f"File rejected: document contains non-resume/billing markers ({', '.join(non_resume_hits[:3])})."
+        return False, f"File rejected: document contains non-resume markers ({', '.join(non_resume_hits[:3])})."
 
-    resume_hits = [marker for marker in RESUME_SECTION_MARKERS if marker in normalized]
-    title_hits = [title for title in CAREER_TITLE_MARKERS if title in normalized]
-    has_exp_pattern = bool(CAREER_EXPERIENCE_REGEX.search(normalized))
-    has_tech_skills = any(
-        kw in normalized
-        for cat in SKILL_CATEGORIES
-        for kw in cat["keywords"]
+    if len(non_resume_hits) == 1:
+        strong_disqualifiers = [
+            "tax invoice",
+            "commercial invoice",
+            "boarding pass",
+            "e-ticket",
+            "certificate of completion",
+            "this is to certify that",
+            "statement of marks",
+            "academic transcript",
+            "salary slip for the month",
+            "payslip for the month",
+            "we are pleased to offer you",
+            "letter of appointment",
+            "relieving letter",
+            "to whomsoever it may concern",
+            "to whom it may concern",
+        ]
+        if any(sd in normalized for sd in strong_disqualifiers):
+            if "resume" not in lower_name and "cv" not in lower_name:
+                return False, f"File rejected: document is not a candidate resume ({non_resume_hits[0]})."
+
+    # 2. Structural checks
+    has_resume_in_name = any(kw in lower_name for kw in ("resume", "cv", "curriculum", "biodata"))
+    has_resume_header = any(marker in normalized for marker in ("curriculum vitae", "resume", "cv", "bio-data", "biodata"))
+
+    has_exp_section = any(
+        marker in normalized
+        for marker in (
+            "experience",
+            "work experience",
+            "employment history",
+            "work history",
+            "professional experience",
+            "career history",
+        )
+    )
+    has_edu_section = any(
+        marker in normalized
+        for marker in (
+            "education",
+            "academic background",
+            "qualification",
+            "qualifications",
+            "bachelor",
+            "master",
+            "b.tech",
+            "m.tech",
+            "b.sc",
+            "degree",
+            "university",
+            "college",
+        )
+    )
+    has_skill_section = any(
+        marker in normalized
+        for marker in (
+            "skills",
+            "technical skills",
+            "core competencies",
+            "key skills",
+            "technologies",
+            "tech stack",
+            "tools",
+        )
+    )
+    has_project_or_summary = any(
+        marker in normalized
+        for marker in (
+            "projects",
+            "personal projects",
+            "academic projects",
+            "summary",
+            "professional summary",
+            "profile summary",
+            "career objective",
+            "about me",
+        )
+    )
+    section_count = sum([has_exp_section, has_edu_section, has_skill_section, has_project_or_summary])
+
+    has_contact = bool(CONTACT_EMAIL_REGEX.search(normalized) or CONTACT_PHONE_REGEX.search(normalized))
+    has_date_ranges = bool(CAREER_EXPERIENCE_REGEX.search(normalized) or CAREER_DATE_RANGE_REGEX.search(normalized))
+    has_career_title = any(title in normalized for title in CAREER_TITLE_MARKERS)
+    has_tech_skills = any(kw in normalized for cat in SKILL_CATEGORIES for kw in cat["keywords"])
+
+    # If the file or content explicitly labels itself as a resume/CV
+    if has_resume_in_name or has_resume_header:
+        if section_count >= 1 or has_tech_skills or (has_career_title and has_contact):
+            return True, "Valid candidate resume"
+
+    # For files without explicit 'resume' or 'cv' in their name:
+    # Require genuine candidate resume structure (sections, experience, or skills)
+    is_structured_resume = (
+        (section_count >= 2)
+        or (section_count >= 1 and (has_contact or has_date_ranges) and (has_career_title or has_tech_skills))
+        or (has_contact and (has_career_title or has_tech_skills) and (has_date_ranges or section_count >= 1))
+        or (has_career_title and has_tech_skills and has_date_ranges)
     )
 
-    has_candidate_signal = bool(resume_hits or title_hits or has_exp_pattern or has_tech_skills)
-    if not has_candidate_signal:
-        return False, "File rejected: document lacks candidate resume sections, job titles, or professional skills."
-
-    if len(normalized) < 25:
-        return False, "File rejected: document text is too brief to be a candidate resume."
+    if not is_structured_resume:
+        return (
+            False,
+            "File rejected: document lacks candidate resume structure (missing standard experience, education, or skill sections).",
+        )
 
     return True, "Valid candidate resume"
 
