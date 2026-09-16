@@ -776,10 +776,13 @@ export default function App() {
     );
   }
 
-  const mustChangePassword = Boolean(
-    session?.user?.user_metadata?.must_change_password ||
-    session?.user?.user_metadata?.temporary_password
-  );
+  const isMasterAdmin = session?.user?.email?.trim().toLowerCase() === "sumithsbhatt@gmail.com";
+  const mustChangePassword =
+    !isMasterAdmin &&
+    Boolean(
+      session?.user?.user_metadata?.must_change_password ||
+      session?.user?.user_metadata?.temporary_password
+    );
 
   if (mustChangePassword) {
     return (
@@ -960,7 +963,7 @@ export default function App() {
                     width: "22px",
                     height: "22px",
                     borderRadius: "50%",
-                    background: "#2563eb",
+                    background: isMasterAdmin ? "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)" : "#2563eb",
                     color: "#ffffff",
                     display: "grid",
                     placeItems: "center",
@@ -971,10 +974,12 @@ export default function App() {
                   {(session.user.user_metadata?.full_name || session.user.email || "U")[0].toUpperCase()}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.1 }}>
-                  <span style={{ fontWeight: 600, color: "#1e293b", maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <span style={{ fontWeight: 600, color: "#1e293b", maxWidth: "150px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {session.user.user_metadata?.full_name || session.user.email?.split("@")[0]}
                   </span>
-                  <span style={{ fontSize: "10px", color: "#64748b" }}>Recruiter Lead</span>
+                  <span style={{ fontSize: "10px", color: isMasterAdmin ? "#b45309" : "#64748b", fontWeight: isMasterAdmin ? 700 : 400 }}>
+                    {isMasterAdmin ? "👑 Master Admin (Owner)" : "Recruiter Lead"}
+                  </span>
                 </div>
               </div>
               <button
@@ -1286,7 +1291,7 @@ export default function App() {
               {activeView === "reports" && <ReportsView report={report} />}
 
               {activeView === "settings" && (
-                <SettingsView onRefreshWorkspace={loadWorkspace} />
+                <SettingsView onRefreshWorkspace={loadWorkspace} currentUserEmail={session?.user?.email || ""} />
               )}
             </>
           )}
@@ -4737,9 +4742,16 @@ function ReportsView({ report }: { report: ReportSummary }) {
   );
 }
 
-function SettingsView({ onRefreshWorkspace }: { onRefreshWorkspace: () => void }) {
+function SettingsView({
+  onRefreshWorkspace,
+  currentUserEmail
+}: {
+  onRefreshWorkspace: () => void;
+  currentUserEmail?: string;
+}) {
+  const isMasterUser = currentUserEmail?.trim().toLowerCase() === "sumithsbhatt@gmail.com";
   const [members, setMembers] = useState<TeamMember[]>([]);
-  const [currentUserRole, setCurrentUserRole] = useState<TeamMember["role"]>("recruiter");
+  const [currentUserRole, setCurrentUserRole] = useState<TeamMember["role"]>(isMasterUser ? "owner" : "recruiter");
   const [loadingMembers, setLoadingMembers] = useState(false);
 
   // Form State
@@ -4771,7 +4783,9 @@ function SettingsView({ onRefreshWorkspace }: { onRefreshWorkspace: () => void }
     try {
       const res = await fetchTeamMembers();
       setMembers(res.members);
-      if (res.currentUserRole) {
+      if (isMasterUser) {
+        setCurrentUserRole("owner");
+      } else if (res.currentUserRole) {
         setCurrentUserRole(res.currentUserRole);
       }
     } catch {

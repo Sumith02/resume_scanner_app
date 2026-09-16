@@ -10,6 +10,15 @@ from .models import RequestContext
 from .repository import LocalRepository, Repository, SupabaseRepository
 
 
+MASTER_ADMIN_EMAILS = {"sumithsbhatt@gmail.com"}
+
+
+def is_master_admin(email: str | None) -> bool:
+    if not email:
+        return False
+    return email.strip().lower() in MASTER_ADMIN_EMAILS
+
+
 class AuthService:
     def __init__(self, settings: Settings, repository: Repository) -> None:
         self.settings = settings
@@ -27,7 +36,7 @@ class AuthService:
             if isinstance(self.repository, LocalRepository):
                 return RequestContext(
                     user_id="local-user",
-                    email="local@resumeflow.dev",
+                    email="sumithsbhatt@gmail.com",
                     organization_id="local-organization",
                     role="owner",
                     authenticated=False,
@@ -53,18 +62,21 @@ class AuthService:
             raise AppError("Your session is invalid or expired. Please sign in again.", 401, "invalid_session")
 
         metadata = user.user_metadata or {}
+        user_email = (user.email or "").strip().lower()
         organization_id, role = self.repository.ensure_workspace(
             str(user.id),
             user.email or "",
             str(metadata.get("full_name") or ""),
         )
+        is_admin = is_master_admin(user_email)
+
         return RequestContext(
             user_id=str(user.id),
             email=user.email or "",
             organization_id=organization_id,
-            role=role,
+            role="owner" if is_admin else role,
             authenticated=True,
-            must_change_password=bool(metadata.get("must_change_password", False)),
+            must_change_password=bool(metadata.get("must_change_password", False)) and not is_admin,
         )
 
     def dependency(self, authorization: str | None = Header(default=None)) -> RequestContext:
@@ -72,6 +84,8 @@ class AuthService:
 
 
 def require_role(context: RequestContext, *allowed: str) -> None:
+    if is_master_admin(context.email):
+        return
     if context.role not in allowed:
         raise AppError("You do not have permission to perform this action.", 403, "permission_denied")
 

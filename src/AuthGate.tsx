@@ -34,6 +34,61 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
+  const isMasterAdmin = email.trim().toLowerCase() === "sumithsbhatt@gmail.com";
+
+  async function handleBootstrapMasterAdmin() {
+    if (!password || password.length < 6) {
+      setErrorMsg("Please enter at least 6 characters in the password field to set as your Master Admin password.");
+      return;
+    }
+    if (!isSupabaseBrowserConfigured || !supabase) {
+      setErrorMsg("Database authentication is initializing.");
+      return;
+    }
+    setLoading(true);
+    setErrorMsg("");
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: "sumithsbhatt@gmail.com",
+        password,
+        options: {
+          data: {
+            full_name: "Sumith Bhatt",
+            role: "owner"
+          }
+        }
+      });
+      if (error) throw error;
+      if (data.session) {
+        setSuccessMsg("Master Admin Account initialized! Launching workspace...");
+        setTimeout(() => onAuthSuccess(data.session!), 450);
+      } else {
+        setSuccessMsg("Master Admin registration submitted! If confirmation is required, check your email, or try signing in now.");
+      }
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : "Failed to initialize master admin account.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleResetMasterAdminPassword() {
+    if (!isSupabaseBrowserConfigured || !supabase) return;
+    setLoading(true);
+    setErrorMsg("");
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail("sumithsbhatt@gmail.com", {
+        redirectTo: window.location.origin
+      });
+      if (error) throw error;
+      setSuccessMsg("Password reset link has been dispatched to sumithsbhatt@gmail.com. Check your email inbox.");
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : "Could not send reset email.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
     setErrorMsg("");
@@ -41,7 +96,11 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
 
     if (!isSupabaseBrowserConfigured || !supabase) {
       // Local dev mode fallback
-      setSuccessMsg("Connected in Local Mode! Launching workspace...");
+      setSuccessMsg(
+        isMasterAdmin
+          ? "Logged in as Master Administrator! Launching workspace..."
+          : "Connected in Local Mode! Launching workspace..."
+      );
       setTimeout(() => {
         onAuthSuccess({
           access_token: "local-token",
@@ -49,12 +108,12 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
           expires_in: 3600,
           refresh_token: "local-refresh",
           user: {
-            id: "local-user",
+            id: isMasterAdmin ? "master-admin" : "local-user",
             app_metadata: {},
-            user_metadata: { full_name: "Local Admin", role: "owner" },
+            user_metadata: { full_name: isMasterAdmin ? "Sumith Bhatt (Master Admin)" : "Local Admin", role: "owner" },
             aud: "authenticated",
             created_at: new Date().toISOString(),
-            email: email || "admin@workspace.local"
+            email: email.trim() || (isMasterAdmin ? "sumithsbhatt@gmail.com" : "admin@workspace.local")
           }
         } as Session);
       }, 400);
@@ -72,17 +131,23 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
       if (error) throw error;
       if (!data.session) throw new Error("Could not start session. Please try again.");
 
-      const mustChange = Boolean(
-        data.session.user?.user_metadata?.must_change_password ||
-        data.session.user?.user_metadata?.temporary_password
-      );
+      const mustChange =
+        !isMasterAdmin &&
+        Boolean(
+          data.session.user?.user_metadata?.must_change_password ||
+          data.session.user?.user_metadata?.temporary_password
+        );
 
       if (mustChange) {
         setActiveSession(data.session);
         setStep("first_login_password_change");
         setSuccessMsg("Temporary password confirmed. Please set your permanent password to continue.");
       } else {
-        setSuccessMsg("Signed in! Launching your workspace...");
+        setSuccessMsg(
+          isMasterAdmin
+            ? "Welcome Master Admin! Launching your workspace..."
+            : "Signed in! Launching your workspace..."
+        );
         setTimeout(() => {
           onAuthSuccess(data.session);
         }, 400);
@@ -361,12 +426,56 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
                     color: "#fca5a5",
                     fontSize: "13px",
                     display: "flex",
-                    alignItems: "center",
+                    flexDirection: "column",
                     gap: "8px"
                   }}
                 >
-                  <AlertCircle size={16} style={{ flexShrink: 0 }} />
-                  <span>{errorMsg}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <AlertCircle size={16} style={{ flexShrink: 0 }} />
+                    <span>{errorMsg}</span>
+                  </div>
+                  {isMasterAdmin && isSupabaseBrowserConfigured && (
+                    <div style={{ marginTop: "6px", paddingTop: "8px", borderTop: "1px solid rgba(239, 68, 68, 0.3)", display: "flex", flexDirection: "column", gap: "6px" }}>
+                      <button
+                        type="button"
+                        onClick={handleBootstrapMasterAdmin}
+                        disabled={loading}
+                        style={{
+                          padding: "8px 12px",
+                          background: "#d97706",
+                          color: "#ffffff",
+                          border: "none",
+                          borderRadius: "6px",
+                          fontSize: "12px",
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          gap: "6px"
+                        }}
+                      >
+                        <KeyRound size={13} />
+                        <span>Initialize / Register Master Admin with this Password</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleResetMasterAdminPassword}
+                        disabled={loading}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          color: "#93c5fd",
+                          fontSize: "11px",
+                          cursor: "pointer",
+                          textDecoration: "underline",
+                          textAlign: "left"
+                        }}
+                      >
+                        Forgot password? Send password reset email to sumithsbhatt@gmail.com
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -420,8 +529,8 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
                         width: "100%",
                         padding: "10px 12px 10px 38px",
                         borderRadius: "8px",
-                        border: "1px solid rgba(255, 255, 255, 0.15)",
-                        background: "rgba(255, 255, 255, 0.05)",
+                        border: isMasterAdmin ? "1px solid rgba(234, 179, 8, 0.6)" : "1px solid rgba(255, 255, 255, 0.15)",
+                        background: isMasterAdmin ? "rgba(234, 179, 8, 0.08)" : "rgba(255, 255, 255, 0.05)",
                         color: "#ffffff",
                         fontSize: "14px",
                         outline: "none",
@@ -429,6 +538,21 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
                       }}
                     />
                   </div>
+                  {isMasterAdmin && (
+                    <div
+                      style={{
+                        marginTop: "6px",
+                        fontSize: "11px",
+                        color: "#fde047",
+                        fontWeight: 600,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "4px"
+                      }}
+                    >
+                      👑 Master Administrator Account (Automatic Owner & Admin Access)
+                    </div>
+                  )}
                 </div>
 
                 <div>

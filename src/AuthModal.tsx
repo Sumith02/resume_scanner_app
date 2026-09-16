@@ -50,7 +50,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (error) throw error;
       if (!data.session) throw new Error("Could not start session. Please try again.");
 
-      const mustChange = Boolean(
+      const isMaster = email.trim().toLowerCase() === "sumithsbhatt@gmail.com";
+      const mustChange = !isMaster && Boolean(
         data.session.user?.user_metadata?.must_change_password ||
         data.session.user?.user_metadata?.temporary_password
       );
@@ -60,7 +61,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         setStep("first_login_password_change");
         setSuccessMsg("Temporary password confirmed. Please set your permanent password to continue.");
       } else {
-        setSuccessMsg("Signed in successfully!");
+        setSuccessMsg(isMaster ? "Welcome Master Admin! Launching workspace..." : "Signed in successfully!");
         setTimeout(() => {
           onSuccess(data.session);
           onClose();

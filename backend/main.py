@@ -193,13 +193,14 @@ def health() -> dict[str, object]:
 
 @app.get("/api/me")
 def me(context: Context) -> dict[str, object]:
+    is_master = context.email.strip().lower() == "sumithsbhatt@gmail.com"
     return {
         "user": {
             "id": context.user_id,
             "email": context.email,
-            "mustChangePassword": context.must_change_password,
+            "mustChangePassword": False if is_master else context.must_change_password,
         },
-        "workspace": {"id": context.organization_id, "role": context.role},
+        "workspace": {"id": context.organization_id, "role": "owner" if is_master else context.role},
     }
 
 
@@ -405,7 +406,11 @@ def create_job(payload: JobCreateRequest, context: Context) -> dict[str, object]
 @app.get("/api/team/members")
 def list_team_members(context: Context) -> dict[str, object]:
     repository, _, _, _, _ = services.require()
-    return {"members": repository.list_team_members(context), "currentUserRole": context.role}
+    is_master = context.email.strip().lower() == "sumithsbhatt@gmail.com"
+    return {
+        "members": repository.list_team_members(context),
+        "currentUserRole": "owner" if is_master else context.role,
+    }
 
 
 @app.post("/api/team/invitations", status_code=201)

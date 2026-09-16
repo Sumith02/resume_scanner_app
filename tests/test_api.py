@@ -235,3 +235,21 @@ def test_team_provisioning_and_password_lifecycle(tmp_path: Path, monkeypatch) -
     assert pwd_res.status_code == 200
     assert pwd_res.json()["status"] == "success"
 
+
+def test_master_admin_sumithsbhatt_unconditional_access(tmp_path: Path, monkeypatch) -> None:
+    test_services = _test_services(tmp_path)
+    monkeypatch.setattr(main, "services", test_services)
+    monkeypatch.setattr(main, "settings", test_services.settings)
+    client = TestClient(main.app)
+
+    # 1. Check me endpoint - should return owner role
+    me_res = client.get("/api/me")
+    assert me_res.status_code == 200
+    assert me_res.json()["workspace"]["role"] == "owner"
+    assert me_res.json()["user"]["mustChangePassword"] is False
+
+    # 2. Check team members endpoint - should return owner role for current user
+    members_res = client.get("/api/team/members")
+    assert members_res.status_code == 200
+    assert members_res.json()["currentUserRole"] == "owner"
+
