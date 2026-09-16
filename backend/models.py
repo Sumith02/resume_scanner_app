@@ -131,6 +131,19 @@ class ProvisionUserRequest(BaseModel):
         return cleaned
 
 
+class MasterBootstrapRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=6, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        cleaned = value.strip().lower()
+        if cleaned != "sumithsbhatt@gmail.com":
+            raise ValueError("Only the designated master administrator can be bootstrapped.")
+        return cleaned
+
+
 class UploadFileDescriptor(BaseModel):
     name: str = Field(min_length=1, max_length=180)
     size: int = Field(gt=0, le=14 * 1024 * 1024)

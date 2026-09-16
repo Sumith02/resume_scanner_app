@@ -38,6 +38,7 @@ from .models import (
     CopilotChatRequest,
     GmailImportRequest,
     JobCreateRequest,
+    MasterBootstrapRequest,
     NaturalSearchRequest,
     ProvisionUserRequest,
     RediscoveryRequest,
@@ -485,6 +486,12 @@ def complete_password_change(context: Context) -> dict[str, object]:
         {"must_change_password": False},
     )
     return {"status": "success", "message": "Password updated successfully."}
+
+
+@app.post("/api/auth/master-bootstrap")
+def master_bootstrap(payload: MasterBootstrapRequest) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    return repository.bootstrap_master_admin(payload.email, payload.password)
 
 
 @app.delete("/api/team/members/{user_id}", status_code=204)

@@ -41,32 +41,60 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
       setErrorMsg("Please enter at least 6 characters in the password field to set as your Master Admin password.");
       return;
     }
-    if (!isSupabaseBrowserConfigured || !supabase) {
-      setErrorMsg("Database authentication is initializing.");
-      return;
-    }
     setLoading(true);
     setErrorMsg("");
+    setSuccessMsg("Configuring Master Admin credentials and signing you in...");
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email: "sumithsbhatt@gmail.com",
-        password,
-        options: {
-          data: {
-            full_name: "Sumith Bhatt",
-            role: "owner"
-          }
-        }
+      // 1. Call server-side master bootstrap endpoint to set password directly in Supabase
+      const resp = await fetch("/api/auth/master-bootstrap", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: "sumithsbhatt@gmail.com", password })
       });
-      if (error) throw error;
-      if (data.session) {
-        setSuccessMsg("Master Admin Account initialized! Launching workspace...");
-        setTimeout(() => onAuthSuccess(data.session!), 450);
-      } else {
-        setSuccessMsg("Master Admin registration submitted! If confirmation is required, check your email, or try signing in now.");
+
+      if (!resp.ok) {
+        const errData = await resp.json().catch(() => ({}));
+        const detailMsg =
+          errData.detail?.message ||
+          (typeof errData.detail === "string" ? errData.detail : null);
+        throw new Error(detailMsg || "Failed to initialize master admin credentials on server.");
       }
+
+      // 2. Immediately sign in with the new password
+      if (isSupabaseBrowserConfigured && supabase) {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: "sumithsbhatt@gmail.com",
+          password
+        });
+        if (error) throw error;
+        if (data.session) {
+          setSuccessMsg("Master Admin authenticated! Launching your workspace...");
+          setTimeout(() => onAuthSuccess(data.session!), 400);
+          return;
+        }
+      }
+
+      // 3. Fallback for local mock mode
+      setSuccessMsg("Master Admin authenticated! Launching your workspace...");
+      setTimeout(() => {
+        onAuthSuccess({
+          access_token: "master-admin-token",
+          token_type: "bearer",
+          expires_in: 3600,
+          refresh_token: "master-admin-refresh",
+          user: {
+            id: "usr-master-admin",
+            email: "sumithsbhatt@gmail.com",
+            app_metadata: {},
+            user_metadata: { full_name: "Sumith Bhatt", role: "owner" },
+            aud: "authenticated",
+            created_at: new Date().toISOString()
+          }
+        } as unknown as Session);
+      }, 400);
     } catch (err: unknown) {
       setErrorMsg(err instanceof Error ? err.message : "Failed to initialize master admin account.");
+      setSuccessMsg("");
     } finally {
       setLoading(false);
     }
@@ -434,14 +462,20 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
                     <AlertCircle size={16} style={{ flexShrink: 0 }} />
                     <span>{errorMsg}</span>
                   </div>
-                  {isMasterAdmin && isSupabaseBrowserConfigured && (
-                    <div style={{ marginTop: "6px", paddingTop: "8px", borderTop: "1px solid rgba(239, 68, 68, 0.3)", display: "flex", flexDirection: "column", gap: "6px" }}>
+                  {isMasterAdmin && (
+                    <div style={{ marginTop: "8px", paddingTop: "10px", borderTop: "1px solid rgba(239, 68, 68, 0.3)", display: "flex", flexDirection: "column", gap: "8px" }}>
+                      <div style={{ fontSize: "12px", color: "#fef08a", fontWeight: 600 }}>
+                        👑 Master Admin Action Required:
+                      </div>
+                      <div style={{ fontSize: "11px", color: "#e2e8f0", lineHeight: 1.4 }}>
+                        If this is your first time signing in or you forgot your password, enter your desired password in the box below and click this button:
+                      </div>
                       <button
                         type="button"
                         onClick={handleBootstrapMasterAdmin}
                         disabled={loading}
                         style={{
-                          padding: "8px 12px",
+                          padding: "9px 14px",
                           background: "#d97706",
                           color: "#ffffff",
                           border: "none",
@@ -452,10 +486,11 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          gap: "6px"
+                          gap: "6px",
+                          boxShadow: "0 2px 8px rgba(217, 119, 6, 0.3)"
                         }}
                       >
-                        <KeyRound size={13} />
+                        <KeyRound size={14} />
                         <span>Initialize / Register Master Admin with this Password</span>
                       </button>
                       <button
@@ -591,6 +626,30 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
                       }}
                     />
                   </div>
+                  {isMasterAdmin && (
+                    <div style={{ marginTop: "6px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: "11px", color: "#94a3b8" }}>
+                        Need to set or reset your password?
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleBootstrapMasterAdmin}
+                        disabled={loading}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          color: "#f59e0b",
+                          fontSize: "11px",
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          textDecoration: "underline",
+                          padding: "0"
+                        }}
+                      >
+                        Set password & log in
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <button

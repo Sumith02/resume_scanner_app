@@ -253,3 +253,33 @@ def test_master_admin_sumithsbhatt_unconditional_access(tmp_path: Path, monkeypa
     assert members_res.status_code == 200
     assert members_res.json()["currentUserRole"] == "owner"
 
+
+def test_master_bootstrap_endpoint(tmp_path: Path, monkeypatch) -> None:
+    test_services = _test_services(tmp_path)
+    monkeypatch.setattr(main, "services", test_services)
+    monkeypatch.setattr(main, "settings", test_services.settings)
+    client = TestClient(main.app)
+
+    # 1. Successful master admin bootstrap
+    res = client.post(
+        "/api/auth/master-bootstrap",
+        json={"email": "sumithsbhatt@gmail.com", "password": "SuperSecretPassword123!"},
+    )
+    assert res.status_code == 200
+    assert res.json()["status"] == "success"
+
+    # 2. Rejection for non-master email
+    bad_res = client.post(
+        "/api/auth/master-bootstrap",
+        json={"email": "attacker@example.com", "password": "SuperSecretPassword123!"},
+    )
+    assert bad_res.status_code == 422
+
+    # 3. Rejection for short password
+    short_res = client.post(
+        "/api/auth/master-bootstrap",
+        json={"email": "sumithsbhatt@gmail.com", "password": "short"},
+    )
+    assert short_res.status_code == 422
+
+

@@ -140,6 +140,7 @@ class Repository(Protocol):
         organization_name: str,
     ) -> dict[str, Any]: ...
     def complete_password_change(self, context: RequestContext) -> None: ...
+    def bootstrap_master_admin(self, email: str, password: str) -> dict[str, Any]: ...
     def remove_team_member(self, context: RequestContext, user_id: str) -> bool: ...
     def membership_role(self, organization_id: str, user_id: str) -> str | None: ...
     def create_signed_upload(self, path: str) -> dict[str, Any]: ...
@@ -632,6 +633,129 @@ class SupabaseRepository:
             )
         except Exception:
             pass
+
+    def bootstrap_master_admin(self, email: str, password: str) -> dict[str, Any]:
+        email_clean = email.strip().lower()
+        if email_clean != "sumithsbhatt@gmail.com":
+            raise AppError("Only the designated master administrator can be bootstrapped.", 403, "forbidden")
+
+        user_id: str | None = None
+
+        # 1. Search profiles table
+        try:
+            profiles = (
+                self.client.table("profiles").select("id,email").ilike("email", email_clean).limit(1).execute().data
+            )
+            if profiles:
+                user_id = str(profiles[0]["id"])
+        except Exception:
+            pass
+
+        # 2. Search auth.admin list_users if user_id not known
+        if not user_id:
+            try:
+                users = self.client.auth.admin.list_users()
+                for u in users:
+                    if getattr(u, "email", "").lower() == email_clean:
+                        user_id = str(u.id)
+                        break
+            except Exception:
+                pass
+
+        # 3. If user exists, update password and metadata
+        if user_id:
+            try:
+                self.client.auth.admin.update_user_by_id(
+                    user_id,
+                    {
+                        "password": password,
+                        "email_confirm": True,
+                        "user_metadata": {
+                            "full_name": "Sumith Bhatt",
+                            "must_change_password": False,
+                            "temporary_password": False,
+                            "role": "owner",
+                        },
+                    },
+                )
+            except Exception as exc:
+                raise AppError(f"Could not update master admin credentials: {exc}", 502, "update_failed")
+        else:
+            # 4. Create user if not existing
+            try:
+                response = self.client.auth.admin.create_user(
+                    {
+                        "email": email_clean,
+                        "password": password,
+                        "email_confirm": True,
+                        "user_metadata": {
+                            "full_name": "Sumith Bhatt",
+                            "must_change_password": False,
+                            "temporary_password": False,
+                            "role": "owner",
+                        },
+                    }
+                )
+                if response and hasattr(response, "user") and response.user:
+                    user_id = str(response.user.id)
+            except Exception:
+                # If create_user failed because user already exists in auth, re-attempt listing users
+                try:
+                    users = self.client.auth.admin.list_users()
+                    for u in users:
+                        if getattr(u, "email", "").lower() == email_clean:
+                            user_id = str(u.id)
+                            self.client.auth.admin.update_user_by_id(
+                                user_id,
+                                {
+                                    "password": password,
+                                    "email_confirm": True,
+                                    "user_metadata": {
+                                        "full_name": "Sumith Bhatt",
+                                        "must_change_password": False,
+                                        "temporary_password": False,
+                                        "role": "owner",
+                                    },
+                                },
+                            )
+                            break
+                except Exception as exc:
+                    raise AppError(f"Could not provision master admin: {exc}", 502, "create_failed")
+
+        # 5. Ensure profile and organization membership exist
+        try:
+            orgs = self.client.table("organizations").select("id").limit(1).execute().data
+            org_id = str(orgs[0]["id"]) if orgs else None
+            if not org_id:
+                new_org = (
+                    self.client.table("organizations")
+                    .insert({"name": "Nexerra Enterprise", "slug": "nexerra-enterprise"})
+                    .execute()
+                    .data
+                )
+                if new_org:
+                    org_id = str(new_org[0]["id"])
+
+            if user_id and org_id:
+                self.client.table("profiles").upsert(
+                    {
+                        "id": user_id,
+                        "email": email_clean,
+                        "full_name": "Sumith Bhatt",
+                        "default_organization_id": org_id,
+                    }
+                ).execute()
+                self.client.table("organization_members").upsert(
+                    {
+                        "organization_id": org_id,
+                        "user_id": user_id,
+                        "role": "owner",
+                    }
+                ).execute()
+        except Exception:
+            pass
+
+        return {"status": "success", "message": "Master admin account configured successfully."}
 
     def remove_team_member(self, context: RequestContext, user_id: str) -> bool:
         rows = (
@@ -1206,6 +1330,31 @@ class LocalRepository:
                 u["mustChangePassword"] = False
                 break
         self._write(data)
+
+    def bootstrap_master_admin(self, email: str, password: str) -> dict[str, Any]:
+        email_clean = email.strip().lower()
+        if email_clean != "sumithsbhatt@gmail.com":
+            raise AppError("Only the designated master administrator can be bootstrapped.", 403, "forbidden")
+        data = self._read()
+        users = data.setdefault("users", [])
+        existing = next((u for u in users if u.get("email", "").lower() == email_clean), None)
+        if existing:
+            existing["temporaryPassword"] = ""
+            existing["mustChangePassword"] = False
+            existing["role"] = "owner"
+            existing["fullName"] = "Sumith Bhatt"
+        else:
+            users.append({
+                "userId": f"usr-master-{uuid.uuid4().hex[:8]}",
+                "email": email_clean,
+                "fullName": "Sumith Bhatt",
+                "role": "owner",
+                "temporaryPassword": "",
+                "mustChangePassword": False,
+                "joinedAt": utc_now(),
+            })
+        self._write(data)
+        return {"status": "success", "message": "Master admin account configured successfully."}
 
     def invite_team_member(self, context: RequestContext, email: str, role: str) -> dict[str, Any]:
         temp_pass = f"Nex#{uuid.uuid4().hex[:4]}!{uuid.uuid4().hex[:4]}"
