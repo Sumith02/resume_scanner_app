@@ -199,3 +199,39 @@ def test_rediscovery_and_natural_search_robustness(tmp_path: Path, monkeypatch) 
     assert rediscovery_res.status_code == 200
     assert "metrics" in rediscovery_res.json()
 
+
+def test_team_provisioning_and_password_lifecycle(tmp_path: Path, monkeypatch) -> None:
+    test_services = _test_services(tmp_path)
+    monkeypatch.setattr(main, "services", test_services)
+    monkeypatch.setattr(main, "settings", test_services.settings)
+    client = TestClient(main.app)
+
+    # 1. Provision a new recruiter account with auto-generated temporary password
+    provision_res = client.post(
+        "/api/team/provision",
+        json={
+            "email": "recruiter.alex@enterprise.com",
+            "fullName": "Alex Rivera",
+            "role": "recruiter",
+        },
+    )
+    assert provision_res.status_code == 201
+    data = provision_res.json()
+    assert data["member"]["email"] == "recruiter.alex@enterprise.com"
+    assert data["member"]["role"] == "recruiter"
+    assert data["member"]["mustChangePassword"] is True
+    assert len(data["temporaryPassword"]) >= 8
+
+    # 2. Team members list reflects the provisioned account with pending first login
+    members_res = client.get("/api/team/members")
+    assert members_res.status_code == 200
+    members = members_res.json()["members"]
+    provisioned = next((m for m in members if m["email"] == "recruiter.alex@enterprise.com"), None)
+    assert provisioned is not None
+    assert provisioned["mustChangePassword"] is True
+
+    # 3. Completing password change updates user status
+    pwd_res = client.post("/api/auth/complete-password-change")
+    assert pwd_res.status_code == 200
+    assert pwd_res.json()["status"] == "success"
+

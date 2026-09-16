@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import secrets
+import string
 import uuid
 from collections import Counter
 from pathlib import Path
@@ -37,6 +39,7 @@ from .models import (
     GmailImportRequest,
     JobCreateRequest,
     NaturalSearchRequest,
+    ProvisionUserRequest,
     RediscoveryRequest,
     RequestContext,
     TalentPoolAddRequest,
@@ -191,7 +194,11 @@ def health() -> dict[str, object]:
 @app.get("/api/me")
 def me(context: Context) -> dict[str, object]:
     return {
-        "user": {"id": context.user_id, "email": context.email},
+        "user": {
+            "id": context.user_id,
+            "email": context.email,
+            "mustChangePassword": context.must_change_password,
+        },
         "workspace": {"id": context.organization_id, "role": context.role},
     }
 
@@ -414,6 +421,65 @@ def invite_team_member(payload: TeamInviteRequest, context: Context) -> dict[str
         {"email": payload.email, "role": payload.role},
     )
     return {"member": member}
+
+
+@app.post("/api/team/provision", status_code=201)
+def provision_team_member(payload: ProvisionUserRequest, context: Context) -> dict[str, object]:
+    repository, _, _, _, email_service = services.require()
+    require_role(context, "owner", "admin")
+
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+    temp_pass = payload.temporaryPassword or "".join(secrets.choice(alphabet) for _ in range(12))
+
+    org_name = "Nexerra Workspace"
+    if context.email:
+        org_name = f"{context.email.split('@')[0].title()}'s Workspace"
+
+    member = repository.provision_user(
+        context=context,
+        email=payload.email,
+        full_name=payload.fullName or "",
+        role=payload.role,
+        temporary_password=temp_pass,
+        organization_name=org_name,
+    )
+
+    email_sent = email_service.send_welcome_account_email(
+        email=payload.email,
+        full_name=payload.fullName or "",
+        temporary_password=temp_pass,
+        role=payload.role,
+        organization_name=org_name,
+    )
+
+    repository.audit(
+        context,
+        "team.user_provisioned",
+        "organization_member",
+        member["userId"],
+        {"email": payload.email, "role": payload.role, "emailSent": email_sent},
+    )
+
+    return {
+        "member": member,
+        "emailSent": email_sent,
+        "temporaryPassword": temp_pass,
+        "organizationName": org_name,
+    }
+
+
+@app.post("/api/auth/complete-password-change")
+def complete_password_change(context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
+    repository.complete_password_change(context)
+    repository.audit(
+        context,
+        "user.password_changed",
+        "profile",
+        context.user_id,
+        {"must_change_password": False},
+    )
+    return {"status": "success", "message": "Password updated successfully."}
 
 
 @app.delete("/api/team/members/{user_id}", status_code=204)

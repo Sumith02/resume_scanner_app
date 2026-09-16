@@ -298,6 +298,22 @@ export interface TeamMember {
   role: "owner" | "admin" | "recruiter" | "hiring_manager" | "viewer";
   joinedAt: string;
   invited?: boolean;
+  mustChangePassword?: boolean;
+  temporaryPassword?: string;
+}
+
+export interface ProvisionUserPayload {
+  email: string;
+  fullName?: string;
+  role: "admin" | "recruiter" | "hiring_manager" | "viewer";
+  temporaryPassword?: string;
+}
+
+export interface ProvisionUserResult {
+  member: TeamMember;
+  emailSent: boolean;
+  temporaryPassword: string;
+  organizationName: string;
 }
 
 export interface FilterState {

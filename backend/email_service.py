@@ -57,6 +57,62 @@ class EmailService:
                 failed.extend({"email": recipient["email"], "message": message} for recipient in batch)
         return sent, failed
 
+    def send_welcome_account_email(
+        self,
+        email: str,
+        full_name: str,
+        temporary_password: str,
+        role: str,
+        organization_name: str,
+    ) -> bool:
+        """Dispatches account confirmation and temporary password to a newly provisioned user."""
+        if not self.settings.email_configured:
+            return False
+
+        display_name = full_name.strip() or email.split("@")[0].title()
+        role_label = role.replace("_", " ").title()
+        subject = "Your Nexerra Talent OS Account Credentials (Temporary Password)"
+        html_content = (
+            f"<div style='font-family: Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 28px; border: 1px solid #e2e8f0; border-radius: 8px;'>"
+            f"<div style='margin-bottom: 20px;'>"
+            f"<strong style='font-size: 20px; color: #0f172a;'>NEXERRA TALENT OS</strong>"
+            f"</div>"
+            f"<p>Hello <strong>{html.escape(display_name)}</strong>,</p>"
+            f"<p>Your account has been created by an administrator on <strong>{html.escape(organization_name)}</strong> with the role of <strong>{html.escape(role_label)}</strong>.</p>"
+            f"<div style='background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 18px; margin: 20px 0;'>"
+            f"<div style='margin-bottom: 8px;'><strong>Portal URL:</strong> <a href='{html.escape(self.settings.app_origin)}'>{html.escape(self.settings.app_origin)}</a></div>"
+            f"<div style='margin-bottom: 8px;'><strong>Login Email:</strong> {html.escape(email)}</div>"
+            f"<div><strong>Temporary Password:</strong> <code style='background: #e2e8f0; padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 15px; letter-spacing: 1px;'>{html.escape(temporary_password)}</code></div>"
+            f"</div>"
+            f"<div style='background: #eff6ff; border-left: 4px solid #2563eb; padding: 12px 14px; margin-bottom: 20px; font-size: 13px; color: #1e40af; border-radius: 4px;'>"
+            f"<strong>Security Requirement:</strong> Because this is a temporary password, you will be required to create your own secure, permanent password immediately upon your first login."
+            f"</div>"
+            f"<p style='font-size: 13px; color: #64748b;'>If you have questions, please reach out directly to your organization administrator.</p>"
+            f"<hr style='border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;' />"
+            f"<p style='font-size: 11px; color: #94a3b8;'>© 2026 Nexerra Talent OS. Automated Account Security.</p>"
+            f"</div>"
+        )
+
+        try:
+            response = httpx.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {self.settings.resend_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": self.settings.mail_from,
+                    "to": [email],
+                    "subject": subject,
+                    "html": html_content,
+                },
+                timeout=15,
+            )
+            response.raise_for_status()
+            return True
+        except Exception:
+            return False
+
     def _send_batch(self, payload: list[dict[str, Any]], campaign_id: str, batch_number: int) -> httpx.Response:
         response: httpx.Response | None = None
         for attempt in range(3):

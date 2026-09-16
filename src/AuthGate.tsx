@@ -1,11 +1,10 @@
 import React, { useState } from "react";
 import { type Session } from "@supabase/supabase-js";
 import { supabase, isSupabaseBrowserConfigured } from "./supabaseClient";
+import { completePasswordChange } from "./api";
 import {
   Lock,
   Mail,
-  User,
-  Building,
   Loader2,
   AlertCircle,
   CheckCircle2,
@@ -13,7 +12,11 @@ import {
   Sparkles,
   Network,
   EyeOff,
-  Database
+  Database,
+  KeyRound,
+  ShieldCheck,
+  ArrowRight,
+  Info
 } from "lucide-react";
 
 interface AuthGateProps {
@@ -21,69 +24,135 @@ interface AuthGateProps {
 }
 
 export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
-  const [tab, setTab] = useState<"signin" | "signup">("signin");
+  const [step, setStep] = useState<"signin" | "first_login_password_change">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [fullName, setFullName] = useState("");
-  const [orgName, setOrgName] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [activeSession, setActiveSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [successMsg, setSuccessMsg] = useState("");
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
     setErrorMsg("");
     setSuccessMsg("");
 
     if (!isSupabaseBrowserConfigured || !supabase) {
-      setErrorMsg("Database authentication is initializing. Please verify Supabase keys in settings.");
+      // Local dev mode fallback
+      setSuccessMsg("Connected in Local Mode! Launching workspace...");
+      setTimeout(() => {
+        onAuthSuccess({
+          access_token: "local-token",
+          token_type: "bearer",
+          expires_in: 3600,
+          refresh_token: "local-refresh",
+          user: {
+            id: "local-user",
+            app_metadata: {},
+            user_metadata: { full_name: "Local Admin", role: "owner" },
+            aud: "authenticated",
+            created_at: new Date().toISOString(),
+            email: email || "admin@workspace.local"
+          }
+        } as Session);
+      }, 400);
       return;
     }
 
     setLoading(true);
 
     try {
-      if (tab === "signin") {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
-          password
-        });
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password
+      });
 
-        if (error) throw error;
-        if (!data.session) throw new Error("Could not start session. Please try again.");
+      if (error) throw error;
+      if (!data.session) throw new Error("Could not start session. Please try again.");
 
+      const mustChange = Boolean(
+        data.session.user?.user_metadata?.must_change_password ||
+        data.session.user?.user_metadata?.temporary_password
+      );
+
+      if (mustChange) {
+        setActiveSession(data.session);
+        setStep("first_login_password_change");
+        setSuccessMsg("Temporary password confirmed. Please set your permanent password to continue.");
+      } else {
         setSuccessMsg("Signed in! Launching your workspace...");
         setTimeout(() => {
           onAuthSuccess(data.session);
         }, 400);
-      } else {
-        const { data, error } = await supabase.auth.signUp({
-          email: email.trim(),
-          password,
-          options: {
-            data: {
-              full_name: fullName.trim(),
-              organization_name: orgName.trim() || "My Company Workspace"
-            }
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Authentication failed. Please check your credentials.";
+      setErrorMsg(message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handlePasswordChange(e: React.FormEvent) {
+    e.preventDefault();
+    setErrorMsg("");
+    setSuccessMsg("");
+
+    if (newPassword.length < 6) {
+      setErrorMsg("New password must be at least 6 characters.");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setErrorMsg("Passwords do not match. Please re-enter.");
+      return;
+    }
+
+    if (newPassword === password) {
+      setErrorMsg("Your new permanent password must be different from the temporary password.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      if (isSupabaseBrowserConfigured && supabase) {
+        const { data, error } = await supabase.auth.updateUser({
+          password: newPassword,
+          data: {
+            must_change_password: false,
+            temporary_password: false
           }
         });
 
         if (error) throw error;
 
-        if (data.session) {
-          setSuccessMsg("Account created! Launching your workspace...");
-          setTimeout(() => {
-            onAuthSuccess(data.session!);
-          }, 400);
-        } else {
-          setSuccessMsg(
-            "Account created! Please check your email inbox to verify your account, or sign in if confirmation is disabled."
-          );
-          setTab("signin");
+        try {
+          await completePasswordChange();
+        } catch {
+          // Backend completion is non-blocking
         }
+
+        setSuccessMsg("Permanent password saved! Launching your workspace...");
+        const finalSession = data.user
+          ? ({ ...activeSession, user: data.user } as Session)
+          : activeSession;
+
+        setTimeout(() => {
+          if (finalSession) {
+            onAuthSuccess(finalSession);
+          }
+        }, 450);
+      } else {
+        setSuccessMsg("Permanent password saved! Launching your workspace...");
+        setTimeout(() => {
+          if (activeSession) onAuthSuccess(activeSession);
+        }, 400);
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Authentication failed. Please check credentials.";
+      const message = err instanceof Error ? err.message : "Failed to update password. Please try again.";
       setErrorMsg(message);
     } finally {
       setLoading(false);
@@ -100,7 +169,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
         fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
       }}
     >
-      {/* LEFT COLUMN: BRAND & VALUE PROPOSITION */}
+      {/* LEFT COLUMN: BRAND & PLATFORM PILLARS */}
       <div
         style={{
           flex: 1,
@@ -226,132 +295,127 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
         }}
       >
         <div style={{ maxWidth: "380px", width: "100%", margin: "0 auto" }}>
-          {/* HEADER */}
-          <div style={{ marginBottom: "28px" }}>
-            <h2 style={{ fontSize: "24px", fontWeight: 700, margin: "0 0 6px 0" }}>
-              {tab === "signin" ? "Recruiter Portal Sign In" : "Create Recruiter Account"}
-            </h2>
-            <p style={{ fontSize: "13px", color: "#94a3b8", margin: 0 }}>
-              {tab === "signin"
-                ? "Sign in to access your company's candidate intelligence database."
-                : "Register your company or recruitment agency workspace."}
-            </p>
-          </div>
+          {step === "signin" ? (
+            <>
+              {/* HEADER */}
+              <div style={{ marginBottom: "24px" }}>
+                <div
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    padding: "4px 10px",
+                    borderRadius: "20px",
+                    background: "rgba(59, 130, 246, 0.12)",
+                    border: "1px solid rgba(59, 130, 246, 0.3)",
+                    color: "#93c5fd",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    marginBottom: "12px"
+                  }}
+                >
+                  <ShieldCheck size={13} />
+                  Enterprise Protected
+                </div>
+                <h2 style={{ fontSize: "24px", fontWeight: 700, margin: "0 0 6px 0" }}>
+                  Workspace Sign In
+                </h2>
+                <p style={{ fontSize: "13px", color: "#94a3b8", margin: 0 }}>
+                  Enter your work email and password to access your organization's talent database.
+                </p>
+              </div>
 
-          {/* TAB SWITCHER */}
-          <div
-            style={{
-              display: "flex",
-              marginBottom: "24px",
-              background: "rgba(255, 255, 255, 0.06)",
-              borderRadius: "8px",
-              padding: "4px"
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => {
-                setTab("signin");
-                setErrorMsg("");
-                setSuccessMsg("");
-              }}
-              style={{
-                flex: 1,
-                padding: "8px",
-                fontSize: "13px",
-                fontWeight: 600,
-                borderRadius: "6px",
-                border: "none",
-                cursor: "pointer",
-                background: tab === "signin" ? "#2563eb" : "transparent",
-                color: "#ffffff",
-                transition: "all 0.15s ease"
-              }}
-            >
-              Sign In
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setTab("signup");
-                setErrorMsg("");
-                setSuccessMsg("");
-              }}
-              style={{
-                flex: 1,
-                padding: "8px",
-                fontSize: "13px",
-                fontWeight: 600,
-                borderRadius: "6px",
-                border: "none",
-                cursor: "pointer",
-                background: tab === "signup" ? "#2563eb" : "transparent",
-                color: "#ffffff",
-                transition: "all 0.15s ease"
-              }}
-            >
-              Create Account
-            </button>
-          </div>
-
-          {/* ERROR ALERT */}
-          {errorMsg && (
-            <div
-              style={{
-                marginBottom: "18px",
-                padding: "10px 14px",
-                borderRadius: "8px",
-                background: "rgba(239, 68, 68, 0.15)",
-                border: "1px solid rgba(239, 68, 68, 0.4)",
-                color: "#fca5a5",
-                fontSize: "13px",
-                display: "flex",
-                alignItems: "center",
-                gap: "8px"
-              }}
-            >
-              <AlertCircle size={16} style={{ flexShrink: 0 }} />
-              <span>{errorMsg}</span>
-            </div>
-          )}
-
-          {/* SUCCESS ALERT */}
-          {successMsg && (
-            <div
-              style={{
-                marginBottom: "18px",
-                padding: "10px 14px",
-                borderRadius: "8px",
-                background: "rgba(34, 197, 94, 0.15)",
-                border: "1px solid rgba(34, 197, 94, 0.4)",
-                color: "#86efac",
-                fontSize: "13px",
-                display: "flex",
-                alignItems: "center",
-                gap: "8px"
-              }}
-            >
-              <CheckCircle2 size={16} style={{ flexShrink: 0 }} />
-              <span>{successMsg}</span>
-            </div>
-          )}
-
-          {/* FORM */}
-          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            {tab === "signup" && (
-              <>
+              {/* ADMIN PROVISION NOTICE */}
+              <div
+                style={{
+                  marginBottom: "20px",
+                  padding: "12px",
+                  borderRadius: "8px",
+                  background: "rgba(30, 41, 59, 0.7)",
+                  border: "1px solid rgba(148, 163, 184, 0.2)",
+                  fontSize: "12px",
+                  lineHeight: "1.5",
+                  color: "#cbd5e1",
+                  display: "flex",
+                  gap: "10px"
+                }}
+              >
+                <Info size={16} color="#60a5fa" style={{ flexShrink: 0, marginTop: "2px" }} />
                 <div>
-                  <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#cbd5e1", marginBottom: "6px" }}>
-                    Full Name
+                  <strong style={{ color: "#ffffff" }}>Admin-Provisioned Accounts:</strong>
+                  <div style={{ marginTop: "2px", color: "#94a3b8" }}>
+                    User accounts are created by workspace admins. If your account was newly provisioned, use the temporary password sent to your email.
+                  </div>
+                </div>
+              </div>
+
+              {/* ERROR ALERT */}
+              {errorMsg && (
+                <div
+                  style={{
+                    marginBottom: "18px",
+                    padding: "10px 14px",
+                    borderRadius: "8px",
+                    background: "rgba(239, 68, 68, 0.15)",
+                    border: "1px solid rgba(239, 68, 68, 0.4)",
+                    color: "#fca5a5",
+                    fontSize: "13px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px"
+                  }}
+                >
+                  <AlertCircle size={16} style={{ flexShrink: 0 }} />
+                  <span>{errorMsg}</span>
+                </div>
+              )}
+
+              {/* SUCCESS ALERT */}
+              {successMsg && (
+                <div
+                  style={{
+                    marginBottom: "18px",
+                    padding: "10px 14px",
+                    borderRadius: "8px",
+                    background: "rgba(34, 197, 94, 0.15)",
+                    border: "1px solid rgba(34, 197, 94, 0.4)",
+                    color: "#86efac",
+                    fontSize: "13px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px"
+                  }}
+                >
+                  <CheckCircle2 size={16} style={{ flexShrink: 0 }} />
+                  <span>{successMsg}</span>
+                </div>
+              )}
+
+              {/* FORM */}
+              <form onSubmit={handleSignIn} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                <div>
+                  <label
+                    style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#cbd5e1", marginBottom: "6px" }}
+                  >
+                    Work Email Address
                   </label>
                   <div style={{ position: "relative" }}>
-                    <User size={16} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "#64748b" }} />
+                    <Mail
+                      size={16}
+                      style={{
+                        position: "absolute",
+                        left: "12px",
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        color: "#64748b"
+                      }}
+                    />
                     <input
-                      type="text"
+                      type="email"
                       required
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      placeholder="e.g. Alex Henderson"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="name@company.com"
                       style={{
                         width: "100%",
                         padding: "10px 12px 10px 38px",
@@ -368,17 +432,28 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
                 </div>
 
                 <div>
-                  <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#cbd5e1", marginBottom: "6px" }}>
-                    Company or Agency Name
-                  </label>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                    <label style={{ fontSize: "12px", fontWeight: 600, color: "#cbd5e1" }}>
+                      Password or Temporary Password
+                    </label>
+                  </div>
                   <div style={{ position: "relative" }}>
-                    <Building size={16} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "#64748b" }} />
+                    <Lock
+                      size={16}
+                      style={{
+                        position: "absolute",
+                        left: "12px",
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        color: "#64748b"
+                      }}
+                    />
                     <input
-                      type="text"
+                      type="password"
                       required
-                      value={orgName}
-                      onChange={(e) => setOrgName(e.target.value)}
-                      placeholder="e.g. Acme Corp / TechStaff Agency"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Enter password"
                       style={{
                         width: "100%",
                         padding: "10px 12px 10px 38px",
@@ -393,88 +468,249 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
                     />
                   </div>
                 </div>
-              </>
-            )}
 
-            <div>
-              <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#cbd5e1", marginBottom: "6px" }}>
-                Work Email Address
-              </label>
-              <div style={{ position: "relative" }}>
-                <Mail size={16} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "#64748b" }} />
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="recruiter@company.com"
+                <button
+                  type="submit"
+                  disabled={loading}
                   style={{
-                    width: "100%",
-                    padding: "10px 12px 10px 38px",
+                    marginTop: "8px",
+                    padding: "12px",
                     borderRadius: "8px",
-                    border: "1px solid rgba(255, 255, 255, 0.15)",
-                    background: "rgba(255, 255, 255, 0.05)",
+                    background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
                     color: "#ffffff",
+                    fontWeight: 600,
                     fontSize: "14px",
-                    outline: "none",
-                    boxSizing: "border-box"
+                    border: "none",
+                    cursor: loading ? "not-allowed" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px",
+                    boxShadow: "0 4px 16px rgba(37, 99, 235, 0.35)"
                   }}
-                />
-              </div>
-            </div>
+                >
+                  {loading ? <Loader2 size={16} className="spinning" /> : <ArrowRight size={16} />}
+                  <span>Sign In to Talent OS</span>
+                </button>
+              </form>
 
-            <div>
-              <label style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#cbd5e1", marginBottom: "6px" }}>
-                Password
-              </label>
-              <div style={{ position: "relative" }}>
-                <Lock size={16} style={{ position: "absolute", left: "12px", top: "50%", transform: "translateY(-50%)", color: "#64748b" }} />
-                <input
-                  type="password"
-                  required
-                  minLength={6}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Minimum 6 characters"
+              {/* FOOTNOTE */}
+              <div style={{ marginTop: "24px", textAlign: "center", fontSize: "12px", color: "#64748b" }}>
+                Need access? Request an account invitation from your team administrator.
+              </div>
+            </>
+          ) : (
+            <>
+              {/* FIRST LOGIN: SET PERMANENT PASSWORD */}
+              <div style={{ marginBottom: "22px" }}>
+                <div
                   style={{
-                    width: "100%",
-                    padding: "10px 12px 10px 38px",
-                    borderRadius: "8px",
-                    border: "1px solid rgba(255, 255, 255, 0.15)",
-                    background: "rgba(255, 255, 255, 0.05)",
-                    color: "#ffffff",
-                    fontSize: "14px",
-                    outline: "none",
-                    boxSizing: "border-box"
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    padding: "4px 10px",
+                    borderRadius: "20px",
+                    background: "rgba(234, 179, 8, 0.15)",
+                    border: "1px solid rgba(234, 179, 8, 0.4)",
+                    color: "#fde047",
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    marginBottom: "12px"
                   }}
-                />
+                >
+                  <KeyRound size={13} />
+                  Mandatory Security Step
+                </div>
+                <h2 style={{ fontSize: "22px", fontWeight: 700, margin: "0 0 6px 0" }}>
+                  Create Your Permanent Password
+                </h2>
+                <p style={{ fontSize: "13px", color: "#94a3b8", margin: 0 }}>
+                  You logged in with a temporary password for <strong style={{ color: "#ffffff" }}>{email}</strong>. Please set a secure permanent password to activate your workspace access.
+                </p>
               </div>
-            </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                marginTop: "10px",
-                padding: "12px",
-                borderRadius: "8px",
-                background: "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)",
-                color: "#ffffff",
-                fontWeight: 600,
-                fontSize: "14px",
-                border: "none",
-                cursor: loading ? "not-allowed" : "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "8px",
-                boxShadow: "0 4px 16px rgba(37, 99, 235, 0.35)"
-              }}
-            >
-              {loading && <Loader2 size={16} className="spinning" />}
-              <span>{tab === "signin" ? "Sign In to Talent OS" : "Create Recruiter Account"}</span>
-            </button>
-          </form>
+              {/* ERROR ALERT */}
+              {errorMsg && (
+                <div
+                  style={{
+                    marginBottom: "18px",
+                    padding: "10px 14px",
+                    borderRadius: "8px",
+                    background: "rgba(239, 68, 68, 0.15)",
+                    border: "1px solid rgba(239, 68, 68, 0.4)",
+                    color: "#fca5a5",
+                    fontSize: "13px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px"
+                  }}
+                >
+                  <AlertCircle size={16} style={{ flexShrink: 0 }} />
+                  <span>{errorMsg}</span>
+                </div>
+              )}
+
+              {/* SUCCESS ALERT */}
+              {successMsg && (
+                <div
+                  style={{
+                    marginBottom: "18px",
+                    padding: "10px 14px",
+                    borderRadius: "8px",
+                    background: "rgba(34, 197, 94, 0.15)",
+                    border: "1px solid rgba(34, 197, 94, 0.4)",
+                    color: "#86efac",
+                    fontSize: "13px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px"
+                  }}
+                >
+                  <CheckCircle2 size={16} style={{ flexShrink: 0 }} />
+                  <span>{successMsg}</span>
+                </div>
+              )}
+
+              {/* PASSWORD FORM */}
+              <form onSubmit={handlePasswordChange} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                <div>
+                  <label
+                    style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#cbd5e1", marginBottom: "6px" }}
+                  >
+                    New Permanent Password
+                  </label>
+                  <div style={{ position: "relative" }}>
+                    <Lock
+                      size={16}
+                      style={{
+                        position: "absolute",
+                        left: "12px",
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        color: "#64748b"
+                      }}
+                    />
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="Minimum 6 characters"
+                      style={{
+                        width: "100%",
+                        padding: "10px 12px 10px 38px",
+                        borderRadius: "8px",
+                        border: "1px solid rgba(255, 255, 255, 0.15)",
+                        background: "rgba(255, 255, 255, 0.05)",
+                        color: "#ffffff",
+                        fontSize: "14px",
+                        outline: "none",
+                        boxSizing: "border-box"
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label
+                    style={{ display: "block", fontSize: "12px", fontWeight: 600, color: "#cbd5e1", marginBottom: "6px" }}
+                  >
+                    Confirm Permanent Password
+                  </label>
+                  <div style={{ position: "relative" }}>
+                    <Lock
+                      size={16}
+                      style={{
+                        position: "absolute",
+                        left: "12px",
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        color: "#64748b"
+                      }}
+                    />
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Re-enter your new password"
+                      style={{
+                        width: "100%",
+                        padding: "10px 12px 10px 38px",
+                        borderRadius: "8px",
+                        border: "1px solid rgba(255, 255, 255, 0.15)",
+                        background: "rgba(255, 255, 255, 0.05)",
+                        color: "#ffffff",
+                        fontSize: "14px",
+                        outline: "none",
+                        boxSizing: "border-box"
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div
+                  style={{
+                    fontSize: "11px",
+                    color: "#94a3b8",
+                    padding: "8px 10px",
+                    background: "rgba(255, 255, 255, 0.03)",
+                    borderRadius: "6px"
+                  }}
+                >
+                  🔒 Once set, your temporary password expires immediately and cannot be used again.
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  style={{
+                    marginTop: "8px",
+                    padding: "12px",
+                    borderRadius: "8px",
+                    background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
+                    color: "#ffffff",
+                    fontWeight: 600,
+                    fontSize: "14px",
+                    border: "none",
+                    cursor: loading ? "not-allowed" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px",
+                    boxShadow: "0 4px 16px rgba(16, 185, 129, 0.35)"
+                  }}
+                >
+                  {loading ? <Loader2 size={16} className="spinning" /> : <ShieldCheck size={16} />}
+                  <span>Save Password & Enter Workspace</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStep("signin");
+                    setPassword("");
+                    setNewPassword("");
+                    setConfirmPassword("");
+                    setErrorMsg("");
+                    setSuccessMsg("");
+                  }}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "#94a3b8",
+                    fontSize: "12px",
+                    cursor: "pointer",
+                    padding: "6px"
+                  }}
+                >
+                  ← Return to sign in
+                </button>
+              </form>
+            </>
+          )}
         </div>
       </div>
     </div>

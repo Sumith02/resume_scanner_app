@@ -130,6 +130,16 @@ class Repository(Protocol):
     def has_external_id(self, context: RequestContext, external_id: str) -> bool: ...
     def list_team_members(self, context: RequestContext) -> list[dict[str, Any]]: ...
     def invite_team_member(self, context: RequestContext, email: str, role: str) -> dict[str, Any]: ...
+    def provision_user(
+        self,
+        context: RequestContext,
+        email: str,
+        full_name: str,
+        role: str,
+        temporary_password: str,
+        organization_name: str,
+    ) -> dict[str, Any]: ...
+    def complete_password_change(self, context: RequestContext) -> None: ...
     def remove_team_member(self, context: RequestContext, user_id: str) -> bool: ...
     def membership_role(self, organization_id: str, user_id: str) -> str | None: ...
     def create_signed_upload(self, path: str) -> dict[str, Any]: ...
@@ -527,6 +537,87 @@ class SupabaseRepository:
             "joinedAt": utc_now(),
             "invited": invited,
         }
+
+    def provision_user(
+        self,
+        context: RequestContext,
+        email: str,
+        full_name: str,
+        role: str,
+        temporary_password: str,
+        organization_name: str,
+    ) -> dict[str, Any]:
+        profiles = (
+            self.client.table("profiles").select("id,email,full_name").ilike("email", email).limit(1).execute().data
+        )
+        if profiles:
+            profile = profiles[0]
+            user_id = str(profile["id"])
+            try:
+                self.client.auth.admin.update_user_by_id(
+                    user_id,
+                    {
+                        "password": temporary_password,
+                        "user_metadata": {
+                            "full_name": full_name or profile.get("full_name", ""),
+                            "must_change_password": True,
+                            "temporary_password": True,
+                            "organization_name": organization_name,
+                        },
+                    },
+                )
+            except Exception:
+                pass
+        else:
+            try:
+                response = self.client.auth.admin.create_user(
+                    {
+                        "email": email,
+                        "password": temporary_password,
+                        "email_confirm": True,
+                        "user_metadata": {
+                            "full_name": full_name,
+                            "must_change_password": True,
+                            "temporary_password": True,
+                            "organization_name": organization_name,
+                        },
+                    }
+                )
+                user_id = str(response.user.id)
+            except Exception:
+                # Fallback to invite if create_user fails
+                response = self.client.auth.admin.invite_user_by_email(
+                    email,
+                    {"data": {"invited_organization_id": context.organization_id, "must_change_password": True}, "redirect_to": self.app_origin},
+                )
+                if not response.user:
+                    raise AppError("Could not provision user in authentication system.", 502, "provision_failed")
+                user_id = str(response.user.id)
+
+        self.client.table("organization_members").upsert(
+            {"organization_id": context.organization_id, "user_id": user_id, "role": role}
+        ).execute()
+        self.client.table("profiles").upsert(
+            {"id": user_id, "email": email, "full_name": full_name, "default_organization_id": context.organization_id}
+        ).execute()
+        return {
+            "userId": user_id,
+            "email": email,
+            "fullName": full_name or "Provisioned Member",
+            "role": role,
+            "temporaryPassword": temporary_password,
+            "mustChangePassword": True,
+            "joinedAt": utc_now(),
+        }
+
+    def complete_password_change(self, context: RequestContext) -> None:
+        try:
+            self.client.auth.admin.update_user_by_id(
+                context.user_id,
+                {"user_metadata": {"must_change_password": False, "temporary_password": False}},
+            )
+        except Exception:
+            pass
 
     def remove_team_member(self, context: RequestContext, user_id: str) -> bool:
         rows = (
@@ -1037,20 +1128,83 @@ class LocalRepository:
         return any(item.get("sourceExternalId") == external_id for item in self._read()["applications"])
 
     def list_team_members(self, context: RequestContext) -> list[dict[str, Any]]:
-        return [
+        base = [
             {
                 "userId": context.user_id,
                 "email": context.email,
-                "fullName": "Local administrator",
+                "fullName": "Workspace Owner",
                 "role": "owner",
                 "joinedAt": utc_now(),
             }
         ]
+        stored_users = self._read().get("users", [])
+        return base + [
+            {
+                "userId": u["userId"],
+                "email": u["email"],
+                "fullName": u.get("fullName", "Team Member"),
+                "role": u.get("role", "recruiter"),
+                "mustChangePassword": u.get("mustChangePassword", False),
+                "temporaryPassword": u.get("temporaryPassword"),
+                "joinedAt": u.get("joinedAt", utc_now()),
+            }
+            for u in stored_users
+            if u.get("userId") != context.user_id
+        ]
+
+    def provision_user(
+        self,
+        context: RequestContext,
+        email: str,
+        full_name: str,
+        role: str,
+        temporary_password: str,
+        organization_name: str,
+    ) -> dict[str, Any]:
+        data = self._read()
+        users = data.setdefault("users", [])
+        existing = next((u for u in users if u.get("email", "").lower() == email.lower()), None)
+        if existing:
+            existing["temporaryPassword"] = temporary_password
+            existing["mustChangePassword"] = True
+            existing["role"] = role
+            existing["fullName"] = full_name or existing.get("fullName", "")
+            user = existing
+        else:
+            user = {
+                "userId": f"usr-{uuid.uuid4().hex[:10]}",
+                "email": email,
+                "fullName": full_name or "Provisioned Member",
+                "role": role,
+                "temporaryPassword": temporary_password,
+                "mustChangePassword": True,
+                "joinedAt": utc_now(),
+            }
+            users.append(user)
+        self._write(data)
+        return user
+
+    def complete_password_change(self, context: RequestContext) -> None:
+        data = self._read()
+        users = data.get("users", [])
+        for u in users:
+            if u.get("userId") == context.user_id or u.get("email") == context.email:
+                u["mustChangePassword"] = False
+                break
+        self._write(data)
 
     def invite_team_member(self, context: RequestContext, email: str, role: str) -> dict[str, Any]:
-        raise AppError("Team invitations require Supabase Auth.", 409, "production_auth_required")
+        temp_pass = f"Nex#{uuid.uuid4().hex[:4]}!{uuid.uuid4().hex[:4]}"
+        return self.provision_user(context, email, "", role, temp_pass, context.organization_id)
 
     def remove_team_member(self, context: RequestContext, user_id: str) -> bool:
+        data = self._read()
+        users = data.get("users", [])
+        initial_len = len(users)
+        data["users"] = [u for u in users if u.get("userId") != user_id]
+        if len(data["users"]) < initial_len:
+            self._write(data)
+            return True
         return False
 
     def membership_role(self, organization_id: str, user_id: str) -> str | None:

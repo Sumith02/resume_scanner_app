@@ -64,6 +64,7 @@ class AuthService:
             organization_id=organization_id,
             role=role,
             authenticated=True,
+            must_change_password=bool(metadata.get("must_change_password", False)),
         )
 
     def dependency(self, authorization: str | None = Header(default=None)) -> RequestContext:

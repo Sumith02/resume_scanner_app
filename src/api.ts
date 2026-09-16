@@ -18,6 +18,8 @@ import type {
   TalentGraphData,
   TalentPool,
   TeamMember,
+  ProvisionUserPayload,
+  ProvisionUserResult,
   TaxonomyResponse,
   UploadResult
 } from "./types";
@@ -400,6 +402,21 @@ export async function inviteTeamMember(email: string, role: "admin" | "recruiter
     body: JSON.stringify({ email, role })
   });
   return data.member;
+}
+
+export async function provisionUserAccount(payload: ProvisionUserPayload): Promise<ProvisionUserResult> {
+  return request<ProvisionUserResult>("/api/team/provision", {
+    method: "POST",
+    headers: jsonHeaders,
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function completePasswordChange(): Promise<{ status: string; message: string }> {
+  return request<{ status: string; message: string }>("/api/auth/complete-password-change", {
+    method: "POST",
+    headers: jsonHeaders
+  });
 }
 
 export async function removeTeamMember(userId: string): Promise<void> {

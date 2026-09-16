@@ -37,6 +37,7 @@ class RequestContext:
     organization_id: str
     role: str
     authenticated: bool
+    must_change_password: bool = False
 
 
 class ApplicationUpdate(BaseModel):
@@ -105,6 +106,21 @@ class GmailImportRequest(BaseModel):
 class TeamInviteRequest(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     role: Literal["admin", "recruiter", "viewer"] = "recruiter"
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        cleaned = value.strip().lower()
+        if "@" not in cleaned or cleaned.startswith("@") or cleaned.endswith("@"):
+            raise ValueError("Enter a valid email address")
+        return cleaned
+
+
+class ProvisionUserRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    fullName: str = Field(default="", max_length=180)
+    role: Literal["admin", "recruiter", "hiring_manager", "viewer"] = "recruiter"
+    temporaryPassword: str | None = Field(default=None, max_length=64)
 
     @field_validator("email")
     @classmethod
