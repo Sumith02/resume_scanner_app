@@ -757,7 +757,16 @@ export default function App() {
       const result = await uploadResumes(files, { role, source });
       setFiles([]);
       await loadWorkspace();
-      setNotice(result.message || `${files.length} resumes successfully parsed and indexed!`);
+      if (result.failures && result.failures.length > 0) {
+        const failText = result.failures.map(f => `${f.fileName}: ${f.message}`).join(" | ");
+        if (result.applications && result.applications.length > 0) {
+          setNotice(`${result.message}. (${failText})`);
+        } else {
+          setError(`${result.message || "Upload notice"}: ${failText}`);
+        }
+      } else {
+        setNotice(result.message || `${files.length} resumes successfully parsed and indexed!`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed.");
     } finally {
@@ -783,7 +792,16 @@ export default function App() {
         lastSyncedAt: res.lastSyncedAt || prev.lastSyncedAt,
         syncCount: res.syncCount ?? prev.syncCount
       }));
-      setNotice(res.message);
+      if (res.failures && res.failures.length > 0) {
+        const failText = res.failures.map(f => `${f.fileName}: ${f.message}`).join(" | ");
+        if (res.importedCount > 0) {
+          setNotice(`${res.message} (${failText})`);
+        } else {
+          setError(`${res.message}: ${failText}`);
+        }
+      } else {
+        setNotice(res.message);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gmail import failed.");
     } finally {

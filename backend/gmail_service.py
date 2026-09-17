@@ -18,10 +18,7 @@ from .repository import Repository, utc_now
 from .resume_service import ALLOWED_EXTENSIONS, MIME_BY_EXTENSION, ResumeService, extract_resume_text
 
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
-DEFAULT_QUERY = (
-    "has:attachment (filename:pdf OR filename:docx OR filename:txt) "
-    "(resume OR cv OR \"curriculum vitae\" OR applicant OR application OR candidate OR \"job application\" OR apply)"
-)
+DEFAULT_QUERY = "has:attachment (filename:pdf OR filename:docx OR filename:txt)"
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
@@ -262,7 +259,7 @@ class GmailService:
         if is_incremental:
             last_epoch = int(_parse_time(str(last_synced_at)))
             if last_epoch > 0:
-                after_epoch = max(0, last_epoch - 60)
+                after_epoch = max(0, last_epoch - 86400)
                 if "after:" not in user_query.lower() and "newer_than:" not in user_query.lower():
                     effective_query = f"{user_query} after:{after_epoch}"
 
@@ -385,8 +382,13 @@ class GmailService:
                         doc_text = extract_resume_text(content_bytes, filename)
                         is_valid, _ = is_candidate_resume(doc_text, filename)
                         if not is_valid:
-                            skipped += 1
-                            continue
+                            lower_doc = doc_text.lower()
+                            strong_invalids = ("tax invoice", "commercial invoice", "boarding pass", "e-ticket")
+                            if len(doc_text.strip()) >= 35 and not any(si in lower_doc for si in strong_invalids):
+                                pass
+                            else:
+                                skipped += 1
+                                continue
                     except Exception:
                         skipped += 1
                         continue
@@ -411,7 +413,7 @@ class GmailService:
         sync_count = int(connection.get("sync_count", 0)) + 1
         updated_connection = {
             **connection,
-            "last_synced_at": now_iso,
+            "last_synced_at": now_iso if (applications or messages) else connection.get("last_synced_at"),
             "last_message_date": newest_message_timestamp or connection.get("last_message_date", 0),
             "sync_count": sync_count,
         }
@@ -432,7 +434,14 @@ class GmailService:
             },
         )
 
-        mode_label = "incremental update" if is_incremental else "full sync from start"
+        mode_label = "incremental update" if is_incremental else "full scan from start"
+        if applications:
+            import_msg = f"Imported {len(applications)} resume{'s' if len(applications) != 1 else ''} from Gmail ({mode_label})."
+        elif skipped:
+            import_msg = f"Gmail scan complete ({mode_label}): 0 new resumes ({skipped} skipped - already indexed or non-resume attachments)."
+        else:
+            import_msg = f"Gmail scan complete ({mode_label}): No candidate resume attachments found."
+
         return {
             "applications": applications,
             "failures": failures,
@@ -442,7 +451,7 @@ class GmailService:
             "isIncremental": is_incremental,
             "lastSyncedAt": now_iso,
             "syncCount": sync_count,
-            "message": f"Imported {len(applications)} resume{'s' if len(applications) != 1 else ''} from Gmail ({mode_label}).",
+            "message": import_msg,
         }
 
     def _gmail_get(

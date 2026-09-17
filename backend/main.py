@@ -321,14 +321,23 @@ def process_signed_uploads(payload: UploadCompleteRequest, context: Context) -> 
                 message = error.message if isinstance(error, AppError) else "Upload could not be read."
                 failures.append({"fileName": name, "message": message})
 
-    applications, processing_failures, _ = resume_service.process(
+    applications, processing_failures, skipped = resume_service.process(
         uploaded_files(), context, source=payload.source, role=payload.role
     )
     failures.extend(processing_failures)
+    if applications:
+        msg = f"{len(applications)} resume{'s' if len(applications) != 1 else ''} processed"
+    elif skipped:
+        msg = f"0 new resumes added ({skipped} candidate{'s' if skipped != 1 else ''} already indexed in workspace)"
+    elif failures:
+        msg = f"Upload notice: {failures[0]['message']}"
+    else:
+        msg = "0 resumes processed"
     return {
         "applications": applications,
         "failures": failures,
-        "message": f"{len(applications)} resume{'s' if len(applications) != 1 else ''} processed",
+        "skipped": skipped,
+        "message": msg,
     }
 
 
@@ -353,11 +362,20 @@ def upload_applications(
         }
         for item in resumes
     ]
-    applications, failures, _ = resume_service.process(files, context, source=source, role=role)
+    applications, failures, skipped = resume_service.process(files, context, source=source, role=role)
+    if applications:
+        msg = f"{len(applications)} resume{'s' if len(applications) != 1 else ''} processed"
+    elif skipped:
+        msg = f"0 new resumes added ({skipped} candidate{'s' if skipped != 1 else ''} already indexed in workspace)"
+    elif failures:
+        msg = f"Upload notice: {failures[0]['message']}"
+    else:
+        msg = "0 resumes processed"
     return {
         "applications": applications,
         "failures": failures,
-        "message": f"{len(applications)} resume{'s' if len(applications) != 1 else ''} processed",
+        "skipped": skipped,
+        "message": msg,
     }
 
 

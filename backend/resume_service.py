@@ -57,15 +57,26 @@ class ResumeService:
                 checksum = hashlib.sha256(content).hexdigest()
                 text = extract_resume_text(content, original_name)
                 is_valid, reject_reason = is_candidate_resume(text, original_name)
+                status = "new"
                 if not is_valid:
-                    failures.append({"fileName": original_name, "message": reject_reason})
-                    continue
+                    lower_text = text.lower()
+                    strong_invalids = ("tax invoice", "commercial invoice", "boarding pass", "e-ticket")
+                    if len(text.strip()) >= 35 and not any(si in lower_text for si in strong_invalids):
+                        status = "needs_review"
+                    else:
+                        failures.append({"fileName": original_name, "message": reject_reason})
+                        continue
+
                 analysis = analyze_resume(text, original_name)
                 duplicate = _find_duplicate(existing + created, analysis["email"], analysis["phone"], checksum)
                 if duplicate:
                     if storage_path:
                         self.repository.delete_resume_objects([storage_path])
                     skipped += 1
+                    failures.append({
+                        "fileName": original_name,
+                        "message": f"Candidate '{duplicate.get('candidateName', 'Candidate')}' ({duplicate.get('email') or 'duplicate file'}) is already indexed in your workspace.",
+                    })
                     continue
 
                 application_id = str(uuid.uuid4())
@@ -86,7 +97,7 @@ class ResumeService:
                     "updatedAt": now,
                     "source": _clean(source, "Direct upload", 180),
                     "role": _clean(role, "Open application", 180),
-                    "status": "needs_review" if int(analysis["resumeTextLength"]) < 80 else "new",
+                    "status": "needs_review" if (status == "needs_review" or int(analysis["resumeTextLength"]) < 80) else "new",
                     "notes": "",
                     "tags": [],
                     "duplicateOf": None,

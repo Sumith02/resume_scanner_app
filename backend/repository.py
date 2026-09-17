@@ -351,13 +351,11 @@ class SupabaseRepository:
         return organization_id, "recruiter"
 
     def list_applications(self, context: RequestContext) -> list[dict[str, Any]]:
-        query = (
-            self.client.table("applications")
-            .select("*")
-            .eq("organization_id", context.organization_id)
-        )
-        if not is_master_admin(context.email):
-            query = query.eq("created_by", context.user_id)
+        query = self.client.table("applications").select("*")
+        if is_master_admin(context.email):
+            query = query.or_(f"organization_id.eq.{context.organization_id},created_by.eq.{context.user_id},created_by.is.null")
+        else:
+            query = query.or_(f"created_by.eq.{context.user_id},organization_id.eq.{context.organization_id}")
         rows = (
             query.order("uploaded_at", desc=True)
             .execute()
@@ -379,11 +377,12 @@ class SupabaseRepository:
         query = (
             self.client.table("applications")
             .update(changes)
-            .eq("organization_id", context.organization_id)
             .in_("id", ids)
         )
-        if not is_master_admin(context.email):
-            query = query.eq("created_by", context.user_id)
+        if is_master_admin(context.email):
+            query = query.or_(f"organization_id.eq.{context.organization_id},created_by.eq.{context.user_id},created_by.is.null")
+        else:
+            query = query.or_(f"created_by.eq.{context.user_id},organization_id.eq.{context.organization_id}")
         data = query.execute().data
         return [application_from_row(row) for row in data]
 
@@ -393,22 +392,24 @@ class SupabaseRepository:
         query = (
             self.client.table("applications")
             .select("id,file_path,stored_name")
-            .eq("organization_id", context.organization_id)
             .in_("id", ids)
         )
-        if not is_master_admin(context.email):
-            query = query.eq("created_by", context.user_id)
+        if is_master_admin(context.email):
+            query = query.or_(f"organization_id.eq.{context.organization_id},created_by.eq.{context.user_id},created_by.is.null")
+        else:
+            query = query.or_(f"created_by.eq.{context.user_id},organization_id.eq.{context.organization_id}")
         rows = query.execute().data
         valid_ids = [str(row["id"]) for row in rows]
         if valid_ids:
             del_query = (
                 self.client.table("applications")
                 .delete()
-                .eq("organization_id", context.organization_id)
                 .in_("id", valid_ids)
             )
-            if not is_master_admin(context.email):
-                del_query = del_query.eq("created_by", context.user_id)
+            if is_master_admin(context.email):
+                del_query = del_query.or_(f"organization_id.eq.{context.organization_id},created_by.eq.{context.user_id},created_by.is.null")
+            else:
+                del_query = del_query.or_(f"created_by.eq.{context.user_id},organization_id.eq.{context.organization_id}")
             del_query.execute()
         paths = [str(row.get("file_path") or row.get("stored_name") or "") for row in rows]
         self.delete_resume_objects([path for path in paths if path])
@@ -1670,9 +1671,11 @@ class LocalRepository:
     def _is_owned_by_user(self, item: dict[str, Any], context: RequestContext) -> bool:
         target_user = context.user_id
         target_email = (context.email or "").strip().lower()
+        target_org = context.organization_id
 
         item_created_by = item.get("createdBy")
         item_owner_email = (item.get("ownerEmail") or "").strip().lower()
+        item_org = item.get("organizationId")
 
         # Master admin / default local testing user (usr-master / local-user)
         if is_master_admin(target_email) or target_user in ("usr-master", "local-user"):
@@ -1682,12 +1685,16 @@ class LocalRepository:
                 return True
             if item_owner_email == "sumithsbhatt@gmail.com":
                 return True
+            if item_org in ("org-master", "usr-master", "local-organization", None):
+                return True
             return False
 
         # Strict isolation for standard recruiter users
         if target_user and item_created_by == target_user:
             return True
         if target_email and item_owner_email == target_email:
+            return True
+        if target_org and item_org == target_org:
             return True
         return False
 
