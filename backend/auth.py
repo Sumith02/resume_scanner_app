@@ -65,7 +65,9 @@ class AuthService:
                             if stored_user:
                                 user_id = stored_user.get("userId") or f"usr-{hashlib.md5(user_email.encode('utf-8')).hexdigest()[:8]}"
                                 org_id = stored_user.get("organizationId") or f"org-{user_id}"
-                                role = stored_user.get("role") or "recruiter"
+                                if org_id in ("org-master", "local-organization"):
+                                    org_id = f"org-{user_id}"
+                                role = "recruiter"
                                 must_change = bool(stored_user.get("mustChangePassword", False))
                             else:
                                 # Independent user registration / separate tenant workspace
@@ -116,7 +118,7 @@ class AuthService:
             user_id=str(user.id),
             email=user.email or "",
             organization_id=organization_id,
-            role="owner" if is_admin else role,
+            role="owner" if is_admin else "recruiter",
             authenticated=True,
             must_change_password=bool(metadata.get("must_change_password", False)) and not is_admin,
         )

@@ -29,12 +29,14 @@ import {
   Trash2,
   UploadCloud,
   User,
+  UserPlus,
+  Copy,
   Shield,
   UsersRound,
   X,
   Zap
 } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { AuthGate } from "./AuthGate";
 import { AuthModal } from "./AuthModal";
 import {
@@ -58,6 +60,9 @@ import {
   fetchProcessingQueue,
   fetchReport,
   fetchTalentPools,
+  fetchTeamMembers,
+  provisionUserAccount,
+  removeTeamMember,
   importGmailResumes,
   mergeDuplicateCandidates,
   moveCandidatePipelineStage,
@@ -89,7 +94,8 @@ import {
   type ProcessingJob,
   type RediscoveryResult,
   type ReportSummary,
-  type TalentPool
+  type TalentPool,
+  type TeamMember
 } from "./types";
 import { formatDate, formatFileSize } from "./utils";
 import { TalentGraphView } from "./TalentGraphView";
@@ -633,11 +639,9 @@ export default function App() {
   const userEmail = session?.user?.email?.trim().toLowerCase() || "";
   const isMasterAdmin = userEmail === "sumithsbhatt@gmail.com";
   const userRole: "owner" | "admin" | "recruiter" | "hiring_manager" | "viewer" =
-    userProfile?.workspace?.role ||
-    userProfile?.user?.role ||
-    (isMasterAdmin ? "owner" : "recruiter");
-  const isAdmin = userRole === "owner" || userRole === "admin";
-  const navItems = useMemo(() => getNavItems(userRole), [userRole]);
+    isMasterAdmin ? "owner" : (userProfile?.workspace?.role === "viewer" || userProfile?.workspace?.role === "hiring_manager" ? userProfile.workspace.role : "recruiter");
+  const isAdmin = isMasterAdmin;
+  const navItems = useMemo(() => getNavItems(isMasterAdmin ? "owner" : userRole), [isMasterAdmin, userRole]);
 
   // Keep activeView valid for the user's role
   useEffect(() => {
@@ -4705,8 +4709,83 @@ function SettingsView({
     }
   }
 
-  const effectiveRole = propRole || (isMasterUser ? "owner" : "recruiter");
-  const isAdmin = effectiveRole === "owner" || effectiveRole === "admin";
+  // Team Management & Provisioning State (Master Admin Only)
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [teamLoading, setTeamLoading] = useState(false);
+  const [provEmail, setProvEmail] = useState("");
+  const [provFullName, setProvFullName] = useState("");
+  const [provPassword, setProvPassword] = useState("");
+  const [provSubmitting, setProvSubmitting] = useState(false);
+  const [provResult, setProvResult] = useState<{
+    success: boolean;
+    message: string;
+    tempPass?: string;
+  } | null>(null);
+
+  const loadTeam = useCallback(async () => {
+    if (!isMasterUser) return;
+    setTeamLoading(true);
+    try {
+      const res = await fetchTeamMembers();
+      setTeamMembers(res.members);
+    } catch {
+      // fallback
+    } finally {
+      setTeamLoading(false);
+    }
+  }, [isMasterUser]);
+
+  useEffect(() => {
+    if (isMasterUser) {
+      loadTeam();
+    }
+  }, [isMasterUser, loadTeam]);
+
+  async function handleProvisionSubmit(e: FormEvent) {
+    e.preventDefault();
+    if (!provEmail.trim()) return;
+    setProvSubmitting(true);
+    setProvResult(null);
+    try {
+      const res = await provisionUserAccount({
+        email: provEmail.trim(),
+        fullName: provFullName.trim() || undefined,
+        role: "recruiter",
+        temporaryPassword: provPassword.trim() || undefined,
+      });
+      setProvResult({
+        success: true,
+        message: `Recruiter account for ${provEmail} provisioned successfully into an isolated private workspace!`,
+        tempPass: res.temporaryPassword,
+      });
+      setProvEmail("");
+      setProvFullName("");
+      setProvPassword("");
+      await loadTeam();
+    } catch (err) {
+      setProvResult({
+        success: false,
+        message: err instanceof Error ? err.message : "Failed to provision recruiter account.",
+      });
+    } finally {
+      setProvSubmitting(false);
+    }
+  }
+
+  async function handleRemoveMember(userId: string, memberEmail: string) {
+    if (!confirm(`Are you sure you want to remove ${memberEmail}? This will revoke their workspace access.`)) {
+      return;
+    }
+    try {
+      await removeTeamMember(userId);
+      await loadTeam();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to remove member.");
+    }
+  }
+
+  const effectiveRole = isMasterUser ? "owner" : (propRole === "hiring_manager" || propRole === "viewer" ? propRole : "recruiter");
+  const isAdmin = isMasterUser;
 
   // NON-ADMIN USER PROFILE & SELF-SERVICE VIEW
   if (!isAdmin) {
@@ -5007,6 +5086,240 @@ function SettingsView({
         <p style={{ margin: 0, fontSize: "13px", color: "var(--muted)" }}>
           Master administrator controls for system configuration, security architecture, and data compliance.
         </p>
+      </div>
+
+      {/* MASTER ADMIN RECRUITER PROVISIONING & TEAM CONTROL */}
+      <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", border: "1px solid var(--line)", marginBottom: "24px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
+          <div>
+            <h3 style={{ margin: "0 0 4px 0", fontSize: "17px", display: "flex", alignItems: "center", gap: "8px" }}>
+              <UsersRound size={20} color="#2563eb" />
+              <span>Recruiter Provisioning & Workspace Management</span>
+            </h3>
+            <p style={{ margin: 0, fontSize: "13px", color: "var(--muted)" }}>
+              Provision dedicated recruiter accounts. Each recruiter receives their own 100% isolated private workspace with zero visibility into other users' candidate databases.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={loadTeam}
+            disabled={teamLoading}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "6px 12px",
+              borderRadius: "6px",
+              border: "1px solid var(--line)",
+              background: "#f8fafc",
+              fontSize: "12px",
+              cursor: "pointer",
+              fontWeight: 500,
+              color: "#334155"
+            }}
+          >
+            <RefreshCw size={14} className={teamLoading ? "spinning" : ""} />
+            <span>Refresh Team</span>
+          </button>
+        </div>
+
+        {/* PROVISION NEW RECRUITER FORM */}
+        <form onSubmit={handleProvisionSubmit} style={{ background: "#f8fafc", padding: "18px", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "20px" }}>
+          <strong style={{ fontSize: "13px", display: "flex", alignItems: "center", gap: "6px", marginBottom: "12px", color: "#0f172a" }}>
+            <UserPlus size={16} color="#2563eb" />
+            <span>Provision New Recruiter Account</span>
+          </strong>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: "12px", alignItems: "flex-end" }}>
+            <div>
+              <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>
+                Work Email <span style={{ color: "#ef4444" }}>*</span>
+              </label>
+              <input
+                type="email"
+                required
+                placeholder="recruiter@company.com"
+                value={provEmail}
+                onChange={(e) => setProvEmail(e.target.value)}
+                style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "13px", boxSizing: "border-box" }}
+              />
+            </div>
+
+            <div>
+              <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>
+                Full Name (Optional)
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Jane Doe"
+                value={provFullName}
+                onChange={(e) => setProvFullName(e.target.value)}
+                style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "13px", boxSizing: "border-box" }}
+              />
+            </div>
+
+            <div>
+              <label style={{ display: "block", fontSize: "11px", fontWeight: 600, color: "#64748b", marginBottom: "4px" }}>
+                Temporary Password (Optional)
+              </label>
+              <input
+                type="text"
+                placeholder="Auto-generated if blank"
+                value={provPassword}
+                onChange={(e) => setProvPassword(e.target.value)}
+                style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "13px", boxSizing: "border-box" }}
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={provSubmitting}
+              style={{
+                background: "#2563eb",
+                color: "#fff",
+                border: "none",
+                padding: "9px 18px",
+                borderRadius: "6px",
+                fontSize: "13px",
+                fontWeight: 600,
+                cursor: provSubmitting ? "not-allowed" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                whiteSpace: "nowrap"
+              }}
+            >
+              {provSubmitting ? <Loader2 size={16} className="spinning" /> : <UserPlus size={16} />}
+              <span>Provision Recruiter</span>
+            </button>
+          </div>
+
+          {provResult && (
+            <div
+              style={{
+                marginTop: "14px",
+                padding: "12px 16px",
+                borderRadius: "6px",
+                fontSize: "13px",
+                background: provResult.success ? "#f0fdf4" : "#fef2f2",
+                border: `1px solid ${provResult.success ? "#bbf7d0" : "#fecaca"}`,
+                color: provResult.success ? "#166534" : "#991b1b"
+              }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: "4px" }}>{provResult.message}</div>
+              {provResult.tempPass && (
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginTop: "6px" }}>
+                  <span>Temporary Password: <code style={{ background: "#dcfce7", padding: "2px 6px", borderRadius: "4px", fontWeight: 700 }}>{provResult.tempPass}</code></span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(provResult.tempPass || "");
+                      alert("Temporary password copied to clipboard!");
+                    }}
+                    style={{
+                      background: "#166534",
+                      color: "#fff",
+                      border: "none",
+                      padding: "4px 8px",
+                      borderRadius: "4px",
+                      fontSize: "11px",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "4px"
+                    }}
+                  >
+                    <Copy size={12} />
+                    <span>Copy</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </form>
+
+        {/* TEAM MEMBERS DIRECTORY */}
+        <div>
+          <div style={{ fontSize: "13px", fontWeight: 600, color: "#334155", marginBottom: "10px" }}>
+            Current System Members ({teamMembers.length})
+          </div>
+
+          {teamLoading && teamMembers.length === 0 ? (
+            <div style={{ padding: "20px", textAlign: "center", color: "var(--muted)", fontSize: "13px" }}>
+              <Loader2 size={20} className="spinning" style={{ display: "inline-block", marginRight: "8px" }} />
+              Loading team directory...
+            </div>
+          ) : teamMembers.length === 0 ? (
+            <div style={{ padding: "16px", background: "#f8fafc", borderRadius: "6px", fontSize: "13px", color: "var(--muted)" }}>
+              No provisioned recruiters yet. Use the form above to provision recruiter accounts.
+            </div>
+          ) : (
+            <div style={{ border: "1px solid var(--line)", borderRadius: "8px", overflow: "hidden" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px", textAlign: "left" }}>
+                <thead>
+                  <tr style={{ background: "#f8fafc", borderBottom: "1px solid var(--line)", color: "#64748b", fontSize: "11px", textTransform: "uppercase" }}>
+                    <th style={{ padding: "10px 14px" }}>Member</th>
+                    <th style={{ padding: "10px 14px" }}>Email</th>
+                    <th style={{ padding: "10px 14px" }}>Role & Workspace</th>
+                    <th style={{ padding: "10px 14px" }}>Joined</th>
+                    <th style={{ padding: "10px 14px", textAlign: "right" }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {teamMembers.map((m) => {
+                    const isMaster = m.email.trim().toLowerCase() === "sumithsbhatt@gmail.com";
+                    return (
+                      <tr key={m.userId} style={{ borderBottom: "1px solid var(--line)" }}>
+                        <td style={{ padding: "12px 14px", fontWeight: 600, color: "#0f172a" }}>
+                          {m.fullName || m.email.split("@")[0]}
+                        </td>
+                        <td style={{ padding: "12px 14px", color: "#475569" }}>{m.email}</td>
+                        <td style={{ padding: "12px 14px" }}>
+                          {isMaster ? (
+                            <span style={{ background: "#fef3c7", color: "#92400e", padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: 700 }}>
+                              👑 Master Admin
+                            </span>
+                          ) : (
+                            <span style={{ background: "#eff6ff", color: "#1e40af", padding: "3px 8px", borderRadius: "12px", fontSize: "11px", fontWeight: 600 }}>
+                              Recruiter (Private Workspace)
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ padding: "12px 14px", color: "#64748b", fontSize: "12px" }}>
+                          {formatDate(m.joinedAt)}
+                        </td>
+                        <td style={{ padding: "12px 14px", textAlign: "right" }}>
+                          {!isMaster && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveMember(m.userId, m.email)}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                color: "#ef4444",
+                                cursor: "pointer",
+                                fontSize: "12px",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "4px",
+                                padding: "4px 8px",
+                                borderRadius: "4px"
+                              }}
+                              title="Remove Recruiter"
+                            >
+                              <Trash2 size={14} />
+                              <span>Revoke</span>
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: "24px" }}>

@@ -14,7 +14,7 @@ from fastapi import Depends, FastAPI, File, Form, Header, Query, Request, Upload
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from .auth import AuthService, require_role
+from .auth import AuthService, is_master_admin, require_role
 from .classifier import SKILL_CATEGORIES
 from .client_service import agency_client_service
 from .config import Settings, get_settings
@@ -209,11 +209,9 @@ def health() -> dict[str, object]:
 @app.get("/api/me")
 def me(context: Context) -> dict[str, object]:
     repository, _, _, _, _ = services.require()
-    is_master = context.email.strip().lower() == "sumithsbhatt@gmail.com"
-    role = "owner" if is_master else context.role
-    org_name = "Resume Scanner Enterprise"
-    if context.organization_id not in ("org-master", "local-organization"):
-        org_name = f"{context.email.split('@')[0].title()}'s Organization"
+    is_master = is_master_admin(context.email)
+    role = "owner" if is_master else "recruiter"
+    org_name = "Resume Scanner Enterprise" if is_master else f"{context.email.split('@')[0].title()}'s Private Workspace"
     full_name = "Sumith Bhatt (Master Admin)" if is_master else ""
     stored = repository.get_user_by_email(context.email)
     if stored and stored.get("fullName"):
@@ -439,17 +437,23 @@ def create_job(payload: JobCreateRequest, context: Context) -> dict[str, object]
 @app.get("/api/team/members")
 def list_team_members(context: Context) -> dict[str, object]:
     repository, _, _, _, _ = services.require()
-    is_master = context.email.strip().lower() == "sumithsbhatt@gmail.com"
+    is_master = is_master_admin(context.email)
+    if not is_master:
+        return {
+            "members": [],
+            "currentUserRole": "recruiter",
+        }
     return {
         "members": repository.list_team_members(context),
-        "currentUserRole": "owner" if is_master else context.role,
+        "currentUserRole": "owner",
     }
 
 
 @app.post("/api/team/invitations", status_code=201)
 def invite_team_member(payload: TeamInviteRequest, context: Context) -> dict[str, object]:
     repository, _, _, _, _ = services.require()
-    require_role(context, "owner", "admin")
+    if not is_master_admin(context.email):
+        raise AppError("Only the workspace administrator can invite team members.", 403, "permission_denied")
     member = repository.invite_team_member(context, payload.email, payload.role)
     repository.audit(
         context,
@@ -464,20 +468,19 @@ def invite_team_member(payload: TeamInviteRequest, context: Context) -> dict[str
 @app.post("/api/team/provision", status_code=201)
 def provision_team_member(payload: ProvisionUserRequest, context: Context) -> dict[str, object]:
     repository, _, _, _, email_service = services.require()
-    require_role(context, "owner", "admin")
+    if not is_master_admin(context.email):
+        raise AppError("Only the workspace administrator can provision user accounts.", 403, "permission_denied")
 
     alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
     temp_pass = payload.temporaryPassword or "".join(secrets.choice(alphabet) for _ in range(12))
 
-    org_name = "Resume Scanner Workspace"
-    if context.email:
-        org_name = f"{context.email.split('@')[0].title()}'s Workspace"
+    org_name = f"{payload.email.split('@')[0].title()}'s Private Workspace"
 
     member = repository.provision_user(
         context=context,
         email=payload.email,
         full_name=payload.fullName or "",
-        role=payload.role,
+        role="recruiter",
         temporary_password=temp_pass,
         organization_name=org_name,
     )
@@ -486,7 +489,7 @@ def provision_team_member(payload: ProvisionUserRequest, context: Context) -> di
         email=payload.email,
         full_name=payload.fullName or "",
         temporary_password=temp_pass,
-        role=payload.role,
+        role="recruiter",
         organization_name=org_name,
     )
 
@@ -495,7 +498,7 @@ def provision_team_member(payload: ProvisionUserRequest, context: Context) -> di
         "team.user_provisioned",
         "organization_member",
         member["userId"],
-        {"email": payload.email, "role": payload.role, "emailSent": email_sent, "emailMessage": email_message},
+        {"email": payload.email, "role": "recruiter", "emailSent": email_sent, "emailMessage": email_message},
     )
 
     return {
@@ -530,14 +533,10 @@ def master_bootstrap(payload: MasterBootstrapRequest) -> dict[str, object]:
 @app.delete("/api/team/members/{user_id}", status_code=204)
 def remove_team_member(user_id: str, context: Context) -> Response:
     repository, _, _, _, _ = services.require()
-    require_role(context, "owner", "admin")
+    if not is_master_admin(context.email):
+        raise AppError("Only the workspace administrator can remove team members.", 403, "permission_denied")
     if user_id == context.user_id:
         raise AppError("You cannot remove yourself from the workspace.", 409, "cannot_remove_self")
-    target_role = repository.membership_role(context.organization_id, user_id)
-    if target_role == "owner":
-        raise AppError("The workspace owner cannot be removed.", 409, "cannot_remove_owner")
-    if context.role == "admin" and target_role == "admin":
-        raise AppError("Only the workspace owner can remove an administrator.", 403, "permission_denied")
     if not repository.remove_team_member(context, user_id):
         raise AppError("Team member not found.", 404, "not_found")
     repository.audit(context, "team.member_removed", "organization_member", user_id)

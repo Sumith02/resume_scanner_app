@@ -239,52 +239,36 @@ class SupabaseRepository:
         return {"database": database, "schema": schema, "storage": storage}
 
     def ensure_workspace(self, user_id: str, email: str, full_name: str) -> tuple[str, str]:
-        profile = (
-            self.client.table("profiles").select("default_organization_id").eq("id", user_id).limit(1).execute().data
-        )
-        if profile and profile[0].get("default_organization_id"):
-            organization_id = str(profile[0]["default_organization_id"])
-        else:
-            organization_id = str(uuid.uuid4())
-            display_name = (full_name or email.split("@")[0] or "Recruiter")[:120]
-            try:
-                self.client.table("organizations").insert(
-                    {
-                        "id": organization_id,
-                        "name": f"{display_name}'s Workspace",
-                        "created_by": user_id,
-                    }
-                ).execute()
-                self.client.table("profiles").upsert(
-                    {
-                        "id": user_id,
-                        "email": email,
-                        "full_name": full_name or None,
-                        "default_organization_id": organization_id,
-                    }
-                ).execute()
-                self.client.table("organization_members").upsert(
-                    {
-                        "organization_id": organization_id,
-                        "user_id": user_id,
-                        "role": "owner",
-                    }
-                ).execute()
-            except Exception:
-                profile = (
-                    self.client.table("profiles")
-                    .select("default_organization_id")
-                    .eq("id", user_id)
-                    .limit(1)
-                    .execute()
-                    .data
-                )
-                if not profile or not profile[0].get("default_organization_id"):
-                    raise
-                organization_id = str(profile[0]["default_organization_id"])
-
         user_email = (email or "").strip().lower()
-        if user_email == "sumithsbhatt@gmail.com":
+        is_master = is_master_admin(user_email)
+
+        if is_master:
+            profile = (
+                self.client.table("profiles").select("default_organization_id").eq("id", user_id).limit(1).execute().data
+            )
+            if profile and profile[0].get("default_organization_id"):
+                organization_id = str(profile[0]["default_organization_id"])
+            else:
+                organization_id = str(uuid.uuid4())
+                try:
+                    self.client.table("organizations").insert(
+                        {
+                            "id": organization_id,
+                            "name": "Resume Scanner Master Workspace",
+                            "created_by": user_id,
+                        }
+                    ).execute()
+                    self.client.table("profiles").upsert(
+                        {
+                            "id": user_id,
+                            "email": email,
+                            "full_name": full_name or "Sumith Bhatt (Master Admin)",
+                            "default_organization_id": organization_id,
+                        }
+                    ).execute()
+                except Exception:
+                    pass
+
             try:
                 self.client.table("organization_members").upsert(
                     {
@@ -297,25 +281,85 @@ class SupabaseRepository:
                 pass
             return organization_id, "owner"
 
-        membership = (
-            self.client.table("organization_members")
-            .select("role")
-            .eq("organization_id", organization_id)
-            .eq("user_id", user_id)
+        # Standard Recruiter / User - ALWAYS assigned to their OWN private isolated workspace
+        display_name = (full_name or email.split("@")[0] or "Recruiter")[:120]
+
+        # 1. Check if user already owns their dedicated organization
+        owned_orgs = (
+            self.client.table("organizations")
+            .select("id")
+            .eq("created_by", user_id)
             .limit(1)
             .execute()
             .data
         )
-        if not membership:
-            raise AppError("You do not have access to this workspace.", 403, "workspace_access_denied")
-        return organization_id, str(membership[0].get("role", "recruiter"))
+        if owned_orgs and owned_orgs[0].get("id"):
+            organization_id = str(owned_orgs[0]["id"])
+        else:
+            organization_id = str(uuid.uuid4())
+            try:
+                self.client.table("organizations").insert(
+                    {
+                        "id": organization_id,
+                        "name": f"{display_name}'s Private Workspace",
+                        "created_by": user_id,
+                    }
+                ).execute()
+            except Exception:
+                retry = (
+                    self.client.table("organizations")
+                    .select("id")
+                    .eq("created_by", user_id)
+                    .limit(1)
+                    .execute()
+                    .data
+                )
+                if retry and retry[0].get("id"):
+                    organization_id = str(retry[0]["id"])
+
+        # 2. Ensure user profile points strictly to their own organization
+        try:
+            self.client.table("profiles").upsert(
+                {
+                    "id": user_id,
+                    "email": email,
+                    "full_name": full_name or None,
+                    "default_organization_id": organization_id,
+                }
+            ).execute()
+        except Exception:
+            pass
+
+        # 3. Ensure membership in their private workspace as recruiter
+        try:
+            self.client.table("organization_members").upsert(
+                {
+                    "organization_id": organization_id,
+                    "user_id": user_id,
+                    "role": "recruiter",
+                }
+            ).execute()
+        except Exception:
+            pass
+
+        # 4. Cleanup: Remove membership from any shared organization
+        try:
+            self.client.table("organization_members").delete().eq("user_id", user_id).neq("organization_id", organization_id).execute()
+        except Exception:
+            pass
+
+        return organization_id, "recruiter"
 
     def list_applications(self, context: RequestContext) -> list[dict[str, Any]]:
-        rows = (
+        query = (
             self.client.table("applications")
             .select("*")
             .eq("organization_id", context.organization_id)
-            .order("uploaded_at", desc=True)
+        )
+        if not is_master_admin(context.email):
+            query = query.eq("created_by", context.user_id)
+        rows = (
+            query.order("uploaded_at", desc=True)
             .execute()
             .data
         )
@@ -332,40 +376,54 @@ class SupabaseRepository:
         if not ids:
             return []
         changes = {**changes, "updated_at": utc_now()}
-        data = (
+        query = (
             self.client.table("applications")
             .update(changes)
             .eq("organization_id", context.organization_id)
             .in_("id", ids)
-            .execute()
-            .data
         )
+        if not is_master_admin(context.email):
+            query = query.eq("created_by", context.user_id)
+        data = query.execute().data
         return [application_from_row(row) for row in data]
 
     def delete_applications(self, ids: list[str], context: RequestContext) -> int:
         if not ids:
             return 0
-        rows = (
+        query = (
             self.client.table("applications")
             .select("id,file_path,stored_name")
             .eq("organization_id", context.organization_id)
             .in_("id", ids)
-            .execute()
-            .data
         )
+        if not is_master_admin(context.email):
+            query = query.eq("created_by", context.user_id)
+        rows = query.execute().data
+        valid_ids = [str(row["id"]) for row in rows]
+        if valid_ids:
+            del_query = (
+                self.client.table("applications")
+                .delete()
+                .eq("organization_id", context.organization_id)
+                .in_("id", valid_ids)
+            )
+            if not is_master_admin(context.email):
+                del_query = del_query.eq("created_by", context.user_id)
+            del_query.execute()
         paths = [str(row.get("file_path") or row.get("stored_name") or "") for row in rows]
-        self.client.table("applications").delete().eq("organization_id", context.organization_id).in_(
-            "id", ids
-        ).execute()
         self.delete_resume_objects([path for path in paths if path])
         return len(rows)
 
     def list_jobs(self, context: RequestContext) -> list[dict[str, Any]]:
-        rows = (
+        query = (
             self.client.table("jobs")
             .select("*")
             .eq("organization_id", context.organization_id)
-            .order("created_at", desc=True)
+        )
+        if not is_master_admin(context.email):
+            query = query.eq("created_by", context.user_id)
+        rows = (
+            query.order("created_at", desc=True)
             .execute()
             .data
         )
@@ -545,6 +603,8 @@ class SupabaseRepository:
         return bool(rows)
 
     def list_team_members(self, context: RequestContext) -> list[dict[str, Any]]:
+        if not is_master_admin(context.email):
+            return []
         memberships = (
             self.client.table("organization_members")
             .select("user_id,role,created_at")
@@ -696,17 +756,30 @@ class SupabaseRepository:
                     raise AppError("Could not provision user in authentication system.", 502, "provision_failed") from None
                 user_id = str(response.user.id)
 
+        user_org_id = str(uuid.uuid4())
+        display_name = (full_name or email.split("@")[0] or "Recruiter")[:120]
+        try:
+            self.client.table("organizations").insert(
+                {
+                    "id": user_org_id,
+                    "name": f"{display_name}'s Private Workspace",
+                    "created_by": user_id,
+                }
+            ).execute()
+        except Exception:
+            pass
+
         self.client.table("organization_members").upsert(
-            {"organization_id": context.organization_id, "user_id": user_id, "role": role}
+            {"organization_id": user_org_id, "user_id": user_id, "role": "recruiter"}
         ).execute()
         self.client.table("profiles").upsert(
-            {"id": user_id, "email": email, "full_name": full_name, "default_organization_id": context.organization_id}
+            {"id": user_id, "email": email, "full_name": full_name, "default_organization_id": user_org_id}
         ).execute()
         return {
             "userId": user_id,
             "email": email,
             "fullName": full_name or "Provisioned Member",
-            "role": role,
+            "role": "recruiter",
             "temporaryPassword": temporary_password,
             "mustChangePassword": True,
             "joinedAt": utc_now(),
@@ -1854,23 +1927,22 @@ class LocalRepository:
         data = self._read()
         users = data.setdefault("users", [])
         existing = next((u for u in users if u.get("email", "").lower() == email.lower()), None)
-        target_org = context.organization_id or "org-master"
-        if target_org == "local-organization":
-            target_org = "org-master"
+        user_id = existing["userId"] if existing else f"usr-{uuid.uuid4().hex[:10]}"
+        target_org = f"org-{user_id}"
         if existing:
             existing["organizationId"] = target_org
             existing["temporaryPassword"] = temporary_password
             existing["mustChangePassword"] = True
-            existing["role"] = role
+            existing["role"] = "recruiter"
             existing["fullName"] = full_name or existing.get("fullName", "")
             user = existing
         else:
             user = {
-                "userId": f"usr-{uuid.uuid4().hex[:10]}",
+                "userId": user_id,
                 "organizationId": target_org,
                 "email": email,
                 "fullName": full_name or "Provisioned Member",
-                "role": role,
+                "role": "recruiter",
                 "temporaryPassword": temporary_password,
                 "mustChangePassword": True,
                 "joinedAt": utc_now(),

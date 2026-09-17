@@ -251,8 +251,9 @@ def test_role_based_permissions_and_scoping(tmp_path: Path, monkeypatch):
     me_recruiter = client.get("/api/me", headers=recruiter_auth)
     assert me_recruiter.status_code == 200
     assert me_recruiter.json()["user"]["role"] == "recruiter"
-    # Belongs to same organization as admin
-    assert me_recruiter.json()["workspace"]["id"] == me_admin.json()["workspace"]["id"]
+    # Has their own dedicated private workspace, completely isolated from admin
+    assert me_recruiter.json()["workspace"]["id"] != me_admin.json()["workspace"]["id"]
+    assert me_recruiter.json()["workspace"]["id"].startswith("org-usr-")
 
     # 4. Recruiter tries to provision another user - must be 403 Forbidden!
     forbidden_prov = client.post(
@@ -261,6 +262,90 @@ def test_role_based_permissions_and_scoping(tmp_path: Path, monkeypatch):
         json={"email": "hacker@test.com", "role": "admin"},
     )
     assert forbidden_prov.status_code == 403
+
+    # 5. Recruiter tries to list team members - returns empty list and recruiter role
+    team_res = client.get("/api/team/members", headers=recruiter_auth)
+    assert team_res.status_code == 200
+    assert team_res.json()["members"] == []
+    assert team_res.json()["currentUserRole"] == "recruiter"
+
+
+def test_two_admin_provisioned_users_have_zero_data_leakage(tmp_path: Path, monkeypatch):
+    client = _setup_test_env(tmp_path, monkeypatch)
+    admin_auth = {"Authorization": "Bearer local:sumithsbhatt@gmail.com"}
+
+    # Admin provisions User 1 and User 2
+    prov1 = client.post(
+        "/api/team/provision",
+        headers=admin_auth,
+        json={"email": "user1@company.com", "fullName": "Recruiter One", "role": "recruiter"},
+    )
+    assert prov1.status_code == 201
+
+    prov2 = client.post(
+        "/api/team/provision",
+        headers=admin_auth,
+        json={"email": "user2@company.com", "fullName": "Recruiter Two", "role": "recruiter"},
+    )
+    assert prov2.status_code == 201
+
+    user1_auth = {"Authorization": "Bearer local:user1@company.com"}
+    user2_auth = {"Authorization": "Bearer local:user2@company.com"}
+
+    me1 = client.get("/api/me", headers=user1_auth).json()
+    me2 = client.get("/api/me", headers=user2_auth).json()
+    me_admin = client.get("/api/me", headers=admin_auth).json()
+
+    # Both users must have completely different workspaces and roles
+    assert me1["workspace"]["id"] != me2["workspace"]["id"]
+    assert me1["workspace"]["id"] != me_admin["workspace"]["id"]
+    assert me2["workspace"]["id"] != me_admin["workspace"]["id"]
+    assert me1["user"]["role"] == "recruiter"
+    assert me2["user"]["role"] == "recruiter"
+
+    # User 1 uploads a resume
+    up1 = client.post(
+        "/api/applications",
+        headers=user1_auth,
+        data={"role": "Cloud Architect", "source": "User 1 Upload"},
+        files={
+            "resumes": (
+                "alice.txt",
+                b"Alice Walker\nEmail: alice@example.com\nAWS Kubernetes Terraform\n7 years experience.",
+                "text/plain",
+            )
+        },
+    )
+    assert up1.status_code == 201
+
+    # User 2 uploads a resume
+    up2 = client.post(
+        "/api/applications",
+        headers=user2_auth,
+        data={"role": "Mobile Developer", "source": "User 2 Upload"},
+        files={
+            "resumes": (
+                "bob.txt",
+                b"Bob Roberts\nEmail: bob@example.com\nFlutter Dart iOS\n4 years experience.",
+                "text/plain",
+            )
+        },
+    )
+    assert up2.status_code == 201
+
+    # User 1 sees ONLY Alice
+    u1_cands = client.get("/api/candidates", headers=user1_auth).json()["candidates"]
+    assert len(u1_cands) == 1
+    assert u1_cands[0]["canonicalName"] == "Alice Walker"
+
+    # User 2 sees ONLY Bob
+    u2_cands = client.get("/api/candidates", headers=user2_auth).json()["candidates"]
+    assert len(u2_cands) == 1
+    assert u2_cands[0]["canonicalName"] == "Bob Roberts"
+
+    # Admin sees NEITHER Alice nor Bob in their candidates
+    admin_cands = client.get("/api/candidates", headers=admin_auth).json()["candidates"]
+    assert not any(c["canonicalName"] in ("Alice Walker", "Bob Roberts") for c in admin_cands)
 
 
 def test_strict_per_user_isolation(tmp_path: Path, monkeypatch):
