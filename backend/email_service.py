@@ -75,7 +75,7 @@ class EmailService:
         html_content = (
             f"<div style='font-family: Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 28px; border: 1px solid #e2e8f0; border-radius: 8px;'>"
             f"<div style='margin-bottom: 20px;'>"
-            f"<strong style='font-size: 20px; color: #0f172a;'>NEXERRA TALENT OS</strong>"
+            f"<strong style='font-size: 20px; color: #0f172a;'>RESUME SCANNER</strong>"
             f"</div>"
             f"<p>Hello <strong>{html.escape(display_name)}</strong>,</p>"
             f"<p>Your account has been created by an administrator on <strong>{html.escape(organization_name)}</strong> with the role of <strong>{html.escape(role_label)}</strong>.</p>"
@@ -89,7 +89,7 @@ class EmailService:
             f"</div>"
             f"<p style='font-size: 13px; color: #64748b;'>If you have questions, please reach out directly to your organization administrator.</p>"
             f"<hr style='border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;' />"
-            f"<p style='font-size: 11px; color: #94a3b8;'>© 2026 Nexerra Talent OS. Automated Account Security.</p>"
+            f"<p style='font-size: 11px; color: #94a3b8;'>© 2026 Resume Scanner. Automated Account Security.</p>"
             f"</div>"
         )
 

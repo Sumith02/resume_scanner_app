@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: nexerra-talent-os
+    name: resume-scanner-app
     runtime: docker
     plan: free # or starter
     region: oregon # or ohio, frankfurt, singapore

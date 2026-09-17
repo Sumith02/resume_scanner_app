@@ -770,7 +770,7 @@ class SupabaseRepository:
             if not org_id:
                 new_org = (
                     self.client.table("organizations")
-                    .insert({"name": "Nexerra Enterprise", "slug": "nexerra-enterprise"})
+                    .insert({"name": "Resume Scanner Enterprise", "slug": "resume-scanner-enterprise"})
                     .execute()
                     .data
                 )

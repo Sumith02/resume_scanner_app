@@ -273,7 +273,7 @@ function MandatoryPasswordChangeGuard({
             <Zap size={20} color="#ffffff" />
           </div>
           <div>
-            <div style={{ fontSize: "16px", fontWeight: 800 }}>NEXERRA TALENT OS</div>
+            <div style={{ fontSize: "16px", fontWeight: 800 }}>RESUME SCANNER</div>
             <div style={{ fontSize: "10px", color: "#60a5fa", fontWeight: 700, letterSpacing: "0.1em" }}>
               FIRST-LOGIN SECURITY
             </div>
@@ -477,7 +477,7 @@ export default function App() {
     {
       id: "msg-0",
       role: "assistant",
-      content: "Hello! I am your **Nexerra Recruiter Copilot**. Ask me to discover overlooked candidates, compare talent, explain match scores, or build technical interview guides.",
+      content: "Hello! I am your **Resume Scanner Recruiter Copilot**. Ask me to discover overlooked candidates, compare talent, explain match scores, or build technical interview guides.",
       actionSuggestions: [
         "Rediscover overlooked candidates",
         "Compare top 2 candidates",
@@ -566,7 +566,7 @@ export default function App() {
         setRediscoveryJobId(jobList[0].id);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load Nexerra workspace.");
+      setError(err instanceof Error ? err.message : "Failed to load Resume Scanner workspace.");
     } finally {
       setLoading(false);
     }
@@ -769,7 +769,7 @@ export default function App() {
             <Zap size={26} color="#fff" />
           </div>
           <Loader2 className="spinning" size={28} color="#38bdf8" />
-          <span style={{ fontSize: "14px", color: "#94a3b8" }}>Connecting to Nexerra Talent OS...</span>
+          <span style={{ fontSize: "14px", color: "#94a3b8" }}>Connecting to Resume Scanner...</span>
         </div>
       </div>
     );
@@ -825,9 +825,9 @@ export default function App() {
             <Zap size={22} />
           </div>
           <div className="brand-copy">
-            <strong>NEXERRA</strong>
+            <strong>RESUME SCANNER</strong>
             <span style={{ fontSize: "11px", letterSpacing: "0.08em", color: "#94a3b8" }}>
-              TALENT OS V11
+              TALENT INTELLIGENCE
             </span>
           </div>
         </div>
@@ -1010,7 +1010,7 @@ export default function App() {
                   setProcessingQueue([]);
                   setAgencyClients([]);
                   setReport(emptyReport);
-                  setNotice("Signed out of Nexerra Talent OS.");
+                  setNotice("Signed out of Resume Scanner.");
                 }}
                 title="Sign Out"
                 style={{
@@ -1095,7 +1095,7 @@ export default function App() {
             <div style={{ display: "grid", placeItems: "center", minHeight: "50vh" }}>
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px" }}>
                 <Loader2 className="spinning" size={32} color="var(--brand)" />
-                <span style={{ fontSize: "14px", color: "var(--muted)" }}>Connecting to Nexerra Talent OS...</span>
+                <span style={{ fontSize: "14px", color: "var(--muted)" }}>Connecting to Resume Scanner...</span>
               </div>
             </div>
           ) : (
@@ -1492,7 +1492,7 @@ function CommandCenterView({
     <div className="command-center-view">
       <div className="command-center-hero">
         <div className="cc-hero-text">
-          <h1>NEXERRA TALENT OS</h1>
+          <h1>RESUME SCANNER</h1>
           <p>Your company's private talent intelligence layer. Discover, evaluate, and rediscover talent.</p>
         </div>
         <button
@@ -1562,10 +1562,10 @@ function CommandCenterView({
         </div>
       </div>
 
-      {/* DYNAMIC NEXERRA INSIGHT CALLOUT */}
+      {/* DYNAMIC RESUME SCANNER INSIGHT CALLOUT */}
       <div className="insight-callout-card">
         <div className="insight-callout-text">
-          <h4>NEXERRA TALENT INSIGHT</h4>
+          <h4>RESUME SCANNER TALENT INSIGHT</h4>
           <p>
             {totalTalent > 0 ? (
               <>
@@ -3177,7 +3177,7 @@ function IntakeCenterView({
                 </div>
                 <h4 style={{ margin: "0 0 6px", fontSize: "16px" }}>Connect Ingestion Mailbox</h4>
                 <p style={{ margin: "0 0 18px", color: "#64748b", fontSize: "13px", maxWidth: "520px", marginInline: "auto", lineHeight: 1.5 }}>
-                  Connect your team's resume receiving mailbox (e.g. <code>careers@yourcompany.com</code> or recruiter inbox) via secure Google OAuth2. Nexerra will scan incoming emails and automatically extract candidate resumes into your database.
+                  Connect your team's resume receiving mailbox (e.g. <code>careers@yourcompany.com</code> or recruiter inbox) via secure Google OAuth2. Resume Scanner will scan incoming emails and automatically extract candidate resumes into your database.
                 </p>
                 <button
                   type="button"
@@ -3723,7 +3723,7 @@ We look forward to reconnecting with you!
 
 Best regards,
 Talent Acquisition Team
-Nexerra Talent OS`
+Resume Scanner`
       );
     } else if (templateKey === "rediscovery") {
       setTitle(`Talent Rediscovery: ${targetJobTitle}`);
@@ -3739,11 +3739,11 @@ Would you be open to a quick 15-minute conversation this week?
 
 Warm regards,
 Recruiting Team
-Nexerra Talent OS`
+Resume Scanner`
       );
     } else if (templateKey === "checkin") {
       setTitle(`Talent Network Check-In: ${targetJobTitle}`);
-      setSubject(`Checking in from the Nexerra Talent Team`);
+      setSubject(`Checking in from the Resume Scanner Talent Team`);
       setBody(
 `Hi {{name}},
 
@@ -4495,7 +4495,7 @@ Talent Team`
               <strong>Subject:</strong> {previewSubject}
             </div>
             <div style={{ fontSize: "12px", color: "#64748b" }}>
-              <strong>From:</strong> Nexerra Talent OS &lt;careers@company.com&gt;
+              <strong>From:</strong> Resume Scanner &lt;careers@company.com&gt;
             </div>
           </div>
 
@@ -4910,7 +4910,7 @@ function SettingsView({
                   SMTP_PORT = 587<br />
                   SMTP_USER = sumithsbhatt@gmail.com<br />
                   SMTP_PASSWORD = [16-character Google App Password]<br />
-                  SMTP_FROM = Nexerra Talent OS &lt;sumithsbhatt@gmail.com&gt;
+                  SMTP_FROM = Resume Scanner &lt;sumithsbhatt@gmail.com&gt;
                 </div>
                 <div style={{ fontSize: "11px", color: "#64748b", marginBottom: "10px" }}>
                   * Generate a 16-char Google App Password at: <em>Google Account &gt; Security &gt; 2-Step Verification &gt; App Passwords</em>.
@@ -4930,7 +4930,7 @@ function SettingsView({
                   }}
                 >
                   RESEND_API_KEY = re_...<br />
-                  MAIL_FROM = Nexerra &lt;onboarding@resend.dev&gt;
+                  MAIL_FROM = Resume Scanner &lt;onboarding@resend.dev&gt;
                 </div>
               </div>
             )}
@@ -5072,8 +5072,8 @@ function SettingsView({
                       <a
                         href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(
                           provisionNotice.details.member.email
-                        )}&su=${encodeURIComponent("Your Nexerra Talent OS Account Credentials")}&body=${encodeURIComponent(
-                          `Hello ${provisionNotice.details.member.fullName || ""},\n\nYour account has been created on Nexerra Talent OS.\n\nPortal URL: ${portalUrl}\nEmail: ${provisionNotice.details.member.email}\nTemporary Password: ${provisionNotice.details.temporaryPassword}\n\nSecurity Requirement: You will be required to create your own secure, permanent password immediately upon your first login.\n\nBest regards,\nWorkspace Administrator`
+                        )}&su=${encodeURIComponent("Your Resume Scanner Account Credentials")}&body=${encodeURIComponent(
+                          `Hello ${provisionNotice.details.member.fullName || ""},\n\nYour account has been created on Resume Scanner.\n\nPortal URL: ${portalUrl}\nEmail: ${provisionNotice.details.member.email}\nTemporary Password: ${provisionNotice.details.temporaryPassword}\n\nSecurity Requirement: You will be required to create your own secure, permanent password immediately upon your first login.\n\nBest regards,\nWorkspace Administrator`
                         )}`}
                         target="_blank"
                         rel="noreferrer"
@@ -5099,8 +5099,8 @@ function SettingsView({
                       <a
                         href={`mailto:${encodeURIComponent(
                           provisionNotice.details.member.email
-                        )}?subject=${encodeURIComponent("Your Nexerra Talent OS Account Credentials")}&body=${encodeURIComponent(
-                          `Hello ${provisionNotice.details.member.fullName || ""},\n\nYour account has been created on Nexerra Talent OS.\n\nPortal URL: ${portalUrl}\nEmail: ${provisionNotice.details.member.email}\nTemporary Password: ${provisionNotice.details.temporaryPassword}\n\nSecurity Requirement: You will be required to create your own secure, permanent password immediately upon your first login.\n\nBest regards,\nWorkspace Administrator`
+                        )}?subject=${encodeURIComponent("Your Resume Scanner Account Credentials")}&body=${encodeURIComponent(
+                          `Hello ${provisionNotice.details.member.fullName || ""},\n\nYour account has been created on Resume Scanner.\n\nPortal URL: ${portalUrl}\nEmail: ${provisionNotice.details.member.email}\nTemporary Password: ${provisionNotice.details.temporaryPassword}\n\nSecurity Requirement: You will be required to create your own secure, permanent password immediately upon your first login.\n\nBest regards,\nWorkspace Administrator`
                         )}`}
                         style={{
                           flex: "1 1 140px",

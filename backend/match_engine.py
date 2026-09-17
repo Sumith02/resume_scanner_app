@@ -62,7 +62,7 @@ def compute_multidimensional_match(
     candidate: dict[str, Any],
     job: dict[str, Any],
 ) -> dict[str, Any]:
-    """Calculates explainable multi-dimensional score and evidence breakdown for Nexerra V11."""
+    """Calculates explainable multi-dimensional score and evidence breakdown for Resume Scanner."""
     job_reqs = parse_job_requirements(job.get("title", ""), job.get("description", ""))
     required = job_reqs["requiredSkills"]
     preferred = job_reqs["preferredSkills"]

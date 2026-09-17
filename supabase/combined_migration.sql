@@ -395,7 +395,7 @@ comment on column public.gmail_connections.refresh_token is
   'Fernet-encrypted OAuth refresh token. Never store plaintext.';
 comment on table public.audit_logs is
   'Append-only security and operational audit trail written by the API.';
--- NEXERRA TALENT OS — V11 Schema Migration
+-- RESUME SCANNER — V11 Schema Migration
 -- Builds the private talent intelligence layer, candidate/application separation,
 -- multi-dimensional matching, talent rediscovery, talent pools, and copilot storage.
 

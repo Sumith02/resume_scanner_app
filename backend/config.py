@@ -122,9 +122,9 @@ def get_settings() -> Settings:
     google_redirect_uri = _first("GOOGLE_REDIRECT_URI") or f"{app_origin}/api/integrations/gmail/callback"
 
     # Derive 32+ char fallback secrets from supabase_secret_key if not explicitly configured in env
-    fallback_seed = supabase_secret_key or supabase_url or "nexerra-talent-os-state-encryption-key-seed"
-    fallback_state_secret = hashlib.sha256(f"nexerra-state-{fallback_seed}".encode()).hexdigest()
-    fallback_encryption_key = hashlib.sha256(f"nexerra-token-{fallback_seed}".encode()).hexdigest()
+    fallback_seed = supabase_secret_key or supabase_url or "resume-scanner-state-encryption-key-seed"
+    fallback_state_secret = hashlib.sha256(f"resume-scanner-state-{fallback_seed}".encode()).hexdigest()
+    fallback_encryption_key = hashlib.sha256(f"resume-scanner-token-{fallback_seed}".encode()).hexdigest()
 
     oauth_state_secret = (
         _first("RESUMEFLOW_OAUTH_STATE_SECRET", "OAUTH_STATE_SECRET", "GOOGLE_OAUTH_STATE_SECRET")

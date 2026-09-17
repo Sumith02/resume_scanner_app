@@ -69,7 +69,7 @@ from .repository import Repository, build_repository, safe_file_name, utc_now
 from .resume_service import ResumeService
 from .search_engine import execute_hybrid_search
 
-logger = logging.getLogger("nexerra")
+logger = logging.getLogger("resume_scanner")
 
 
 class Services:
@@ -102,7 +102,7 @@ class Services:
 settings = get_settings()
 services = Services(settings)
 app = FastAPI(
-    title="Nexerra Talent OS API",
+    title="Resume Scanner API",
     version="11.0.0",
     docs_url="/api/docs" if not settings.production else None,
     redoc_url=None,
@@ -189,7 +189,7 @@ def health() -> dict[str, object]:
     return {
         "ok": not runtime_errors,
         "status": "healthy" if not runtime_errors else "degraded",
-        "service": "nexerra-talent-os-api",
+        "service": "resume-scanner-api",
         "version": "11.0.0",
         "environment": settings.environment,
         "checks": {
@@ -451,7 +451,7 @@ def provision_team_member(payload: ProvisionUserRequest, context: Context) -> di
     alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
     temp_pass = payload.temporaryPassword or "".join(secrets.choice(alphabet) for _ in range(12))
 
-    org_name = "Nexerra Workspace"
+    org_name = "Resume Scanner Workspace"
     if context.email:
         org_name = f"{context.email.split('@')[0].title()}'s Workspace"
 
@@ -762,7 +762,7 @@ def _build_report(applications: list[dict[str, Any]]) -> dict[str, object]:
 
 
 # ==========================================
-# NEXERRA TALENT OS V11 ENDPOINTS
+# RESUME SCANNER ENDPOINTS
 # ==========================================
 
 

@@ -1,4 +1,4 @@
--- NEXERRA TALENT OS — V11 Schema Migration
+-- RESUME SCANNER — V11 Schema Migration
 -- Builds the private talent intelligence layer, candidate/application separation,
 -- multi-dimensional matching, talent rediscovery, talent pools, and copilot storage.
 

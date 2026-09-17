@@ -218,7 +218,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <ShieldCheck size={16} color="#ffffff" />
             </div>
             <span style={{ fontSize: "12px", fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: "#60a5fa" }}>
-              NEXERRA TALENT OS
+              RESUME SCANNER
             </span>
           </div>
 

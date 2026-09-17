@@ -1,4 +1,4 @@
--- NEXERRA TALENT OS by Vithsutra Technologies Pvt Ltd
+-- RESUME SCANNER
 -- Migration 005: Gmail Sync Watermark and Checkpoint Tracking
 
 alter table public.gmail_connections

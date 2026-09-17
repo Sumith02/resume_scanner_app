@@ -293,9 +293,9 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
               <Zap size={24} color="#ffffff" />
             </div>
             <div>
-              <div style={{ fontSize: "20px", fontWeight: 800, letterSpacing: "-0.02em" }}>NEXERRA</div>
+              <div style={{ fontSize: "20px", fontWeight: 800, letterSpacing: "-0.02em" }}>RESUME SCANNER</div>
               <div style={{ fontSize: "11px", letterSpacing: "0.14em", color: "#60a5fa", fontWeight: 700 }}>
-                TALENT OS V11
+                AI TALENT OS
               </div>
             </div>
           </div>
@@ -373,7 +373,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthSuccess }) => {
         </div>
 
         <div style={{ fontSize: "12px", color: "#64748b", marginTop: "32px" }}>
-          © 2026 Nexerra Talent OS. Enterprise Candidate Intelligence.
+          © 2026 Resume Scanner. Enterprise Candidate Intelligence.
         </div>
       </div>
 

@@ -106,7 +106,7 @@ def test_natural_language_search_and_copilot():
 
     # Test greeting
     copilot_hello = process_copilot_message("Hello", candidates, [])
-    assert "Welcome to Nexerra" in copilot_hello["content"]
+    assert "Welcome to Resume Scanner" in copilot_hello["content"]
 
     # Test empty candidate pool
     copilot_empty = process_copilot_message("Find Python devs", [], [])

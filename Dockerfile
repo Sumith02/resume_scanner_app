@@ -1,4 +1,4 @@
-# Multi-stage Dockerfile for Nexerra Talent OS V11
+# Multi-stage Dockerfile for Resume Scanner
 # Stage 1: Build Frontend Assets
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app

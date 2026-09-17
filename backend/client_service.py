@@ -1,4 +1,4 @@
-"""Nexerra Talent OS V11 - Agency Multi-Client Recruitment OS Service
+"""Resume Scanner - Agency Multi-Client Recruitment OS Service
 Provides multi-tenant client account management, recruiter allocation,
 workload distribution, and cross-client candidate rediscovery.
 """

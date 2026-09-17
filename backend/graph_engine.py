@@ -1,4 +1,4 @@
-"""Nexerra Talent OS V11 - Talent Graph Engine
+"""Resume Scanner - Talent Graph Engine
 Constructs multi-relational talent knowledge graphs connecting Candidates,
 Skills, Experience Roles, Alumni Companies, Education, Locations,
 Jobs Applied, Interview History, and Similar Candidate clusters.

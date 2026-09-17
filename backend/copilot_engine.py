@@ -30,7 +30,7 @@ def process_copilot_message(
             return {
                 "role": "assistant",
                 "content": (
-                    "### 🤖 Welcome to Nexerra Recruiter Copilot\n\n"
+                    "### 🤖 Welcome to Resume Scanner Recruiter Copilot\n\n"
                     "I am your AI recruitment intelligence assistant, grounded directly in your private candidate database.\n\n"
                     "**Things you can ask me:**\n"
                     "- 🔍 **Talent Search**: *'Find senior Python developers with AWS in Bengaluru'*\n"
@@ -80,7 +80,7 @@ def process_copilot_message(
                     f"  *Key Strengths:* {', '.join(list(diff_skills)[:3]).title() or ', '.join(c1_skills) or 'Core engineering competencies'}.\n"
                     f"- **{c2.get('canonicalName', 'Candidate 2')}** ({c2.get('experienceYears', 0) or 0:g} yrs, {c2.get('location', 'Remote')}):\n"
                     f"  *Key Strengths:* {', '.join(c2_skills) or 'Engineering & system architecture'}.\n\n"
-                    f"**Nexerra Recommendation:** {c1.get('canonicalName', 'Candidate 1')} demonstrates strong immediate alignment "
+                    f"**Resume Scanner Recommendation:** {c1.get('canonicalName', 'Candidate 1')} demonstrates strong immediate alignment "
                     f"based on verified resume evidence."
                 )
                 return {

@@ -386,7 +386,7 @@ export function AgencyMultiClientView({
               </div>
               <p style={{ margin: 0, fontSize: "13px", color: "#ccfbf1", maxWidth: "720px", lineHeight: "1.5" }}>
                 Suppose <strong>CLIENT A</strong> received 8,200 applications and unhired 45 qualified React engineers.
-                When <strong>CLIENT B</strong> opens a new vacancy for <em>Senior React Developer</em>, Nexerra instantly searches your existing
+                When <strong>CLIENT B</strong> opens a new vacancy for <em>Senior React Developer</em>, Resume Scanner instantly searches your existing
                 candidate memory, matching qualified talent immediately without spending on job boards.
               </p>
             </div>

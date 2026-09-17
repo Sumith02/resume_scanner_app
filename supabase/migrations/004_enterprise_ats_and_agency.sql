@@ -1,4 +1,4 @@
--- NEXERRA TALENT OS by Vithsutra Technologies Pvt Ltd
+-- RESUME SCANNER
 -- Migration 004: Enterprise ATS, Agency Multi-Client OS, Interview Scorecards, Offers, and Compliance
 
 -- 1. Interview Plans & Scorecards
