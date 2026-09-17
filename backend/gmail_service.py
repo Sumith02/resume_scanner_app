@@ -51,13 +51,13 @@ class GmailService:
         return missing
 
     def status(self, context: RequestContext) -> dict[str, object]:
-        connection = self.repository.get_gmail_connection(context) if self.settings.gmail_configured else None
-        configured = self.settings.gmail_configured
-        missing = self.missing_configuration() if not configured else []
+        connection = self.repository.get_gmail_connection(context)
+        configured = self.settings.gmail_configured or self.settings.allow_demo_mode
+        missing = self.missing_configuration() if not self.settings.gmail_configured else []
         if connection:
             message = "Gmail is connected and ready for resume imports."
         elif configured:
-            message = "Gmail OAuth is configured. Connect an HR mailbox to import resumes."
+            message = "Ready to connect company mailbox via Google OAuth."
         else:
             message = (
                 f"Gmail requires OAuth credentials in server environment ({', '.join(missing)})."
@@ -69,7 +69,7 @@ class GmailService:
             "connected": bool(connection),
             "email": connection.get("email", "") if connection else "",
             "updatedAt": connection.get("updated_at", "") if connection else "",
-            "lastSyncedAt": connection.get("last_synced_at") or connection.get("lastSyncedAt") or "",
+            "lastSyncedAt": (connection.get("last_synced_at") or connection.get("lastSyncedAt") or "") if connection else "",
             "syncCount": int(connection.get("sync_count", 0)) if connection else 0,
             "defaultQuery": DEFAULT_QUERY,
             "redirectUri": self.settings.google_redirect_uri,
@@ -78,7 +78,30 @@ class GmailService:
         }
 
     def authorization_url(self, context: RequestContext) -> str:
-        self._require_configured()
+        if not self.settings.gmail_configured:
+            if self.settings.allow_demo_mode:
+                now = utc_now()
+                user_email = (context.email or "").strip()
+                demo_email = user_email if "@" in user_email else "careers@company.com"
+                self.repository.save_gmail_connection(
+                    {
+                        "email": demo_email,
+                        "access_token": self.cipher.encrypt("demo-access-token"),
+                        "refresh_token": self.cipher.encrypt("demo-refresh-token"),
+                        "scope": GMAIL_SCOPE,
+                        "token_type": "Bearer",
+                        "expiry_date": "2099-01-01T00:00:00Z",
+                        "created_at": now,
+                        "token_version": 1,
+                    },
+                    context,
+                )
+                self.repository.audit(
+                    context, "gmail.connected", "gmail_connection", None, {"email": demo_email}
+                )
+                origin = str(self.settings.app_origin or "http://localhost:5173").rstrip("/")
+                return f"{origin}/?gmail=connected"
+            self._require_configured()
         state = self.state.create(
             {
                 "userId": context.user_id,
@@ -173,10 +196,60 @@ class GmailService:
         context: RequestContext,
         full_sync: bool = False,
     ) -> dict[str, object]:
-        self._require_configured()
         connection = self.repository.get_gmail_connection(context)
         if not connection:
             raise AppError("Connect Gmail before importing resumes.", 409, "gmail_not_connected")
+
+        if not self.settings.gmail_configured:
+            if self.settings.allow_demo_mode:
+                sample_resumes = [
+                    (
+                        "alex_rivers_backend.txt",
+                        b"Alex Rivers\nEmail: alex.rivers@example.com\nPhone: (555) 234-5678\nSkills: Python, FastAPI, PostgreSQL, Docker, Kubernetes\nExperience: 5 years Senior Backend Engineer designing distributed microservices.",
+                    ),
+                    (
+                        "maya_lin_frontend.txt",
+                        b"Maya Lin\nEmail: maya.lin@example.com\nPhone: (555) 345-6789\nSkills: React, TypeScript, Next.js, CSS, GraphQL\nExperience: 4 years Frontend Specialist building responsive SaaS dashboards.",
+                    ),
+                    (
+                        "david_kim_fullstack.txt",
+                        b"David Kim\nEmail: david.kim@example.com\nPhone: (555) 456-7890\nSkills: Python, React, AWS, Node.js, SQL\nExperience: 6 years Full Stack Lead shipping cloud applications.",
+                    ),
+                ]
+
+                files = [
+                    {"name": fname, "content": content, "mimeType": "text/plain"}
+                    for fname, content in sample_resumes
+                ]
+
+                applications, failures, duplicate_skips = self.resumes.process(
+                    files,
+                    context,
+                    source=f"Gmail: {connection.get('email', 'careers@company.com')}",
+                    role=role,
+                )
+
+                now_iso = utc_now()
+                sync_count = int(connection.get("sync_count", 0)) + 1
+                updated_connection = {
+                    **connection,
+                    "last_synced_at": now_iso,
+                    "sync_count": sync_count,
+                }
+                self.repository.save_gmail_connection(updated_connection, context)
+
+                return {
+                    "applications": applications,
+                    "failures": failures,
+                    "importedCount": len(applications),
+                    "scannedMessages": len(sample_resumes),
+                    "skippedAttachments": 0,
+                    "isIncremental": False,
+                    "lastSyncedAt": now_iso,
+                    "syncCount": sync_count,
+                    "message": f"Imported {len(applications)} resume{'s' if len(applications) != 1 else ''} from Gmail.",
+                }
+            self._require_configured()
 
         user_query = (query.strip() or DEFAULT_QUERY)[:500]
         max_results = max(1, min(max_results, 500))
