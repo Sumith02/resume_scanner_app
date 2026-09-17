@@ -18,6 +18,15 @@ from .models import RequestContext
 from .talent_engine import extract_candidate_intelligence
 
 
+MASTER_ADMIN_EMAILS = {"sumithsbhatt@gmail.com"}
+
+
+def is_master_admin(email: str | None) -> bool:
+    if not email:
+        return False
+    return email.strip().lower() in MASTER_ADMIN_EMAILS
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
@@ -1440,6 +1449,8 @@ class LocalRepository:
                         "id": "pool-1",
                         "name": "Python & Backend Specialists",
                         "description": "High-intent backend engineers with microservices expertise",
+                        "createdBy": "usr-master",
+                        "ownerEmail": "sumithsbhatt@gmail.com",
                         "createdAt": utc_now(),
                         "memberCount": 0,
                     },
@@ -1447,6 +1458,8 @@ class LocalRepository:
                         "id": "pool-2",
                         "name": "Senior React & Fullstack",
                         "description": "Client-side engineers with 4+ years in modern React / TypeScript",
+                        "createdBy": "usr-master",
+                        "ownerEmail": "sumithsbhatt@gmail.com",
                         "createdAt": utc_now(),
                         "memberCount": 0,
                     },
@@ -1454,6 +1467,8 @@ class LocalRepository:
                         "id": "pool-3",
                         "name": "Silver Medalists",
                         "description": "Final stage finalists suitable for instant reactivation",
+                        "createdBy": "usr-master",
+                        "ownerEmail": "sumithsbhatt@gmail.com",
                         "createdAt": utc_now(),
                         "memberCount": 0,
                     },
@@ -1461,6 +1476,8 @@ class LocalRepository:
                         "id": "pool-4",
                         "name": "Bengaluru Tech Hub",
                         "description": "Local engineering talent available for hybrid or on-site roles",
+                        "createdBy": "usr-master",
+                        "ownerEmail": "sumithsbhatt@gmail.com",
                         "createdAt": utc_now(),
                         "memberCount": 0,
                     },
@@ -1531,6 +1548,8 @@ class LocalRepository:
                         candidates_map[c_id] = {
                             "id": c_id,
                             "organizationId": app.get("organizationId") or "org-master",
+                            "createdBy": app.get("createdBy") or "usr-master",
+                            "ownerEmail": app.get("ownerEmail") or "sumithsbhatt@gmail.com",
                             "canonicalName": app.get("candidateName", "Unknown Candidate"),
                             "blindId": intel["blindId"],
                             "email": app.get("email", ""),
@@ -1575,19 +1594,41 @@ class LocalRepository:
             temporary.write_text(json.dumps(data, indent=2), encoding="utf-8")
             temporary.replace(self.data_file)
 
+    def _is_owned_by_user(self, item: dict[str, Any], context: RequestContext) -> bool:
+        target_user = context.user_id
+        target_email = (context.email or "").strip().lower()
+
+        item_created_by = item.get("createdBy")
+        item_owner_email = (item.get("ownerEmail") or "").strip().lower()
+
+        # Master admin / default local testing user (usr-master / local-user)
+        if is_master_admin(target_email) or target_user in ("usr-master", "local-user"):
+            if item_created_by in ("usr-master", "local-user", None) and (
+                not item_owner_email or item_owner_email in ("sumithsbhatt@gmail.com", "admin@resumescanner.ai")
+            ):
+                return True
+            if item_owner_email == "sumithsbhatt@gmail.com":
+                return True
+            return False
+
+        # Strict isolation for standard recruiter users
+        if target_user and item_created_by == target_user:
+            return True
+        if target_email and item_owner_email == target_email:
+            return True
+        return False
+
     def list_applications(self, context: RequestContext) -> list[dict[str, Any]]:
         apps = self._read()["applications"]
-        target_org = context.organization_id or "org-master"
-        if target_org == "local-organization":
-            target_org = "org-master"
-        apps = [a for a in apps if (a.get("organizationId") or "org-master") == target_org]
+        apps = [a for a in apps if self._is_owned_by_user(a, context)]
         return sorted(apps, key=lambda item: item.get("uploadedAt", ""), reverse=True)
 
     def insert_applications(self, applications: list[dict[str, Any]], context: RequestContext) -> list[dict[str, Any]]:
         data = self._read()
         for app in applications:
-            app["organizationId"] = context.organization_id
+            app["organizationId"] = context.organization_id or f"org-{context.user_id}"
             app["createdBy"] = context.user_id
+            app["ownerEmail"] = context.email
         data["applications"] = applications + data["applications"]
         for app in applications:
             c_id = str(app.get("candidateId") or app["id"])
@@ -1595,8 +1636,9 @@ class LocalRepository:
             intel = extract_candidate_intelligence(str(app.get("textPreview") or app.get("summary") or ""), app)
             cand = {
                 "id": c_id,
-                "organizationId": context.organization_id,
+                "organizationId": context.organization_id or f"org-{context.user_id}",
                 "createdBy": context.user_id,
+                "ownerEmail": context.email,
                 "canonicalName": app.get("candidateName", "Unknown Candidate"),
                 "blindId": intel["blindId"],
                 "email": app.get("email", ""),
@@ -1633,7 +1675,8 @@ class LocalRepository:
                 (
                     i
                     for i, c in enumerate(data["candidates"])
-                    if c["id"] == c_id or (c["email"] and c["email"] == app.get("email"))
+                    if (c["id"] == c_id or (c["email"] and c["email"] == app.get("email")))
+                    and self._is_owned_by_user(c, context)
                 ),
                 None,
             )
@@ -1646,7 +1689,6 @@ class LocalRepository:
         self._write(data)
         return applications
 
-
     def update_applications(
         self, ids: list[str], changes: dict[str, Any], context: RequestContext
     ) -> list[dict[str, Any]]:
@@ -1655,7 +1697,7 @@ class LocalRepository:
         updated: list[dict[str, Any]] = []
         data = self._read()
         for application in data["applications"]:
-            if application["id"] in selected:
+            if application["id"] in selected and self._is_owned_by_user(application, context):
                 application.update(camel)
                 application["updatedAt"] = utc_now()
                 updated.append(application.copy())
@@ -1665,32 +1707,34 @@ class LocalRepository:
     def delete_applications(self, ids: list[str], context: RequestContext) -> int:
         selected = set(ids)
         data = self._read()
-        removed = [item for item in data["applications"] if item["id"] in selected]
-        data["applications"] = [item for item in data["applications"] if item["id"] not in selected]
+        removed = [
+            item for item in data["applications"]
+            if item["id"] in selected and self._is_owned_by_user(item, context)
+        ]
+        removed_ids = {item["id"] for item in removed}
+        data["applications"] = [item for item in data["applications"] if item["id"] not in removed_ids]
         self._write(data)
-        self.delete_resume_objects([item.get("storedName", "") for item in removed])
+        self.delete_resume_objects([item.get("storedName", "") for item in removed if item.get("storedName")])
         return len(removed)
 
     def list_jobs(self, context: RequestContext) -> list[dict[str, Any]]:
         jobs = self._read()["jobs"]
-        target_org = context.organization_id or "org-master"
-        if target_org == "local-organization":
-            target_org = "org-master"
-        return [j for j in jobs if (j.get("organizationId") or "org-master") == target_org]
+        return [j for j in jobs if self._is_owned_by_user(j, context)]
 
     def create_job(self, values: dict[str, Any], context: RequestContext) -> dict[str, Any]:
         now = utc_now()
         job = {
             "id": str(uuid.uuid4()),
-            "organizationId": context.organization_id,
+            "organizationId": context.organization_id or f"org-{context.user_id}",
             "createdBy": context.user_id,
+            "ownerEmail": context.email,
             **values,
             "status": "open",
             "createdAt": now,
             "updatedAt": now,
         }
         data = self._read()
-        data["jobs"].insert(0, job)
+        data.setdefault("jobs", []).insert(0, job)
         self._write(data)
         return job
 
@@ -1771,11 +1815,8 @@ class LocalRepository:
         return None
 
     def list_team_members(self, context: RequestContext) -> list[dict[str, Any]]:
-        target_org = context.organization_id or "org-master"
-        if target_org == "local-organization":
-            target_org = "org-master"
-        base = []
-        if target_org == "org-master":
+        target_email = (context.email or "").strip().lower()
+        if is_master_admin(target_email) or context.user_id in ("usr-master", "local-user"):
             base = [
                 {
                     "userId": "usr-master",
@@ -1785,20 +1826,21 @@ class LocalRepository:
                     "joinedAt": utc_now(),
                 }
             ]
-        stored_users = self._read().get("users", [])
-        return base + [
-            {
-                "userId": u["userId"],
-                "email": u["email"],
-                "fullName": u.get("fullName", "Team Member"),
-                "role": u.get("role", "recruiter"),
-                "mustChangePassword": u.get("mustChangePassword", False),
-                "temporaryPassword": u.get("temporaryPassword"),
-                "joinedAt": u.get("joinedAt", utc_now()),
-            }
-            for u in stored_users
-            if u.get("userId") != context.user_id and (u.get("organizationId") or "org-master") == target_org
-        ]
+            stored_users = self._read().get("users", [])
+            return base + [
+                {
+                    "userId": u["userId"],
+                    "email": u["email"],
+                    "fullName": u.get("fullName", "Team Member"),
+                    "role": u.get("role", "recruiter"),
+                    "mustChangePassword": u.get("mustChangePassword", False),
+                    "temporaryPassword": u.get("temporaryPassword"),
+                    "joinedAt": u.get("joinedAt", utc_now()),
+                }
+                for u in stored_users
+                if u.get("userId") != context.user_id
+            ]
+        return []
 
     def provision_user(
         self,
@@ -1909,22 +1951,16 @@ class LocalRepository:
 
     def list_candidates(self, context: RequestContext, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         cands = self._read().get("candidates", [])
-        target_org = context.organization_id or "org-master"
-        if target_org == "local-organization":
-            target_org = "org-master"
-        cands = [c for c in cands if (c.get("organizationId") or "org-master") == target_org]
+        cands = [c for c in cands if self._is_owned_by_user(c, context)]
         return sorted(cands, key=lambda c: c.get("lastActivityAt", ""), reverse=True)
 
     def get_candidate(self, candidate_id: str, context: RequestContext) -> dict[str, Any] | None:
         data = self._read()
-        target_org = context.organization_id or "org-master"
-        if target_org == "local-organization":
-            target_org = "org-master"
         return next(
             (
                 c
-                for c in data["candidates"]
-                if c["id"] == candidate_id and (c.get("organizationId") or "org-master") == target_org
+                for c in data.get("candidates", [])
+                if c["id"] == candidate_id and self._is_owned_by_user(c, context)
             ),
             None,
         )
@@ -1932,8 +1968,8 @@ class LocalRepository:
     def update_candidate(self, candidate_id: str, changes: dict[str, Any], context: RequestContext) -> dict[str, Any] | None:
         data = self._read()
         target = None
-        for cand in data["candidates"]:
-            if cand["id"] == candidate_id:
+        for cand in data.get("candidates", []):
+            if cand["id"] == candidate_id and self._is_owned_by_user(cand, context):
                 cand.update(changes)
                 cand["updatedAt"] = utc_now()
                 cand["lastActivityAt"] = utc_now()
@@ -1969,7 +2005,7 @@ class LocalRepository:
 
     def list_talent_pools(self, context: RequestContext) -> list[dict[str, Any]]:
         data = self._read()
-        pools = data.get("talentPools", [])
+        pools = [p for p in data.get("talentPools", []) if self._is_owned_by_user(p, context)]
         members = data.get("talentPoolMembers", {})
         for pool in pools:
             pool["memberCount"] = len(members.get(pool["id"], []))
@@ -1981,6 +2017,9 @@ class LocalRepository:
             "id": f"pool-{uuid.uuid4().hex[:8]}",
             "name": name,
             "description": description,
+            "organizationId": context.organization_id or f"org-{context.user_id}",
+            "createdBy": context.user_id,
+            "ownerEmail": context.email,
             "createdAt": utc_now(),
             "memberCount": 0,
         }
@@ -2024,12 +2063,12 @@ class LocalRepository:
 
     def delete_candidate(self, candidate_id: str, context: RequestContext) -> bool:
         data = self._read()
-        target = next((c for c in data.get("candidates", []) if c["id"] == candidate_id), None)
+        target = next((c for c in data.get("candidates", []) if c["id"] == candidate_id and self._is_owned_by_user(c, context)), None)
         if not target:
             return False
         app_ids = set(target.get("applicationIds", []) or [candidate_id])
         data["candidates"] = [c for c in data.get("candidates", []) if c["id"] != candidate_id]
-        removed_apps = [a for a in data.get("applications", []) if a["id"] in app_ids]
+        removed_apps = [a for a in data.get("applications", []) if a["id"] in app_ids and self._is_owned_by_user(a, context)]
         data["applications"] = [a for a in data.get("applications", []) if a["id"] not in app_ids]
         self._write(data)
         self.delete_resume_objects([item.get("storedName", "") for item in removed_apps if item.get("storedName")])
@@ -2037,21 +2076,21 @@ class LocalRepository:
 
     def list_interviews(self, context: RequestContext) -> list[dict[str, Any]]:
         data = self._read()
-        items = data.get("interviews", [])
-        if context.organization_id and context.organization_id != "local-organization":
-            items = [i for i in items if i.get("organizationId") == context.organization_id]
+        items = [i for i in data.get("interviews", []) if self._is_owned_by_user(i, context)]
         return sorted(items, key=lambda i: i.get("scheduledAt", ""), reverse=True)
 
     def create_interview(self, data: dict[str, Any], context: RequestContext) -> dict[str, Any]:
         store = self._read()
         store.setdefault("interviews", [])
-        cands = store.get("candidates", [])
-        jobs = store.get("jobs", [])
+        cands = [c for c in store.get("candidates", []) if self._is_owned_by_user(c, context)]
+        jobs = [j for j in store.get("jobs", []) if self._is_owned_by_user(j, context)]
         cand = next((c for c in cands if c["id"] == data["candidateId"]), None)
         job = next((j for j in jobs if j["id"] == data.get("jobId")), None)
         item = {
             "id": str(uuid.uuid4()),
-            "organizationId": context.organization_id,
+            "organizationId": context.organization_id or f"org-{context.user_id}",
+            "createdBy": context.user_id,
+            "ownerEmail": context.email,
             "candidateId": data["candidateId"],
             "candidateName": cand.get("canonicalName", "Candidate") if cand else "Candidate",
             "jobId": data.get("jobId"),

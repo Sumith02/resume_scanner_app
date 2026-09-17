@@ -261,3 +261,68 @@ def test_role_based_permissions_and_scoping(tmp_path: Path, monkeypatch):
         json={"email": "hacker@test.com", "role": "admin"},
     )
     assert forbidden_prov.status_code == 403
+
+
+def test_strict_per_user_isolation(tmp_path: Path, monkeypatch):
+    client = _setup_test_env(tmp_path, monkeypatch)
+
+    admin_auth = {"Authorization": "Bearer local:sumithsbhatt@gmail.com"}
+    user1_auth = {"Authorization": "Bearer local:recruiter.one@example.com"}
+    user2_auth = {"Authorization": "Bearer local:recruiter.two@example.com"}
+
+    # Initially user1 has 0 candidates
+    assert len(client.get("/api/candidates", headers=user1_auth).json()["candidates"]) == 0
+
+    # User 1 uploads a resume
+    up1 = client.post(
+        "/api/applications",
+        headers=user1_auth,
+        data={"role": "Backend Engineer", "source": "User 1 Upload"},
+        files={
+            "resumes": (
+                "alex.txt",
+                b"Alex Smith\nEmail: alex@example.com\nPython FastAPI\n3 years experience.",
+                "text/plain",
+            )
+        },
+    )
+    assert up1.status_code == 201
+
+    # User 1 sees their 1 candidate
+    user1_cands = client.get("/api/candidates", headers=user1_auth).json()["candidates"]
+    assert len(user1_cands) == 1
+    assert user1_cands[0]["canonicalName"] == "Alex Smith"
+
+    # User 2 logs in: must see 0 candidates!
+    user2_cands = client.get("/api/candidates", headers=user2_auth).json()["candidates"]
+    assert len(user2_cands) == 0
+
+    # User 2 uploads a candidate
+    up2 = client.post(
+        "/api/applications",
+        headers=user2_auth,
+        data={"role": "Frontend Engineer", "source": "User 2 Upload"},
+        files={
+            "resumes": (
+                "sarah.txt",
+                b"Sarah Connor\nEmail: sarah@example.com\nReact TypeScript\n6 years experience.",
+                "text/plain",
+            )
+        },
+    )
+    assert up2.status_code == 201
+
+    # User 2 sees only Sarah Connor
+    user2_cands_after = client.get("/api/candidates", headers=user2_auth).json()["candidates"]
+    assert len(user2_cands_after) == 1
+    assert user2_cands_after[0]["canonicalName"] == "Sarah Connor"
+
+    # User 1 still sees only Alex Smith
+    user1_cands_after = client.get("/api/candidates", headers=user1_auth).json()["candidates"]
+    assert len(user1_cands_after) == 1
+    assert user1_cands_after[0]["canonicalName"] == "Alex Smith"
+
+    # Admin does NOT see Alex Smith or Sarah Connor
+    admin_cands = client.get("/api/candidates", headers=admin_auth).json()["candidates"]
+    assert not any(c["canonicalName"] in ("Alex Smith", "Sarah Connor") for c in admin_cands)
+

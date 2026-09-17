@@ -64,7 +64,7 @@ class AuthService:
                             stored_user = self.repository.get_user_by_email(user_email)
                             if stored_user:
                                 user_id = stored_user.get("userId") or f"usr-{hashlib.md5(user_email.encode('utf-8')).hexdigest()[:8]}"
-                                org_id = stored_user.get("organizationId") or "org-master"
+                                org_id = stored_user.get("organizationId") or f"org-{user_id}"
                                 role = stored_user.get("role") or "recruiter"
                                 must_change = bool(stored_user.get("mustChangePassword", False))
                             else:
@@ -72,7 +72,7 @@ class AuthService:
                                 user_hash = hashlib.md5(user_email.encode("utf-8")).hexdigest()[:8]
                                 user_id = f"usr-{user_hash}"
                                 org_id = f"org-{user_hash}"
-                                role = "owner"
+                                role = "recruiter"
                                 must_change = False
 
                 return RequestContext(

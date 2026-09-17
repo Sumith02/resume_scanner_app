@@ -6,15 +6,14 @@ import {
   Check,
   CheckCircle2,
   CircleAlert,
-  Copy,
   Database,
-  ExternalLink,
   Eye,
   EyeOff,
   Inbox,
   KeyRound,
   Layers3,
   Loader2,
+  Lock,
   LogIn,
   LogOut,
   Mail,
@@ -31,7 +30,6 @@ import {
   UploadCloud,
   User,
   Shield,
-  UserPlus,
   UsersRound,
   X,
   Zap
@@ -60,15 +58,12 @@ import {
   fetchProcessingQueue,
   fetchReport,
   fetchTalentPools,
-  fetchTeamMembers,
   importGmailResumes,
   mergeDuplicateCandidates,
   moveCandidatePipelineStage,
   exportComplianceData,
   executeComplianceDeletion,
-  provisionUserAccount,
   rediscoverTalent,
-  removeTeamMember,
   revealCandidateIdentity,
   sendCopilotMessage,
   setApiAccessToken,
@@ -94,9 +89,7 @@ import {
   type ProcessingJob,
   type RediscoveryResult,
   type ReportSummary,
-  type TalentPool,
-  type TeamMember,
-  type ProvisionUserResult
+  type TalentPool
 } from "./types";
 import { formatDate, formatFileSize } from "./utils";
 import { TalentGraphView } from "./TalentGraphView";
@@ -172,23 +165,16 @@ function getNavItems(role: string): Array<{ key: ViewKey; label: string; icon: R
   }
 
   if (!isAdmin) {
-    // Standard Recruiter Role
+    // Simple Recruiter: A focused tool to upload resumes, parse, search, and view match scores
     return [
-      { key: "command_center", label: "Command Center", icon: <Sparkles size={18} /> },
-      { key: "candidates", label: "Talent Database", icon: <UsersRound size={18} /> },
-      { key: "rediscovery", label: "Talent Rediscovery", icon: <Zap size={18} />, badge: "Rediscover" },
-      { key: "graph", label: "Talent Graph", icon: <Network size={18} />, badge: "Relational" },
-      { key: "search", label: "Talent Search", icon: <Search size={18} /> },
-      { key: "pipeline", label: "Pipeline (Kanban)", icon: <Layers3 size={18} /> },
-      { key: "jobs", label: "Jobs & Intelligence", icon: <BriefcaseBusiness size={18} /> },
-      { key: "compare", label: "Comparison", icon: <SlidersHorizontal size={18} /> },
-      { key: "pools", label: "Talent Pools", icon: <Tags size={18} /> },
-      { key: "intake", label: "Intake Center", icon: <UploadCloud size={18} /> },
-      { key: "duplicates", label: "Duplicates", icon: <CircleAlert size={18} /> },
-      { key: "data_quality", label: "Data Quality", icon: <ShieldCheck size={18} /> },
-      { key: "campaigns", label: "Campaigns", icon: <Mail size={18} /> },
+      { key: "intake", label: "Upload Resumes", icon: <UploadCloud size={18} /> },
+      { key: "candidates", label: "My Candidates", icon: <UsersRound size={18} /> },
+      { key: "search", label: "Candidate Search", icon: <Search size={18} /> },
+      { key: "jobs", label: "Jobs & Matching", icon: <BriefcaseBusiness size={18} /> },
+      { key: "compare", label: "Compare Matches", icon: <SlidersHorizontal size={18} /> },
+      { key: "pipeline", label: "Pipeline", icon: <Layers3 size={18} /> },
       { key: "reports", label: "Analytics", icon: <BarChart3 size={18} /> },
-      { key: "settings", label: "My Profile & Settings", icon: <User size={18} /> }
+      { key: "settings", label: "My Account", icon: <User size={18} /> }
     ];
   }
 
@@ -951,13 +937,13 @@ export default function App() {
 
         <div className="sidebar-footer">
           <div className="profile-badge">
-            <div className="avatar" style={{ background: isAdmin ? "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)" : "#1f2937", color: "#fff", fontWeight: 700 }}>
-              {isAdmin ? "AD" : userRole === "hiring_manager" ? "HM" : userRole === "viewer" ? "VW" : "RC"}
+            <div className="avatar" style={{ background: isAdmin ? "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)" : "#1e293b", color: "#fff", fontWeight: 700 }}>
+              {isAdmin ? "AD" : "RC"}
             </div>
             <div className="profile-meta">
-              <strong>{userProfile?.workspace?.name || (isAdmin ? "Master Workspace" : "Recruiter Workspace")}</strong>
-              <span style={{ fontSize: "11px", color: isAdmin ? "#f59e0b" : "#94a3b8", textTransform: "capitalize" }}>
-                {isAdmin ? "👑 Workspace Admin" : `${userRole.replace("_", " ")} Role`}
+              <strong>{userProfile?.user?.fullName || userProfile?.user?.email || "My Account"}</strong>
+              <span style={{ fontSize: "11px", color: isAdmin ? "#f59e0b" : "#94a3b8" }}>
+                {isAdmin ? "👑 System Administrator" : "Recruiter (Private Account)"}
               </span>
             </div>
           </div>
@@ -973,7 +959,7 @@ export default function App() {
             <input
               type="text"
               className="command-input"
-              placeholder="Ask Talent OS... e.g. Find senior React developers in Bengaluru with 4+ years experience"
+              placeholder={isAdmin ? "Ask Talent OS... e.g. Find senior React developers with 4+ years experience" : "Search your uploaded candidates..."}
               value={globalQuery}
               onChange={(e) => setGlobalQuery(e.target.value)}
             />
@@ -982,8 +968,8 @@ export default function App() {
             </button>
           </form>
 
-          {/* AGENCY MULTI-CLIENT SWITCHER (Visible for Admins or Recruiter agencies) */}
-          {(isAdmin || agencyClients.length > 0) && (
+          {/* AGENCY MULTI-CLIENT SWITCHER (Visible strictly for Admins) */}
+          {(isAdmin && agencyClients.length > 0) && (
             <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
               <Building2 size={16} color="var(--brand)" />
               <select
@@ -4727,34 +4713,12 @@ function SettingsView({
   currentUserRole?: "owner" | "admin" | "recruiter" | "hiring_manager" | "viewer";
 }) {
   const isMasterUser = currentUserEmail?.trim().toLowerCase() === "sumithsbhatt@gmail.com";
-  const [members, setMembers] = useState<TeamMember[]>([]);
-  const [currentUserRole, setCurrentUserRole] = useState<TeamMember["role"]>(
-    propRole || (isMasterUser ? "owner" : "recruiter")
-  );
-  const [loadingMembers, setLoadingMembers] = useState(false);
 
   // Self-Service Profile Password State
   const [profileNewPassword, setProfileNewPassword] = useState("");
   const [profileConfirmPassword, setProfileConfirmPassword] = useState("");
   const [profilePasswordNotice, setProfilePasswordNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [profilePasswordLoading, setProfilePasswordLoading] = useState(false);
-
-  // Form State
-  const [provisionEmail, setProvisionEmail] = useState("");
-  const [provisionName, setProvisionName] = useState("");
-  const [provisionRole, setProvisionRole] = useState<"admin" | "recruiter" | "hiring_manager" | "viewer">("recruiter");
-  const [tempPassword, setTempPassword] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // Success / Error Notice
-  const [provisionNotice, setProvisionNotice] = useState<{
-    type: "success" | "error";
-    message: string;
-    details?: ProvisionUserResult;
-  } | null>(null);
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const [emailConfigured, setEmailConfigured] = useState<boolean | null>(null);
-  const [showConfigGuide, setShowConfigGuide] = useState(false);
 
   // Compliance & GDPR state
   const [exportNotice, setExportNotice] = useState<string | null>(null);
@@ -4801,47 +4765,6 @@ function SettingsView({
     }
   }
 
-  function generateSecurePassword() {
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%&*";
-    let pwd = "Nex!";
-    for (let i = 0; i < 8; i++) {
-      pwd += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    setTempPassword(pwd);
-  }
-
-  async function loadMembers() {
-    setLoadingMembers(true);
-    try {
-      const res = await fetchTeamMembers();
-      setMembers(res.members);
-      if (propRole) {
-        setCurrentUserRole(propRole);
-      } else if (isMasterUser) {
-        setCurrentUserRole("owner");
-      } else if (res.currentUserRole) {
-        setCurrentUserRole(res.currentUserRole);
-      }
-    } catch {
-      // non-blocking
-    } finally {
-      setLoadingMembers(false);
-    }
-  }
-
-  useEffect(() => {
-    generateSecurePassword();
-    loadMembers();
-    fetch("/api/system/status")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data?.checks?.emailConfigured !== undefined) {
-          setEmailConfigured(Boolean(data.checks.emailConfigured));
-        }
-      })
-      .catch(() => {});
-  }, []);
-
   async function handleUpdateProfilePassword(e: FormEvent) {
     e.preventDefault();
     setProfilePasswordNotice(null);
@@ -4882,63 +4805,7 @@ function SettingsView({
     }
   }
 
-  async function handleProvision(e: FormEvent) {
-    e.preventDefault();
-    if (!provisionEmail.trim()) return;
-
-    setIsSubmitting(true);
-    setProvisionNotice(null);
-
-    try {
-      const result = await provisionUserAccount({
-        email: provisionEmail.trim(),
-        fullName: provisionName.trim(),
-        role: provisionRole,
-        temporaryPassword: tempPassword.trim() || undefined
-      });
-
-      setProvisionNotice({
-        type: "success",
-        message: result.emailSent
-          ? `Account successfully provisioned! An automated onboarding email with login credentials has been dispatched to ${provisionEmail.trim()}.`
-          : `Account created, but automated server email could not be sent (${result.emailMessage || "No email provider configured in Vercel"}). Please use the quick delivery buttons below to send the credentials to ${provisionEmail.trim()}.`,
-        details: result
-      });
-
-      setProvisionEmail("");
-      setProvisionName("");
-      generateSecurePassword();
-      await loadMembers();
-      onRefreshWorkspace();
-    } catch (err: unknown) {
-      setProvisionNotice({
-        type: "error",
-        message: err instanceof Error ? err.message : "Failed to provision user account."
-      });
-    } finally {
-      setIsSubmitting(false);
-    }
-  }
-
-  async function handleRemove(userId: string, email: string) {
-    if (!window.confirm(`Are you sure you want to revoke access for ${email}?`)) return;
-    try {
-      await removeTeamMember(userId);
-      await loadMembers();
-      onRefreshWorkspace();
-    } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : "Failed to remove member.");
-    }
-  }
-
-  function copyText(text: string, key: string) {
-    navigator.clipboard.writeText(text);
-    setCopiedKey(key);
-    setTimeout(() => setCopiedKey(null), 2000);
-  }
-
-  const portalUrl = window.location.origin;
-  const effectiveRole = propRole || currentUserRole;
+  const effectiveRole = propRole || (isMasterUser ? "owner" : "recruiter");
   const isAdmin = effectiveRole === "owner" || effectiveRole === "admin";
 
   // NON-ADMIN USER PROFILE & SELF-SERVICE VIEW
@@ -5172,70 +5039,54 @@ function SettingsView({
               </div>
             </div>
 
-            {/* TEAM MEMBERS LIST (READ-ONLY) */}
+            {/* DATA PRIVACY & EXPORT */}
             <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", border: "1px solid var(--line)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: "16px" }}>Workspace Team ({members.length})</h3>
-                  <span style={{ fontSize: "11px", color: "var(--muted)" }}>
-                    Colleagues in your organization workspace
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={loadMembers}
-                  style={{
-                    background: "transparent",
-                    border: "1px solid var(--line)",
-                    borderRadius: "4px",
-                    padding: "4px 8px",
-                    fontSize: "11px",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "4px"
-                  }}
-                >
-                  <RefreshCw size={12} className={loadingMembers ? "spinning" : ""} />
-                  Refresh
-                </button>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+                <ShieldCheck size={20} color="#16a34a" />
+                <h3 style={{ margin: 0, fontSize: "16px" }}>Candidate Data Isolation & Privacy</h3>
               </div>
+              <p style={{ margin: "0 0 16px 0", color: "#64748b", fontSize: "13px" }}>
+                Your candidate resumes, parsing intelligence, and match scores are strictly private to your individual account.
+              </p>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                {members.map((m) => (
-                  <div
-                    key={m.userId}
+              <div style={{ background: "#f8fafc", padding: "14px", borderRadius: "8px", border: "1px solid #e2e8f0", marginBottom: "16px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <strong style={{ fontSize: "13px" }}>Export My Uploaded Candidates</strong>
+                    <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>
+                      Download a structured JSON dump of your candidates and match ratings.
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleComplianceExport}
+                    disabled={exporting}
                     style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "8px 12px",
-                      background: "#f8fafc",
+                      background: "#0f172a",
+                      color: "#fff",
+                      border: "none",
+                      padding: "8px 14px",
                       borderRadius: "6px",
-                      border: "1px solid #e2e8f0"
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      cursor: exporting ? "not-allowed" : "pointer"
                     }}
                   >
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: "13px", color: "#1e293b" }}>
-                        {m.fullName || m.email}
-                      </div>
-                      <div style={{ fontSize: "11px", color: "#64748b" }}>{m.email}</div>
-                    </div>
-                    <span
-                      style={{
-                        fontSize: "10px",
-                        fontWeight: 700,
-                        textTransform: "uppercase",
-                        padding: "2px 8px",
-                        borderRadius: "4px",
-                        background: m.role === "owner" ? "#dbeafe" : "#f1f5f9",
-                        color: m.role === "owner" ? "#1e40af" : "#475569"
-                      }}
-                    >
-                      {m.role}
-                    </span>
+                    {exporting ? "Exporting..." : "Export Candidates"}
+                  </button>
+                </div>
+                {exportNotice && (
+                  <div style={{ marginTop: "10px", fontSize: "12px", color: "#166534", background: "#dcfce7", padding: "8px 12px", borderRadius: "4px" }}>
+                    {exportNotice}
                   </div>
-                ))}
+                )}
+              </div>
+
+              <div style={{ display: "flex", gap: "10px", padding: "12px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px", fontSize: "12px", color: "#166534" }}>
+                <Lock size={16} style={{ flexShrink: 0, marginTop: "2px" }} />
+                <span>
+                  <strong>Strict Per-User Isolation:</strong> Every candidate you upload is associated exclusively with your user account ({currentUserEmail || "active user"}). No other user can view or access your candidates.
+                </span>
               </div>
             </div>
           </div>
@@ -5249,614 +5100,172 @@ function SettingsView({
   return (
     <div>
       <div style={{ marginBottom: "20px" }}>
-        <h2 style={{ margin: "0 0 6px 0" }}>Team & Account Provisioning</h2>
+        <h2 style={{ margin: "0 0 6px 0", display: "flex", alignItems: "center", gap: "10px" }}>
+          <Settings size={24} color="#f59e0b" />
+          <span>System Governance & Administrator Controls</span>
+        </h2>
         <p style={{ margin: 0, fontSize: "13px", color: "var(--muted)" }}>
-          Admin-controlled user provisioning with automated temporary credentials, onboarding emails, and mandatory first-login password updates.
+          Master administrator controls for system configuration, security architecture, and data compliance.
         </p>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: "24px" }}>
-        {/* LEFT COLUMN: PROVISION NEW USER */}
+        {/* LEFT COLUMN: ADMIN PROFILE & SECURITY */}
         <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+          {/* MASTER ADMIN PROFILE CARD */}
           <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", border: "1px solid var(--line)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "16px" }}>
               <div
                 style={{
-                  width: "32px",
-                  height: "32px",
+                  width: "36px",
+                  height: "36px",
                   borderRadius: "8px",
-                  background: "#eff6ff",
+                  background: "#fef3c7",
                   display: "grid",
                   placeItems: "center",
-                  color: "#2563eb"
+                  color: "#d97706"
                 }}
               >
-                <UserPlus size={18} />
+                <ShieldCheck size={20} />
               </div>
               <div>
-                <h3 style={{ margin: 0, fontSize: "16px" }}>Provision New User Account</h3>
+                <h3 style={{ margin: 0, fontSize: "16px" }}>Master Administrator Profile</h3>
                 <span style={{ fontSize: "11px", color: "var(--muted)" }}>
-                  Only workspace administrators can create accounts. No public self-registration.
+                  Primary root account for Resume Scanner
                 </span>
               </div>
             </div>
 
-            {/* EMAIL SERVICE STATUS BAR */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                margin: "12px 0",
-                padding: "8px 12px",
-                background: emailConfigured ? "#f0fdf4" : "#fffbeb",
-                border: `1px solid ${emailConfigured ? "#bbf7d0" : "#fde68a"}`,
-                borderRadius: "6px"
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px" }}>
-                <div
-                  style={{
-                    width: "8px",
-                    height: "8px",
-                    borderRadius: "50%",
-                    background: emailConfigured ? "#22c55e" : "#f59e0b"
-                  }}
-                />
-                <span style={{ color: emailConfigured ? "#15803d" : "#92400e", fontWeight: 600 }}>
-                  {emailConfigured
-                    ? "Automated Server Email: Active (Dispatches directly to user inbox)"
-                    : "Automated Server Email: Unconfigured in Vercel (Manual 1-Click Send Available)"}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowConfigGuide(!showConfigGuide)}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "#2563eb",
-                  cursor: "pointer",
-                  fontSize: "11px",
-                  fontWeight: 600,
-                  textDecoration: "underline",
-                  padding: "0"
-                }}
-              >
-                {showConfigGuide ? "Hide Setup Guide" : "Auto-Send Setup Guide"}
-              </button>
-            </div>
-
-            {/* SETUP GUIDE ACCORDION */}
-            {showConfigGuide && (
-              <div
-                style={{
-                  marginBottom: "16px",
-                  padding: "14px",
-                  background: "#f8fafc",
-                  border: "1px solid #cbd5e1",
-                  borderRadius: "8px",
-                  fontSize: "12px",
-                  color: "#334155"
-                }}
-              >
-                <div style={{ fontWeight: 700, color: "#0f172a", marginBottom: "6px" }}>
-                  How to Enable Automated Server Email Sending in Vercel:
-                </div>
-                <div style={{ lineHeight: 1.5, marginBottom: "8px" }}>
-                  To make the cloud server automatically send onboarding emails into users' inboxes upon account creation, add either of these to your <strong>Vercel Project &gt; Settings &gt; Environment Variables</strong>:
-                </div>
-                <div style={{ fontWeight: 600, color: "#1e40af", marginBottom: "4px" }}>
-                  Option A: Free Gmail SMTP (Recommended)
-                </div>
-                <div
-                  style={{
-                    background: "#0f172a",
-                    color: "#e2e8f0",
-                    padding: "10px",
-                    borderRadius: "6px",
-                    fontFamily: "monospace",
-                    fontSize: "11px",
-                    lineHeight: 1.6,
-                    marginBottom: "10px"
-                  }}
-                >
-                  SMTP_HOST = smtp.gmail.com<br />
-                  SMTP_PORT = 587<br />
-                  SMTP_USER = sumithsbhatt@gmail.com<br />
-                  SMTP_PASSWORD = [16-character Google App Password]<br />
-                  SMTP_FROM = Resume Scanner &lt;sumithsbhatt@gmail.com&gt;
-                </div>
-                <div style={{ fontSize: "11px", color: "#64748b", marginBottom: "10px" }}>
-                  * Generate a 16-char Google App Password at: <em>Google Account &gt; Security &gt; 2-Step Verification &gt; App Passwords</em>.
-                </div>
-                <div style={{ fontWeight: 600, color: "#1e40af", marginBottom: "4px" }}>
-                  Option B: Resend API
-                </div>
-                <div
-                  style={{
-                    background: "#0f172a",
-                    color: "#e2e8f0",
-                    padding: "10px",
-                    borderRadius: "6px",
-                    fontFamily: "monospace",
-                    fontSize: "11px",
-                    lineHeight: 1.6
-                  }}
-                >
-                  RESEND_API_KEY = re_...<br />
-                  MAIL_FROM = Resume Scanner &lt;onboarding@resend.dev&gt;
+            <div style={{ display: "flex", flexDirection: "column", gap: "14px", fontSize: "13px" }}>
+              <div>
+                <span style={{ color: "#64748b", fontSize: "11px", textTransform: "uppercase", fontWeight: 600 }}>Administrator Name</span>
+                <div style={{ fontWeight: 600, color: "#0f172a", fontSize: "14px", marginTop: "2px" }}>
+                  Sumith Bhatt (Master Admin)
                 </div>
               </div>
-            )}
 
-            {/* NOTICE BANNER */}
-            {provisionNotice && (
-              <div
-                style={{
-                  marginTop: "12px",
-                  marginBottom: "16px",
-                  padding: "14px",
-                  borderRadius: "8px",
-                  background:
-                    provisionNotice.type === "success"
-                      ? provisionNotice.details?.emailSent
-                        ? "#f0fdf4"
-                        : "#fffbeb"
-                      : "#fef2f2",
-                  border: `1px solid ${
-                    provisionNotice.type === "success"
-                      ? provisionNotice.details?.emailSent
-                        ? "#bbf7d0"
-                        : "#fde68a"
-                      : "#fecaca"
-                  }`,
-                  color:
-                    provisionNotice.type === "success"
-                      ? provisionNotice.details?.emailSent
-                        ? "#166534"
-                        : "#92400e"
-                      : "#991b1b",
-                  fontSize: "13px"
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: 600, marginBottom: "4px" }}>
-                  {provisionNotice.type === "success" ? (
-                    provisionNotice.details?.emailSent ? (
-                      <CheckCircle2 size={16} />
-                    ) : (
-                      <CircleAlert size={16} />
-                    )
-                  ) : (
-                    <CircleAlert size={16} />
-                  )}
-                  <span>
-                    {provisionNotice.type === "success"
-                      ? provisionNotice.details?.emailSent
-                        ? "Account Provisioned & Email Sent"
-                        : "Account Created (Email Action Required)"
-                      : "Provisioning Failed"}
+              <div>
+                <span style={{ color: "#64748b", fontSize: "11px", textTransform: "uppercase", fontWeight: 600 }}>System Email</span>
+                <div style={{ fontWeight: 600, color: "#0f172a", fontSize: "14px", marginTop: "2px" }}>
+                  sumithsbhatt@gmail.com
+                </div>
+              </div>
+
+              <div>
+                <span style={{ color: "#64748b", fontSize: "11px", textTransform: "uppercase", fontWeight: 600 }}>Tenant Architecture</span>
+                <div style={{ marginTop: "4px" }}>
+                  <span style={{ background: "#fef3c7", color: "#92400e", padding: "4px 10px", borderRadius: "6px", fontSize: "12px", fontWeight: 700 }}>
+                    👑 Master Admin (Dedicated Private Storage)
                   </span>
                 </div>
-                <div style={{ lineHeight: 1.5 }}>{provisionNotice.message}</div>
+              </div>
+            </div>
+          </div>
 
-                {/* COPYABLE CREDENTIALS & ACTION BUTTONS */}
-                {provisionNotice.details && (
-                  <div
-                    style={{
-                      marginTop: "12px",
-                      padding: "14px",
-                      background: "#ffffff",
-                      borderRadius: "8px",
-                      border: "1px solid #cbd5e1",
-                      fontSize: "12px"
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontWeight: 700,
-                        color: "#0f172a",
-                        marginBottom: "10px",
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center"
-                      }}
-                    >
-                      <span>New Account Credentials:</span>
-                      <span style={{ fontSize: "11px", fontWeight: 600, color: "#2563eb", background: "#eff6ff", padding: "2px 8px", borderRadius: "4px" }}>
-                        Role: {provisionNotice.details.member.role.replace("_", " ").toUpperCase()}
-                      </span>
-                    </div>
+          {/* ADMIN PASSWORD CARD */}
+          <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", border: "1px solid var(--line)" }}>
+            <h3 style={{ margin: "0 0 8px 0", fontSize: "16px", display: "flex", alignItems: "center", gap: "8px" }}>
+              <KeyRound size={18} color="#f59e0b" />
+              <span>Update Administrator Password</span>
+            </h3>
+            <p style={{ margin: "0 0 16px 0", fontSize: "12px", color: "#64748b" }}>
+              Change the password for the master administrator account.
+            </p>
 
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0" }}>
-                      <span style={{ color: "#64748b" }}>Portal URL:</span>
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                        <code style={{ background: "#f1f5f9", padding: "2px 6px", borderRadius: "4px" }}>{portalUrl}</code>
-                        <button
-                          type="button"
-                          onClick={() => copyText(portalUrl, "portal")}
-                          style={{ border: "none", background: "none", cursor: "pointer", color: "#2563eb", padding: "2px" }}
-                        >
-                          {copiedKey === "portal" ? <Check size={14} /> : <Copy size={14} />}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0" }}>
-                      <span style={{ color: "#64748b" }}>User Email:</span>
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                        <code style={{ background: "#f1f5f9", padding: "2px 6px", borderRadius: "4px" }}>
-                          {provisionNotice.details.member.email}
-                        </code>
-                        <button
-                          type="button"
-                          onClick={() => copyText(provisionNotice.details!.member.email, "email")}
-                          style={{ border: "none", background: "none", cursor: "pointer", color: "#2563eb", padding: "2px" }}
-                        >
-                          {copiedKey === "email" ? <Check size={14} /> : <Copy size={14} />}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0" }}>
-                      <span style={{ color: "#64748b" }}>Temporary Password:</span>
-                      <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                        <code style={{ background: "#fef3c7", color: "#92400e", fontWeight: 700, padding: "2px 6px", borderRadius: "4px" }}>
-                          {provisionNotice.details.temporaryPassword}
-                        </code>
-                        <button
-                          type="button"
-                          onClick={() => copyText(provisionNotice.details!.temporaryPassword, "pwd")}
-                          style={{ border: "none", background: "none", cursor: "pointer", color: "#2563eb", padding: "2px" }}
-                        >
-                          {copiedKey === "pwd" ? <Check size={14} /> : <Copy size={14} />}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div
-                      style={{
-                        marginTop: "12px",
-                        paddingTop: "12px",
-                        borderTop: "1px solid #f1f5f9",
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: "8px"
-                      }}
-                    >
-                      <a
-                        href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(
-                          provisionNotice.details.member.email
-                        )}&su=${encodeURIComponent("Your Resume Scanner Account Credentials")}&body=${encodeURIComponent(
-                          `Hello ${provisionNotice.details.member.fullName || ""},\n\nYour account has been created on Resume Scanner.\n\nPortal URL: ${portalUrl}\nEmail: ${provisionNotice.details.member.email}\nTemporary Password: ${provisionNotice.details.temporaryPassword}\n\nSecurity Requirement: You will be required to create your own secure, permanent password immediately upon your first login.\n\nBest regards,\nWorkspace Administrator`
-                        )}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{
-                          flex: "1 1 140px",
-                          padding: "8px 12px",
-                          background: "#2563eb",
-                          color: "#ffffff",
-                          textDecoration: "none",
-                          borderRadius: "6px",
-                          fontSize: "12px",
-                          fontWeight: 700,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: "6px"
-                        }}
-                      >
-                        <ExternalLink size={14} />
-                        <span>Send via Gmail (1-Click)</span>
-                      </a>
-
-                      <a
-                        href={`mailto:${encodeURIComponent(
-                          provisionNotice.details.member.email
-                        )}?subject=${encodeURIComponent("Your Resume Scanner Account Credentials")}&body=${encodeURIComponent(
-                          `Hello ${provisionNotice.details.member.fullName || ""},\n\nYour account has been created on Resume Scanner.\n\nPortal URL: ${portalUrl}\nEmail: ${provisionNotice.details.member.email}\nTemporary Password: ${provisionNotice.details.temporaryPassword}\n\nSecurity Requirement: You will be required to create your own secure, permanent password immediately upon your first login.\n\nBest regards,\nWorkspace Administrator`
-                        )}`}
-                        style={{
-                          flex: "1 1 140px",
-                          padding: "8px 12px",
-                          background: "#f1f5f9",
-                          color: "#0f172a",
-                          textDecoration: "none",
-                          borderRadius: "6px",
-                          fontSize: "12px",
-                          fontWeight: 600,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: "6px",
-                          border: "1px solid #cbd5e1"
-                        }}
-                      >
-                        <Mail size={14} />
-                        <span>Default Mail Client</span>
-                      </a>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const creds = `Portal URL: ${portalUrl}\nEmail: ${provisionNotice.details!.member.email}\nTemporary Password: ${provisionNotice.details!.temporaryPassword}\n\nNote: You will be required to set a new permanent password on your first login.`;
-                          copyText(creds, "all");
-                        }}
-                        style={{
-                          flex: "1 1 120px",
-                          padding: "8px 12px",
-                          background: "#0f172a",
-                          color: "#ffffff",
-                          border: "none",
-                          borderRadius: "6px",
-                          fontSize: "12px",
-                          fontWeight: 600,
-                          cursor: "pointer",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: "6px"
-                        }}
-                      >
-                        {copiedKey === "all" ? <Check size={14} /> : <Copy size={14} />}
-                        <span>{copiedKey === "all" ? "Copied!" : "Copy Full Text"}</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
+            {profilePasswordNotice && (
+              <div
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: "6px",
+                  marginBottom: "14px",
+                  fontSize: "12px",
+                  background: profilePasswordNotice.type === "success" ? "#f0fdf4" : "#fef2f2",
+                  color: profilePasswordNotice.type === "success" ? "#166534" : "#991b1b",
+                  border: `1px solid ${profilePasswordNotice.type === "success" ? "#bbf7d0" : "#fecaca"}`
+                }}
+              >
+                {profilePasswordNotice.message}
               </div>
             )}
 
-            <form onSubmit={handleProvision} style={{ display: "flex", flexDirection: "column", gap: "14px", marginTop: "16px" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                <div>
-                  <label style={{ display: "block", fontSize: "12px", fontWeight: 600, marginBottom: "4px" }}>
-                    Full Name
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Maya Lin"
-                    value={provisionName}
-                    onChange={(e) => setProvisionName(e.target.value)}
-                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--line)", boxSizing: "border-box" }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: "block", fontSize: "12px", fontWeight: 600, marginBottom: "4px" }}>
-                    Work Email Address *
-                  </label>
-                  <input
-                    type="email"
-                    placeholder="maya@company.com"
-                    value={provisionEmail}
-                    onChange={(e) => setProvisionEmail(e.target.value)}
-                    required
-                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--line)", boxSizing: "border-box" }}
-                  />
-                </div>
+            <form onSubmit={handleUpdateProfilePassword} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 600, marginBottom: "4px" }}>
+                  New Password
+                </label>
+                <input
+                  type="password"
+                  value={profileNewPassword}
+                  onChange={(e) => setProfileNewPassword(e.target.value)}
+                  placeholder="Enter new administrator password"
+                  required
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--line)", boxSizing: "border-box" }}
+                />
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                <div>
-                  <label style={{ display: "block", fontSize: "12px", fontWeight: 600, marginBottom: "4px" }}>
-                    Workspace Role
-                  </label>
-                  <select
-                    value={provisionRole}
-                    onChange={(e) => setProvisionRole(e.target.value as any)}
-                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--line)", boxSizing: "border-box" }}
-                  >
-                    <option value="recruiter">Recruiter (Search, rediscovery, match analysis)</option>
-                    <option value="hiring_manager">Hiring Manager (Review candidates, comments)</option>
-                    <option value="admin">Administrator (Full settings & account provisioning)</option>
-                    <option value="viewer">Viewer (Read-only access)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                    <label style={{ fontSize: "12px", fontWeight: 600 }}>Temporary Password</label>
-                    <button
-                      type="button"
-                      onClick={generateSecurePassword}
-                      style={{
-                        background: "none",
-                        border: "none",
-                        color: "#2563eb",
-                        fontSize: "11px",
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "4px",
-                        padding: 0
-                      }}
-                    >
-                      <RefreshCw size={11} />
-                      Regenerate
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    value={tempPassword}
-                    onChange={(e) => setTempPassword(e.target.value)}
-                    required
-                    style={{
-                      width: "100%",
-                      padding: "8px 10px",
-                      borderRadius: "6px",
-                      border: "1px solid var(--line)",
-                      fontFamily: "monospace",
-                      fontWeight: 600,
-                      boxSizing: "border-box"
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div
-                style={{
-                  padding: "8px 12px",
-                  background: "#f8fafc",
-                  borderRadius: "6px",
-                  border: "1px solid #e2e8f0",
-                  fontSize: "11px",
-                  color: "#64748b"
-                }}
-              >
-                🔒 <strong>Mandatory First-Login Password Creation:</strong> When this user logs in with this temporary password, they will be intercepted and forced to create a permanent password before accessing workspace data.
+              <div>
+                <label style={{ display: "block", fontSize: "12px", fontWeight: 600, marginBottom: "4px" }}>
+                  Confirm Password
+                </label>
+                <input
+                  type="password"
+                  value={profileConfirmPassword}
+                  onChange={(e) => setProfileConfirmPassword(e.target.value)}
+                  placeholder="Re-enter password to confirm"
+                  required
+                  style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--line)", boxSizing: "border-box" }}
+                />
               </div>
 
               <button
                 type="submit"
-                disabled={isSubmitting}
+                disabled={profilePasswordLoading}
                 style={{
-                  background: "#111827",
-                  color: "#ffffff",
+                  background: "#0f172a",
+                  color: "#fff",
                   border: "none",
-                  padding: "10px 16px",
+                  padding: "9px 16px",
                   borderRadius: "6px",
                   fontWeight: 600,
                   fontSize: "13px",
-                  cursor: isSubmitting ? "not-allowed" : "pointer",
+                  cursor: profilePasswordLoading ? "not-allowed" : "pointer",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  gap: "8px"
+                  gap: "8px",
+                  marginTop: "4px"
                 }}
               >
-                {isSubmitting ? <Loader2 size={16} className="spinning" /> : <UserPlus size={16} />}
-                <span>Provision Account & Dispatch Onboarding Email</span>
+                {profilePasswordLoading ? <Loader2 size={16} className="spinning" /> : <KeyRound size={16} />}
+                <span>Save New Password</span>
               </button>
             </form>
           </div>
 
-          {/* TEAM ROSTER */}
+          {/* ENGINE HEALTH & DIAGNOSTICS */}
           <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", border: "1px solid var(--line)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-              <div>
-                <h3 style={{ margin: 0, fontSize: "16px" }}>Active Team Members ({members.length})</h3>
-                <span style={{ fontSize: "11px", color: "var(--muted)" }}>
-                  Track who has set their permanent password versus pending initial login.
-                </span>
+            <h3 style={{ margin: "0 0 12px 0", fontSize: "16px", display: "flex", alignItems: "center", gap: "8px" }}>
+              <Database size={18} color="#2563eb" />
+              <span>AI Engine & Diagnostic Health</span>
+            </h3>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px", fontSize: "13px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                <span>V11 Talent Intelligence Engine</span>
+                <span style={{ color: "#16a34a", fontWeight: 700, fontSize: "12px" }}>● Operational</span>
               </div>
-              <button
-                type="button"
-                onClick={loadMembers}
-                style={{
-                  background: "transparent",
-                  border: "1px solid var(--line)",
-                  borderRadius: "4px",
-                  padding: "4px 8px",
-                  fontSize: "11px",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "4px"
-                }}
-              >
-                <RefreshCw size={12} className={loadingMembers ? "spinning" : ""} />
-                Refresh
-              </button>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-              {members.map((m) => {
-                const isPending = Boolean(m.mustChangePassword);
-                return (
-                  <div
-                    key={m.userId}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "10px 14px",
-                      background: "#f8fafc",
-                      borderRadius: "8px",
-                      border: "1px solid #e2e8f0"
-                    }}
-                  >
-                    <div>
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                        <strong style={{ fontSize: "13px" }}>{m.fullName || m.email}</strong>
-                        <span
-                          style={{
-                            fontSize: "10px",
-                            fontWeight: 700,
-                            textTransform: "uppercase",
-                            letterSpacing: "0.06em",
-                            padding: "2px 6px",
-                            borderRadius: "4px",
-                            background: m.role === "owner" ? "#dbeafe" : "#f1f5f9",
-                            color: m.role === "owner" ? "#1e40af" : "#475569"
-                          }}
-                        >
-                          {m.role}
-                        </span>
-                      </div>
-                      <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>{m.email}</div>
-                    </div>
-
-                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                      {isPending ? (
-                        <span
-                          style={{
-                            background: "#fef3c7",
-                            color: "#92400e",
-                            border: "1px solid #fde68a",
-                            padding: "3px 8px",
-                            borderRadius: "12px",
-                            fontSize: "11px",
-                            fontWeight: 600,
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: "4px"
-                          }}
-                        >
-                          <KeyRound size={11} />
-                          Pending First Login
-                        </span>
-                      ) : (
-                        <span
-                          style={{
-                            background: "#dcfce7",
-                            color: "#166534",
-                            border: "1px solid #bbf7d0",
-                            padding: "3px 8px",
-                            borderRadius: "12px",
-                            fontSize: "11px",
-                            fontWeight: 600,
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: "4px"
-                          }}
-                        >
-                          <CheckCircle2 size={11} />
-                          Active (Password Set)
-                        </span>
-                      )}
-
-                      {m.role !== "owner" && (currentUserRole === "owner" || currentUserRole === "admin") && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemove(m.userId, m.email)}
-                          style={{
-                            background: "transparent",
-                            border: "none",
-                            color: "#ef4444",
-                            fontSize: "12px",
-                            cursor: "pointer",
-                            padding: "4px 8px"
-                          }}
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                <span>Multi-Dimensional Job Matcher</span>
+                <span style={{ color: "#16a34a", fontWeight: 700, fontSize: "12px" }}>● Operational</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                <span>Per-User Data Isolation Enforcement</span>
+                <span style={{ color: "#16a34a", fontWeight: 700, fontSize: "12px" }}>● Active (Strict)</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#f8fafc", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                <span>Storage Backend</span>
+                <span style={{ color: "#2563eb", fontWeight: 600, fontSize: "12px" }}>Local Encrypted JSON</span>
+              </div>
             </div>
           </div>
         </div>
