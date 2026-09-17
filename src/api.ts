@@ -299,6 +299,7 @@ export async function importGmailResumes(input: {
   query: string;
   role: string;
   maxResults: number;
+  fullSync?: boolean;
 }): Promise<GmailImportResult> {
   return request<GmailImportResult>("/api/integrations/gmail/import", {
     method: "POST",

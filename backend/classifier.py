@@ -886,3 +886,139 @@ def is_candidate_resume(text: str, filename: str) -> tuple[bool, str]:
 
     return True, "Valid candidate resume"
 
+
+NON_APPLICATION_EMAIL_SUBJECTS = [
+    # Invoices, billing, receipts
+    "tax invoice",
+    "commercial invoice",
+    "proforma invoice",
+    "invoice #",
+    "invoice no",
+    "invoice date",
+    "payment receipt",
+    "receipt for your payment",
+    "payment confirmation",
+    "billing statement",
+    "account statement",
+    "monthly statement",
+    "statement of account",
+    "statement for",
+    "bank statement",
+    "credit card statement",
+    # Travel & transit tickets
+    "boarding pass",
+    "e-ticket",
+    "flight ticket",
+    "flight confirmation",
+    "airline booking",
+    "hotel reservation",
+    "booking confirmation",
+    "itinerary for",
+    # E-commerce, shipping & orders
+    "order confirmation",
+    "order #",
+    "shipping update",
+    "delivery notification",
+    "package delivered",
+    "tracking number",
+    # Marketing & notifications
+    "newsletter",
+    "weekly digest",
+    "monthly digest",
+    "security alert",
+    "password reset",
+    "subscription renewed",
+    "terms of service update",
+    # Payroll & compensation slips
+    "salary slip for the month",
+    "payslip for the month",
+]
+
+APPLICATION_EMAIL_SIGNALS = [
+    # Subject signals
+    "application for",
+    "applying for",
+    "job application",
+    "resume for",
+    "cv for",
+    "resume of",
+    "cv of",
+    "curriculum vitae",
+    "candidate profile",
+    "profile for the position",
+    "profile for the role",
+    "submission for the role",
+    "applying for the position",
+    "applying for the role",
+    "application:",
+    "candidate:",
+    "applicant:",
+    "job applicant",
+    "open application",
+    # Body keywords / phrases written by candidates
+    "please find attached my resume",
+    "please find attached my cv",
+    "find attached my resume",
+    "find attached my cv",
+    "attached my resume",
+    "attached my cv",
+    "attached is my resume",
+    "attached is my cv",
+    "enclosed my resume",
+    "enclosed my cv",
+    "enclosed is my resume",
+    "here is my resume",
+    "here is my cv",
+    "my resume is attached",
+    "my cv is attached",
+    "i am applying for",
+    "application for the position",
+    "application for the role",
+    "interest in the position",
+    "consider my profile",
+    "consider my candidature",
+    "consider my application",
+    "years of experience",
+    "current ctc",
+    "expected ctc",
+    "notice period",
+]
+
+
+def classify_email_context(subject: str, snippet: str, body: str = "") -> tuple[bool, bool, str]:
+    """
+    Evaluates email metadata and written text in 2 ways:
+    Returns (is_candidate_email, is_disqualified, reason)
+
+    Way 1: Detects if the email itself is explicitly NOT a recruitment email
+           (e.g. invoice, flight ticket, bank statement, order confirmation)
+           -> is_disqualified = True.
+    Way 2: Detects if the email contains written candidate application signals
+           (e.g. 'applying for', 'attached my resume', 'job application', 'notice period')
+           -> is_candidate_email = True.
+    """
+    lower_subject = subject.lower().strip()
+    combined_text = f"{lower_subject} {snippet.lower()} {body.lower()[:3000]}".strip()
+
+    # 1. Fast disqualification check: Non-recruitment emails (invoices, tickets, newsletters)
+    for pattern in NON_APPLICATION_EMAIL_SUBJECTS:
+        if pattern in lower_subject:
+            return False, True, f"Email subject indicates non-recruitment message ('{pattern}')."
+
+    # Also check snippet/body for non-recruitment indicators if subject is ambiguous
+    disqualifier_hits = [p for p in NON_APPLICATION_EMAIL_SUBJECTS if p in combined_text]
+    if len(disqualifier_hits) >= 2:
+        return False, True, f"Email content indicates non-recruitment message ({', '.join(disqualifier_hits[:2])})."
+
+    # 2. Candidate application signal detection
+    subject_has_app_signal = any(signal in lower_subject for signal in APPLICATION_EMAIL_SIGNALS[:18])
+    body_has_app_signal = any(signal in combined_text for signal in APPLICATION_EMAIL_SIGNALS)
+
+    if subject_has_app_signal or body_has_app_signal:
+        matched = [s for s in APPLICATION_EMAIL_SIGNALS if s in combined_text]
+        match_desc = matched[0] if matched else "application keywords"
+        return True, False, f"Candidate application email detected ('{match_desc}')."
+
+    return False, False, "General email without explicit application markers."
+
+

@@ -476,7 +476,23 @@ class SupabaseRepository:
             **connection,
             "updated_at": utc_now(),
         }
-        self.client.table("gmail_connections").upsert(row, on_conflict="organization_id,user_id,email").execute()
+        try:
+            self.client.table("gmail_connections").upsert(row, on_conflict="organization_id,user_id,email").execute()
+        except Exception:
+            safe_keys = {
+                "organization_id",
+                "user_id",
+                "email",
+                "access_token",
+                "refresh_token",
+                "scope",
+                "token_type",
+                "expiry_date",
+                "created_at",
+                "updated_at",
+            }
+            safe_row = {k: v for k, v in row.items() if k in safe_keys}
+            self.client.table("gmail_connections").upsert(safe_row, on_conflict="organization_id,user_id,email").execute()
 
     def delete_gmail_connection(self, context: RequestContext) -> None:
         self.client.table("gmail_connections").delete().eq("organization_id", context.organization_id).eq(

@@ -1,4 +1,4 @@
-from backend.classifier import analyze_resume, is_candidate_resume
+from backend.classifier import analyze_resume, classify_email_context, is_candidate_resume
 
 
 def test_extracts_candidate_fields_and_primary_skill() -> None:
@@ -155,6 +155,59 @@ def test_is_candidate_resume_rejects_non_resume_filenames_even_with_text() -> No
     valid2, reason2 = is_candidate_resume(text, "passport_copy.pdf")
     assert valid2 is False
     assert "filename indicates a non-resume" in reason2.lower()
+
+
+def test_classify_email_context_identifies_candidate_applications() -> None:
+    # 1. Subject has explicit application signal
+    is_cand, is_disq, reason = classify_email_context(
+        subject="Application for Senior Backend Engineer - Alex Doe",
+        snippet="Dear Hiring Manager, please find attached my resume.",
+        body="I am applying for the backend role. I have 6 years of experience.",
+    )
+    assert is_cand is True
+    assert is_disq is False
+    assert "application" in reason.lower()
+
+    # 2. Body has written application phrasing
+    is_cand2, is_disq2, reason2 = classify_email_context(
+        subject="Profile submission",
+        snippet="Attached is my CV for your review",
+        body="Please find attached my CV. Notice period is 30 days. Current CTC is 15 LPA.",
+    )
+    assert is_cand2 is True
+    assert is_disq2 is False
+
+
+def test_classify_email_context_disqualifies_invoices_tickets_and_statements() -> None:
+    # 1. Invoice email
+    is_cand, is_disq, reason = classify_email_context(
+        subject="Tax Invoice #INV-2024-8891 from AWS Cloud",
+        snippet="Your monthly billing statement is attached.",
+        body="Payment receipt. Amount due $450.",
+    )
+    assert is_cand is False
+    assert is_disq is True
+    assert "non-recruitment" in reason.lower()
+
+    # 2. Flight ticket / Boarding pass email
+    is_cand2, is_disq2, reason2 = classify_email_context(
+        subject="Your Boarding Pass & E-Ticket for AI-202",
+        snippet="Flight booking confirmation.",
+        body="Flight departure at 10:00 AM.",
+    )
+    assert is_cand2 is False
+    assert is_disq2 is True
+    assert "non-recruitment" in reason2.lower()
+
+    # 3. Monthly bank / payroll statement
+    is_cand3, is_disq3, reason3 = classify_email_context(
+        subject="Your Account Statement for August 2024",
+        snippet="Statement of account enclosed.",
+        body="Account balance and transactions.",
+    )
+    assert is_cand3 is False
+    assert is_disq3 is True
+
 
 
 

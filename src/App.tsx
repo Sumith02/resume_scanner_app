@@ -504,7 +504,8 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
   const [gmailRole, setGmailRole] = useState("Open application");
   const [gmailQuery, setGmailQuery] = useState(emptyGmailStatus.defaultQuery);
-  const [gmailMaxResults, setGmailMaxResults] = useState(10);
+  const [gmailMaxResults, setGmailMaxResults] = useState(50);
+  const [gmailFullSync, setGmailFullSync] = useState(false);
   const [importingGmail, setImportingGmail] = useState(false);
 
   // UI state
@@ -706,9 +707,15 @@ export default function App() {
       const res = await importGmailResumes({
         query: gmailQuery,
         role: gmailRole,
-        maxResults: gmailMaxResults
+        maxResults: gmailMaxResults,
+        fullSync: gmailFullSync
       });
       await loadWorkspace();
+      setGmailStatus(prev => ({
+        ...prev,
+        lastSyncedAt: res.lastSyncedAt || prev.lastSyncedAt,
+        syncCount: res.syncCount ?? prev.syncCount
+      }));
       setNotice(res.message);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gmail import failed.");
@@ -1264,6 +1271,8 @@ export default function App() {
                   onSetGmailQuery={setGmailQuery}
                   gmailMaxResults={gmailMaxResults}
                   onSetGmailMaxResults={setGmailMaxResults}
+                  gmailFullSync={gmailFullSync}
+                  onSetGmailFullSync={setGmailFullSync}
                   importingGmail={importingGmail}
                   onImportGmail={handleGmailImport}
                   onConnectGmail={handleConnectGmail}
@@ -2875,6 +2884,8 @@ function IntakeCenterView({
   onSetGmailQuery,
   gmailMaxResults,
   onSetGmailMaxResults,
+  gmailFullSync,
+  onSetGmailFullSync,
   importingGmail,
   onImportGmail,
   onConnectGmail,
@@ -2898,6 +2909,8 @@ function IntakeCenterView({
   onSetGmailQuery: (q: string) => void;
   gmailMaxResults: number;
   onSetGmailMaxResults: (n: number) => void;
+  gmailFullSync: boolean;
+  onSetGmailFullSync: (b: boolean) => void;
   importingGmail: boolean;
   onImportGmail: () => void;
   onConnectGmail: () => void;
@@ -3194,6 +3207,31 @@ function IntakeCenterView({
             )
           ) : (
             <div>
+              {gmailStatus.lastSyncedAt ? (
+                <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px", padding: "10px 14px", marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px" }}>
+                  <div>
+                    <div style={{ fontSize: "12px", fontWeight: 600, color: "#166534" }}>
+                      Incremental Sync Checkpoint Active
+                    </div>
+                    <div style={{ fontSize: "11px", color: "#15803d" }}>
+                      Last Synced: {new Date(gmailStatus.lastSyncedAt).toLocaleString()} ({gmailStatus.syncCount || 1} syncs completed)
+                    </div>
+                  </div>
+                  <span style={{ fontSize: "11px", background: "#dcfce7", color: "#166534", padding: "3px 8px", borderRadius: "12px", fontWeight: 600 }}>
+                    {gmailFullSync ? "Full scan selected" : "Continues from last checkpoint"}
+                  </span>
+                </div>
+              ) : (
+                <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "8px", padding: "10px 14px", marginBottom: "16px" }}>
+                  <div style={{ fontSize: "12px", fontWeight: 600, color: "#1e40af" }}>
+                    First-Time Initial Ingestion
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#2563eb" }}>
+                    This first run will scan all candidate resumes and CVs from the starting of your mailbox. Subsequent runs will automatically continue incrementally.
+                  </div>
+                </div>
+              )}
+
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "16px" }}>
                 <div>
                   <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "4px" }}>Target Role / Requisition</label>
@@ -3212,22 +3250,36 @@ function IntakeCenterView({
                     value={gmailMaxResults}
                     onChange={(e) => onSetGmailMaxResults(Number(e.target.value))}
                     min={1}
-                    max={50}
+                    max={500}
                     style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "13px" }}
                   />
                 </div>
               </div>
 
-              <div style={{ marginBottom: "16px" }}>
+              <div style={{ marginBottom: "14px" }}>
                 <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "4px" }}>Inbox Search Filter</label>
                 <input
                   type="text"
                   value={gmailQuery}
                   onChange={(e) => onSetGmailQuery(e.target.value)}
-                  placeholder="has:attachment (filename:pdf OR filename:docx) newer_than:30d"
+                  placeholder="has:attachment (filename:pdf OR filename:docx OR filename:txt)"
                   style={{ width: "100%", padding: "8px 12px", borderRadius: "6px", border: "1px solid var(--line)", fontSize: "13px" }}
                 />
               </div>
+
+              {gmailStatus.lastSyncedAt && (
+                <div style={{ marginBottom: "16px" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", color: "#334155", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={gmailFullSync}
+                      onChange={(e) => onSetGmailFullSync(e.target.checked)}
+                      style={{ cursor: "pointer" }}
+                    />
+                    <span><strong>Full re-scan from starting</strong> (ignores last checkpoint and scans all historical emails from the beginning)</span>
+                  </label>
+                </div>
+              )}
 
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <button

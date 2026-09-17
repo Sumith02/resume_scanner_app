@@ -243,6 +243,8 @@ export interface GmailStatus {
   connected: boolean;
   email: string;
   updatedAt: string;
+  lastSyncedAt?: string;
+  syncCount?: number;
   defaultQuery: string;
   message: string;
   redirectUri?: string;
@@ -255,6 +257,9 @@ export interface GmailImportResult {
   importedCount: number;
   scannedMessages: number;
   skippedAttachments: number;
+  isIncremental?: boolean;
+  lastSyncedAt?: string;
+  syncCount?: number;
   message: string;
 }
 

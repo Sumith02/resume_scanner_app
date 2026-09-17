@@ -248,3 +248,133 @@ def test_gmail_import_filters_collateral_without_resume_in_name(
     assert result["skippedAttachments"] >= 1
 
 
+def test_gmail_first_time_sync_from_start_and_subsequent_incremental_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import base64
+    from typing import Any
+
+    service, context = _gmail_service(tmp_path)
+    service.repository.save_gmail_connection(
+        {
+            "email": "recruiter@example.com",
+            "access_token": service.cipher.encrypt("valid-access-token"),
+            "refresh_token": service.cipher.encrypt("valid-refresh-token"),
+            "scope": "gmail.readonly",
+            "token_type": "Bearer",
+            "expiry_date": "2099-01-01T00:00:00Z",
+        },
+        context,
+    )
+
+    captured_queries: list[str] = []
+
+    def mock_gmail_get(
+        path: str, connection: dict[str, Any], _context: RequestContext, params: dict[str, str] | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if path == "/messages":
+            query_used = params.get("q", "") if params else ""
+            captured_queries.append(query_used)
+            return {"messages": [{"id": "msg-sync-1"}]}, connection
+        if path == "/messages/msg-sync-1":
+            return {
+                "id": "msg-sync-1",
+                "internalDate": "1726543200000",
+                "payload": {
+                    "headers": [
+                        {"name": "Subject", "value": "Job Application: Cloud Architect"},
+                        {"name": "From", "value": "arjun@example.com"},
+                    ],
+                    "parts": [
+                        {
+                            "filename": "Arjun_Resume.txt",
+                            "mimeType": "text/plain",
+                            "body": {
+                                "data": base64.urlsafe_b64encode(
+                                    b"Arjun Rao\narjun@example.com\nAWS, GCP, Terraform, Kubernetes\n7 years cloud architect."
+                                ).decode()
+                            },
+                        }
+                    ],
+                },
+            }, connection
+        raise ValueError(f"Unexpected path: {path}")
+
+    monkeypatch.setattr(service, "_gmail_get", mock_gmail_get)
+
+    # 1. First time import: should fetch from starting (no after: in query)
+    res1 = service.import_resumes(query="", role="Cloud Architect", max_results=25, context=context)
+    assert res1["isIncremental"] is False
+    assert "after:" not in captured_queries[-1]
+    assert res1["importedCount"] == 1
+    assert res1["syncCount"] == 1
+    assert res1["lastSyncedAt"]
+
+    # 2. Second time import: should continue incrementally from where it left off (after: added to query)
+    res2 = service.import_resumes(query="", role="Cloud Architect", max_results=25, context=context)
+    assert res2["isIncremental"] is True
+    assert "after:" in captured_queries[-1]
+    assert res2["syncCount"] == 2
+
+    # 3. Explicit full sync: should ignore watermark and fetch from starting
+    res3 = service.import_resumes(query="", role="Cloud Architect", max_results=25, context=context, full_sync=True)
+    assert res3["isIncremental"] is False
+    assert "after:" not in captured_queries[-1]
+    assert res3["syncCount"] == 3
+
+
+def test_gmail_email_level_disqualification_skips_invoices_without_parsing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import base64
+    from typing import Any
+
+    service, context = _gmail_service(tmp_path)
+    service.repository.save_gmail_connection(
+        {
+            "email": "recruiter@example.com",
+            "access_token": service.cipher.encrypt("valid-access-token"),
+            "refresh_token": service.cipher.encrypt("valid-refresh-token"),
+            "scope": "gmail.readonly",
+            "token_type": "Bearer",
+            "expiry_date": "2099-01-01T00:00:00Z",
+        },
+        context,
+    )
+
+    def mock_gmail_get(
+        path: str, connection: dict[str, Any], _context: RequestContext, params: dict[str, str] | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if path == "/messages":
+            return {"messages": [{"id": "msg-invoice"}]}, connection
+        if path == "/messages/msg-invoice":
+            return {
+                "id": "msg-invoice",
+                "payload": {
+                    "headers": [
+                        {"name": "Subject", "value": "Tax Invoice #INV-2024-990 from Cloud Vendor"},
+                    ],
+                    "parts": [
+                        {
+                            "filename": "invoice_attachment.pdf",
+                            "mimeType": "application/pdf",
+                            "body": {
+                                "data": base64.urlsafe_b64encode(b"Some PDF content").decode()
+                            },
+                        }
+                    ],
+                },
+            }, connection
+        raise ValueError(f"Unexpected path: {path}")
+
+    monkeypatch.setattr(service, "_gmail_get", mock_gmail_get)
+
+    result = service.import_resumes(query="invoice", role="Open application", max_results=25, context=context)
+
+    # Email level check should skip the email immediately without creating any applications
+    assert result["importedCount"] == 0
+    assert result["skippedAttachments"] == 1
+    assert len(result["applications"]) == 0
+
+
+

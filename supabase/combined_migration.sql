@@ -602,3 +602,14 @@ create index if not exists candidate_skills_candidate_idx on public.candidate_sk
 create index if not exists candidate_events_candidate_idx on public.candidate_events (candidate_id, created_at desc);
 create index if not exists candidate_job_matches_job_score_idx on public.candidate_job_matches (job_id, overall_score desc);
 create index if not exists processing_jobs_org_status_idx on public.processing_jobs (organization_id, status);
+
+-- Migration 005: Gmail Sync Watermark and Checkpoint Tracking
+alter table public.gmail_connections
+add column if not exists last_synced_at timestamptz,
+add column if not exists last_message_date bigint,
+add column if not exists sync_count integer default 0;
+
+comment on column public.gmail_connections.last_synced_at is 'Timestamp of the last successful resume ingestion sync from Gmail';
+comment on column public.gmail_connections.last_message_date is 'Epoch millisecond timestamp of the latest email message processed';
+comment on column public.gmail_connections.sync_count is 'Total number of synchronization passes executed';
+

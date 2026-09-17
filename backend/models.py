@@ -96,11 +96,10 @@ class CampaignCreateRequest(BaseModel):
 
 
 class GmailImportRequest(BaseModel):
-    query: str = Field(
-        default="has:attachment (filename:pdf OR filename:docx OR filename:txt) newer_than:30d", max_length=500
-    )
+    query: str = Field(default="", max_length=500)
     role: str = Field(default="Open application", max_length=180)
-    maxResults: int = Field(default=25, ge=1, le=50)
+    maxResults: int = Field(default=50, ge=1, le=500)
+    fullSync: bool = Field(default=False)
 
 
 class TeamInviteRequest(BaseModel):

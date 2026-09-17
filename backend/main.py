@@ -633,7 +633,9 @@ def gmail_callback(code: str = "", state: str = "", error: str = "") -> Redirect
 def gmail_import(payload: GmailImportRequest, context: Context) -> dict[str, object]:
     _, _, _, gmail, _ = services.require()
     require_role(context, "owner", "admin", "recruiter")
-    return gmail.import_resumes(payload.query, payload.role, payload.maxResults, context)
+    return gmail.import_resumes(
+        payload.query, payload.role, payload.maxResults, context, full_sync=payload.fullSync
+    )
 
 
 @app.post("/api/integrations/gmail/disconnect")

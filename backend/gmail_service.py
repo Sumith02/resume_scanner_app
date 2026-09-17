@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 
-from .classifier import NON_RESUME_FILENAMES, is_candidate_resume
+from .classifier import NON_RESUME_FILENAMES, classify_email_context, is_candidate_resume
 from .config import Settings
 from .crypto import SignedState, TokenCipher
 from .errors import AppError, ServiceUnavailableError
@@ -20,8 +20,7 @@ from .resume_service import ALLOWED_EXTENSIONS, MIME_BY_EXTENSION, ResumeService
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 DEFAULT_QUERY = (
     "has:attachment (filename:pdf OR filename:docx OR filename:txt) "
-    "(resume OR cv OR \"curriculum vitae\" OR applicant OR application OR candidate OR \"job application\" OR apply) "
-    "newer_than:60d"
+    "(resume OR cv OR \"curriculum vitae\" OR applicant OR application OR candidate OR \"job application\" OR apply)"
 )
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -70,6 +69,8 @@ class GmailService:
             "connected": bool(connection),
             "email": connection.get("email", "") if connection else "",
             "updatedAt": connection.get("updated_at", "") if connection else "",
+            "lastSyncedAt": connection.get("last_synced_at") or connection.get("lastSyncedAt") or "",
+            "syncCount": int(connection.get("sync_count", 0)) if connection else 0,
             "defaultQuery": DEFAULT_QUERY,
             "redirectUri": self.settings.google_redirect_uri,
             "missingKeys": missing,
@@ -164,25 +165,57 @@ class GmailService:
         self.repository.delete_gmail_connection(context)
         self.repository.audit(context, "gmail.disconnected", "gmail_connection", None)
 
-    def import_resumes(self, query: str, role: str, max_results: int, context: RequestContext) -> dict[str, object]:
+    def import_resumes(
+        self,
+        query: str,
+        role: str,
+        max_results: int,
+        context: RequestContext,
+        full_sync: bool = False,
+    ) -> dict[str, object]:
         self._require_configured()
         connection = self.repository.get_gmail_connection(context)
         if not connection:
             raise AppError("Connect Gmail before importing resumes.", 409, "gmail_not_connected")
-        query = (query.strip() or DEFAULT_QUERY)[:500]
-        max_results = max(1, min(max_results, 50))
-        listing, connection = self._gmail_get(
-            "/messages",
-            connection,
-            context,
-            params={"q": query, "maxResults": str(max_results)},
-        )
-        messages = listing.get("messages") or []
+
+        user_query = (query.strip() or DEFAULT_QUERY)[:500]
+        max_results = max(1, min(max_results, 500))
+
+        last_synced_at = connection.get("last_synced_at") or connection.get("lastSyncedAt")
+        is_incremental = bool(last_synced_at and not full_sync)
+
+        # On subsequent runs: continue incrementally from where it left off last time
+        effective_query = user_query
+        if is_incremental:
+            last_epoch = int(_parse_time(str(last_synced_at)))
+            if last_epoch > 0:
+                after_epoch = max(0, last_epoch - 60)
+                if "after:" not in user_query.lower() and "newer_than:" not in user_query.lower():
+                    effective_query = f"{user_query} after:{after_epoch}"
+
+        # Fetch messages with pagination support (so first-time fetch can retrieve all from starting)
+        messages: list[dict[str, Any]] = []
+        page_token = None
+        while len(messages) < max_results:
+            batch_size = min(100, max_results - len(messages))
+            params: dict[str, str] = {"q": effective_query, "maxResults": str(batch_size)}
+            if page_token:
+                params["pageToken"] = page_token
+            listing, connection = self._gmail_get("/messages", connection, context, params=params)
+            page_messages = listing.get("messages") or []
+            if not page_messages:
+                break
+            messages.extend(page_messages)
+            page_token = listing.get("nextPageToken")
+            if not page_token:
+                break
+
         skipped = 0
         attachments_seen = 0
+        newest_message_timestamp = 0
 
         def resume_files():
-            nonlocal attachments_seen, connection, skipped
+            nonlocal attachments_seen, connection, skipped, newest_message_timestamp
             for message_ref in messages:
                 message_id = str(message_ref.get("id") or "")
                 if not message_id:
@@ -191,8 +224,31 @@ class GmailService:
                     f"/messages/{message_id}", connection, context, params={"format": "full"}
                 )
 
-                # 1. Collect all attachment parts with supported resume extensions
+                # Track internalDate for incremental watermark checkpoint
+                msg_internal_date = int(message.get("internalDate") or 0)
+                if msg_internal_date > newest_message_timestamp:
+                    newest_message_timestamp = msg_internal_date
+
+                # Extract email context: Subject, snippet, sender, body text
+                email_ctx = _extract_email_context(message)
+
+                # Way 1: Analyze Email Level Context (Subject, Snippet, Body Content)
+                # Disqualifies non-recruitment emails (invoices, tickets, newsletters, bank statements)
+                # directly at the email level without wasting time/quota parsing PDFs!
+                is_candidate_email, is_disqualified, _ = classify_email_context(
+                    subject=email_ctx["subject"],
+                    snippet=email_ctx["snippet"],
+                    body=email_ctx["body"],
+                )
+
                 raw_parts = _flatten_parts(message.get("payload") or {})
+                part_attachments = [p for p in raw_parts if p.get("filename")]
+
+                if is_disqualified:
+                    skipped += len(part_attachments)
+                    continue
+
+                # Way 2: Attachment Selection & Structural Classification
                 candidate_parts: list[tuple[dict[str, Any], str, str]] = []
                 for part in raw_parts:
                     filename = str(part.get("filename") or "").strip()
@@ -216,7 +272,7 @@ class GmailService:
                 if not candidate_parts:
                     continue
 
-                # 2. Attachment Prioritization per Message:
+                # Attachment Prioritization per Message:
                 # When candidates submit an application with multiple files (e.g. CV + degree + cover letter),
                 # prioritize explicit resume/CV files and ignore accompanying collateral.
                 explicit_resumes = [
@@ -227,7 +283,7 @@ class GmailService:
                 parts_to_process = explicit_resumes if explicit_resumes else candidate_parts
                 skipped += len(candidate_parts) - len(parts_to_process)
 
-                # 3. Content verification: download and inspect each candidate attachment
+                # Content verification: download and inspect each candidate attachment
                 for part, filename, extension in parts_to_process:
                     attachments_seen += 1
                     if attachments_seen > self.settings.max_upload_files:
@@ -276,13 +332,44 @@ class GmailService:
             role=role,
         )
         skipped += duplicate_skips
+
+        # Save incremental watermark
+        now_iso = utc_now()
+        sync_count = int(connection.get("sync_count", 0)) + 1
+        updated_connection = {
+            **connection,
+            "last_synced_at": now_iso,
+            "last_message_date": newest_message_timestamp or connection.get("last_message_date", 0),
+            "sync_count": sync_count,
+        }
+        self.repository.save_gmail_connection(updated_connection, context)
+
+        self.repository.audit(
+            context,
+            "gmail.imported",
+            "gmail_connection",
+            None,
+            {
+                "importedCount": len(applications),
+                "scannedMessages": len(messages),
+                "skippedAttachments": skipped,
+                "isIncremental": is_incremental,
+                "lastSyncedAt": now_iso,
+                "syncCount": sync_count,
+            },
+        )
+
+        mode_label = "incremental update" if is_incremental else "full sync from start"
         return {
             "applications": applications,
             "failures": failures,
             "importedCount": len(applications),
             "scannedMessages": len(messages),
             "skippedAttachments": skipped,
-            "message": f"Imported {len(applications)} resume{'s' if len(applications) != 1 else ''} from Gmail.",
+            "isIncremental": is_incremental,
+            "lastSyncedAt": now_iso,
+            "syncCount": sync_count,
+            "message": f"Imported {len(applications)} resume{'s' if len(applications) != 1 else ''} from Gmail ({mode_label}).",
         }
 
     def _gmail_get(
@@ -388,6 +475,41 @@ def _flatten_parts(part: dict[str, Any]) -> list[dict[str, Any]]:
     for child in part.get("parts") or []:
         result.extend(_flatten_parts(child))
     return result
+
+
+def _extract_email_context(message: dict[str, Any]) -> dict[str, Any]:
+    payload = message.get("payload") or {}
+    headers_list = payload.get("headers") or []
+    headers: dict[str, str] = {}
+    for h in headers_list:
+        name = str(h.get("name") or "").lower()
+        if name in {"subject", "from", "to", "date"}:
+            headers[name] = str(h.get("value") or "")
+
+    subject = headers.get("subject", "")
+    sender = headers.get("from", "")
+    snippet = str(message.get("snippet") or "")
+
+    body_chunks: list[str] = []
+    for part in _flatten_parts(payload):
+        mime = str(part.get("mimeType") or "").lower()
+        if mime == "text/plain":
+            body_obj = part.get("body") or {}
+            encoded = body_obj.get("data")
+            if encoded:
+                try:
+                    body_chunks.append(_decode_base64url(str(encoded)).decode("utf-8", errors="ignore"))
+                except Exception:
+                    pass
+
+    full_body = "\n".join(body_chunks).strip() if body_chunks else snippet
+
+    return {
+        "subject": subject,
+        "sender": sender,
+        "snippet": snippet,
+        "body": full_body[:4000],
+    }
 
 
 def _decode_base64url(value: str) -> bytes:
