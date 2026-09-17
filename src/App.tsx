@@ -632,7 +632,7 @@ export default function App() {
     }
   }
 
-  // Load Candidate Detail Dossier
+  // Candidate Detail Dossier Hook
   useEffect(() => {
     if (!activeCandidateId) {
       setActiveCandidateDetail(null);
@@ -642,6 +642,23 @@ export default function App() {
       .then((data) => setActiveCandidateDetail(data))
       .catch(() => setActiveCandidateDetail(null));
   }, [activeCandidateId]);
+
+  // User Profile & Role derivation (Computed unconditionally before any early returns to obey React Rules of Hooks)
+  const userEmail = session?.user?.email?.trim().toLowerCase() || "";
+  const isMasterAdmin = userEmail === "sumithsbhatt@gmail.com";
+  const userRole: "owner" | "admin" | "recruiter" | "hiring_manager" | "viewer" =
+    userProfile?.workspace?.role ||
+    userProfile?.user?.role ||
+    (isMasterAdmin ? "owner" : "recruiter");
+  const isAdmin = userRole === "owner" || userRole === "admin";
+  const navItems = useMemo(() => getNavItems(userRole), [userRole]);
+
+  // Keep activeView valid for the user's role
+  useEffect(() => {
+    if (navItems.length > 0 && !navItems.some((item) => item.key === activeView)) {
+      setActiveView(navItems[0].key);
+    }
+  }, [navItems, activeView]);
 
   // Handle Global Natural Search
   async function handleGlobalSearch(e?: FormEvent, queryOverride?: string) {
@@ -847,21 +864,6 @@ export default function App() {
     );
   }
 
-  const userEmail = session?.user?.email?.trim().toLowerCase() || "";
-  const isMasterAdmin = userEmail === "sumithsbhatt@gmail.com";
-  const userRole: "owner" | "admin" | "recruiter" | "hiring_manager" | "viewer" =
-    userProfile?.workspace?.role ||
-    userProfile?.user?.role ||
-    (isMasterAdmin ? "owner" : "recruiter");
-  const isAdmin = userRole === "owner" || userRole === "admin";
-  const navItems = useMemo(() => getNavItems(userRole), [userRole]);
-
-  useEffect(() => {
-    if (navItems.length > 0 && !navItems.some((item) => item.key === activeView)) {
-      setActiveView(navItems[0].key);
-    }
-  }, [navItems, activeView]);
-
   const mustChangePassword =
     !isMasterAdmin &&
     Boolean(
@@ -873,7 +875,7 @@ export default function App() {
   if (mustChangePassword) {
     return (
       <MandatoryPasswordChangeGuard
-        userEmail={session.user.email || userProfile?.user?.email || ""}
+        userEmail={session?.user?.email || userProfile?.user?.email || ""}
         onPasswordChanged={(updatedUser) => {
           setSession((prev) => (prev ? { ...prev, user: updatedUser } : null));
           loadWorkspace();
@@ -1574,7 +1576,7 @@ function CommandCenterView({
   const targetRoleTitle = targetJob ? targetJob.title : "Software Engineer";
   const matchingCandidatesCount = targetJob
     ? candidates.filter((c) =>
-        c.matchedSkills.some((s) => targetRoleTitle.toLowerCase().includes(s.toLowerCase())) ||
+        (c.matchedSkills || []).some((s) => targetRoleTitle.toLowerCase().includes(s.toLowerCase())) ||
         c.primaryDomainKey === "backend" ||
         c.primaryDomainKey === "frontend"
       ).length
@@ -1786,9 +1788,9 @@ function CandidatesDatabaseView({
     return candidates.filter((c) => {
       const matchSearch =
         !searchTerm ||
-        c.canonicalName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        c.matchedSkills.some((s) => s.toLowerCase().includes(searchTerm.toLowerCase())) ||
-        c.location.toLowerCase().includes(searchTerm.toLowerCase());
+        (c.canonicalName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (c.matchedSkills || []).some((s) => s.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (c.location || "").toLowerCase().includes(searchTerm.toLowerCase());
       const matchStatus = !statusFilter || c.status === statusFilter;
       return matchSearch && matchStatus;
     });
@@ -1898,13 +1900,13 @@ function CandidatesDatabaseView({
                 <td style={{ padding: "12px 14px" }}>{c.experienceYears ? `${c.experienceYears} yrs` : "—"}</td>
                 <td style={{ padding: "12px 14px" }}>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", maxWidth: "260px" }}>
-                    {c.matchedSkills.slice(0, 4).map((sk, idx) => (
+                    {(c.matchedSkills || []).slice(0, 4).map((sk, idx) => (
                       <span key={idx} style={{ background: "#f1f5f9", padding: "2px 6px", borderRadius: "4px", fontSize: "11px" }}>
                         {sk}
                       </span>
                     ))}
-                    {c.matchedSkills.length > 4 && (
-                      <span style={{ fontSize: "11px", color: "var(--muted)" }}>+{c.matchedSkills.length - 4}</span>
+                    {(c.matchedSkills || []).length > 4 && (
+                      <span style={{ fontSize: "11px", color: "var(--muted)" }}>+{(c.matchedSkills || []).length - 4}</span>
                     )}
                   </div>
                 </td>
@@ -2465,7 +2467,7 @@ function PipelineKanbanView({
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span style={{ fontSize: "11px", background: "#f1f5f9", padding: "2px 6px", borderRadius: "4px" }}>
-                      {cand.matchedSkills[0] || "Candidate"}
+                      {(cand.matchedSkills || [])[0] || "Candidate"}
                     </span>
                     <select
                       value={cand.status}
@@ -2572,7 +2574,7 @@ function CandidateComparisonView({
                 {candidates.map((c) => (
                   <td key={c.id} style={{ padding: "14px" }}>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
-                      {c.matchedSkills.map((sk, idx) => (
+                      {(c.matchedSkills || []).map((sk, idx) => (
                         <span key={idx} style={{ background: "#f1f5f9", padding: "2px 6px", borderRadius: "4px", fontSize: "11px" }}>
                           {sk}
                         </span>
