@@ -128,6 +128,7 @@ class Repository(Protocol):
     def delete_resume_objects(self, paths: list[str]) -> None: ...
     def opt_out_email(self, organization_id: str, email: str) -> None: ...
     def has_external_id(self, context: RequestContext, external_id: str) -> bool: ...
+    def get_user_by_email(self, email: str) -> dict[str, Any] | None: ...
     def list_team_members(self, context: RequestContext) -> list[dict[str, Any]]: ...
     def invite_team_member(self, context: RequestContext, email: str, role: str) -> dict[str, Any]: ...
     def provision_user(
@@ -592,6 +593,42 @@ class SupabaseRepository:
             "role": role,
             "joinedAt": utc_now(),
             "invited": invited,
+        }
+
+    def get_user_by_email(self, email: str) -> dict[str, Any] | None:
+        clean = email.strip().lower()
+        rows = (
+            self.client.table("profiles")
+            .select("id,email,full_name,default_organization_id")
+            .ilike("email", clean)
+            .limit(1)
+            .execute()
+            .data
+        )
+        if not rows:
+            return None
+        prof = rows[0]
+        user_id = str(prof["id"])
+        org_id = str(prof.get("default_organization_id") or "")
+        role = "recruiter"
+        if org_id:
+            m = (
+                self.client.table("organization_members")
+                .select("role")
+                .eq("organization_id", org_id)
+                .eq("user_id", user_id)
+                .limit(1)
+                .execute()
+                .data
+            )
+            if m:
+                role = m[0].get("role", "recruiter")
+        return {
+            "userId": user_id,
+            "email": clean,
+            "fullName": prof.get("full_name", ""),
+            "organizationId": org_id,
+            "role": role,
         }
 
     def provision_user(
@@ -1493,6 +1530,7 @@ class LocalRepository:
                         )
                         candidates_map[c_id] = {
                             "id": c_id,
+                            "organizationId": app.get("organizationId") or "org-master",
                             "canonicalName": app.get("candidateName", "Unknown Candidate"),
                             "blindId": intel["blindId"],
                             "email": app.get("email", ""),
@@ -1539,8 +1577,10 @@ class LocalRepository:
 
     def list_applications(self, context: RequestContext) -> list[dict[str, Any]]:
         apps = self._read()["applications"]
-        if context.organization_id and context.organization_id != "local-organization":
-            apps = [a for a in apps if a.get("organizationId") == context.organization_id]
+        target_org = context.organization_id or "org-master"
+        if target_org == "local-organization":
+            target_org = "org-master"
+        apps = [a for a in apps if (a.get("organizationId") or "org-master") == target_org]
         return sorted(apps, key=lambda item: item.get("uploadedAt", ""), reverse=True)
 
     def insert_applications(self, applications: list[dict[str, Any]], context: RequestContext) -> list[dict[str, Any]]:
@@ -1633,9 +1673,10 @@ class LocalRepository:
 
     def list_jobs(self, context: RequestContext) -> list[dict[str, Any]]:
         jobs = self._read()["jobs"]
-        if context.organization_id and context.organization_id != "local-organization":
-            jobs = [j for j in jobs if j.get("organizationId") == context.organization_id]
-        return jobs
+        target_org = context.organization_id or "org-master"
+        if target_org == "local-organization":
+            target_org = "org-master"
+        return [j for j in jobs if (j.get("organizationId") or "org-master") == target_org]
 
     def create_job(self, values: dict[str, Any], context: RequestContext) -> dict[str, Any]:
         now = utc_now()
@@ -1722,16 +1763,28 @@ class LocalRepository:
     def has_external_id(self, context: RequestContext, external_id: str) -> bool:
         return any(item.get("sourceExternalId") == external_id for item in self._read()["applications"])
 
+    def get_user_by_email(self, email: str) -> dict[str, Any] | None:
+        clean = email.strip().lower()
+        for u in self._read().get("users", []):
+            if u.get("email", "").strip().lower() == clean:
+                return u
+        return None
+
     def list_team_members(self, context: RequestContext) -> list[dict[str, Any]]:
-        base = [
-            {
-                "userId": context.user_id,
-                "email": context.email,
-                "fullName": "Workspace Owner",
-                "role": "owner",
-                "joinedAt": utc_now(),
-            }
-        ]
+        target_org = context.organization_id or "org-master"
+        if target_org == "local-organization":
+            target_org = "org-master"
+        base = []
+        if target_org == "org-master":
+            base = [
+                {
+                    "userId": "usr-master",
+                    "email": "sumithsbhatt@gmail.com",
+                    "fullName": "Sumith Bhatt (Master Admin)",
+                    "role": "owner",
+                    "joinedAt": utc_now(),
+                }
+            ]
         stored_users = self._read().get("users", [])
         return base + [
             {
@@ -1744,7 +1797,7 @@ class LocalRepository:
                 "joinedAt": u.get("joinedAt", utc_now()),
             }
             for u in stored_users
-            if u.get("userId") != context.user_id
+            if u.get("userId") != context.user_id and (u.get("organizationId") or "org-master") == target_org
         ]
 
     def provision_user(
@@ -1759,7 +1812,11 @@ class LocalRepository:
         data = self._read()
         users = data.setdefault("users", [])
         existing = next((u for u in users if u.get("email", "").lower() == email.lower()), None)
+        target_org = context.organization_id or "org-master"
+        if target_org == "local-organization":
+            target_org = "org-master"
         if existing:
+            existing["organizationId"] = target_org
             existing["temporaryPassword"] = temporary_password
             existing["mustChangePassword"] = True
             existing["role"] = role
@@ -1768,6 +1825,7 @@ class LocalRepository:
         else:
             user = {
                 "userId": f"usr-{uuid.uuid4().hex[:10]}",
+                "organizationId": target_org,
                 "email": email,
                 "fullName": full_name or "Provisioned Member",
                 "role": role,
@@ -1851,13 +1909,25 @@ class LocalRepository:
 
     def list_candidates(self, context: RequestContext, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         cands = self._read().get("candidates", [])
-        if context.organization_id and context.organization_id != "local-organization":
-            cands = [c for c in cands if c.get("organizationId") == context.organization_id]
+        target_org = context.organization_id or "org-master"
+        if target_org == "local-organization":
+            target_org = "org-master"
+        cands = [c for c in cands if (c.get("organizationId") or "org-master") == target_org]
         return sorted(cands, key=lambda c: c.get("lastActivityAt", ""), reverse=True)
 
     def get_candidate(self, candidate_id: str, context: RequestContext) -> dict[str, Any] | None:
         data = self._read()
-        return next((c for c in data["candidates"] if c["id"] == candidate_id), None)
+        target_org = context.organization_id or "org-master"
+        if target_org == "local-organization":
+            target_org = "org-master"
+        return next(
+            (
+                c
+                for c in data["candidates"]
+                if c["id"] == candidate_id and (c.get("organizationId") or "org-master") == target_org
+            ),
+            None,
+        )
 
     def update_candidate(self, candidate_id: str, changes: dict[str, Any], context: RequestContext) -> dict[str, Any] | None:
         data = self._read()

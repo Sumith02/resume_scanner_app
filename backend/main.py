@@ -208,14 +208,32 @@ def health() -> dict[str, object]:
 
 @app.get("/api/me")
 def me(context: Context) -> dict[str, object]:
+    repository, _, _, _, _ = services.require()
     is_master = context.email.strip().lower() == "sumithsbhatt@gmail.com"
+    role = "owner" if is_master else context.role
+    org_name = "Resume Scanner Enterprise"
+    if context.organization_id not in ("org-master", "local-organization"):
+        org_name = f"{context.email.split('@')[0].title()}'s Organization"
+    full_name = "Sumith Bhatt (Master Admin)" if is_master else ""
+    stored = repository.get_user_by_email(context.email)
+    if stored and stored.get("fullName"):
+        full_name = stored["fullName"]
+    elif not full_name:
+        full_name = context.email.split("@")[0].title()
+
     return {
         "user": {
             "id": context.user_id,
             "email": context.email,
+            "fullName": full_name,
+            "role": role,
             "mustChangePassword": False if is_master else context.must_change_password,
         },
-        "workspace": {"id": context.organization_id, "role": "owner" if is_master else context.role},
+        "workspace": {
+            "id": context.organization_id,
+            "name": org_name,
+            "role": role,
+        },
     }
 
 

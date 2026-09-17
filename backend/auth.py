@@ -37,9 +37,10 @@ class AuthService:
             if isinstance(self.repository, LocalRepository):
                 token = _bearer_token(authorization)
                 user_email = "sumithsbhatt@gmail.com"
-                user_id = "local-user"
-                org_id = "local-organization"
+                user_id = "usr-master"
+                org_id = "org-master"
                 role = "owner"
+                must_change = False
 
                 if token:
                     # Parse user identity from local token format (e.g. 'local:<email>')
@@ -53,10 +54,26 @@ class AuthService:
 
                     if raw_email:
                         user_email = raw_email
-                        user_hash = hashlib.md5(user_email.encode("utf-8")).hexdigest()[:8]
-                        user_id = f"usr-{user_hash}"
-                        org_id = f"org-{user_hash}"
-                        role = "owner" if is_master_admin(user_email) else "recruiter"
+                        if is_master_admin(user_email):
+                            user_id = "usr-master"
+                            org_id = "org-master"
+                            role = "owner"
+                            must_change = False
+                        else:
+                            # Check if user was provisioned by an administrator into an organization
+                            stored_user = self.repository.get_user_by_email(user_email)
+                            if stored_user:
+                                user_id = stored_user.get("userId") or f"usr-{hashlib.md5(user_email.encode('utf-8')).hexdigest()[:8]}"
+                                org_id = stored_user.get("organizationId") or "org-master"
+                                role = stored_user.get("role") or "recruiter"
+                                must_change = bool(stored_user.get("mustChangePassword", False))
+                            else:
+                                # Independent user registration / separate tenant workspace
+                                user_hash = hashlib.md5(user_email.encode("utf-8")).hexdigest()[:8]
+                                user_id = f"usr-{user_hash}"
+                                org_id = f"org-{user_hash}"
+                                role = "owner"
+                                must_change = False
 
                 return RequestContext(
                     user_id=user_id,
@@ -64,6 +81,7 @@ class AuthService:
                     organization_id=org_id,
                     role=role,
                     authenticated=bool(token),
+                    must_change_password=must_change,
                 )
             raise ServiceUnavailableError("Authentication must be enabled when using the production database.")
 
@@ -111,7 +129,7 @@ def require_role(context: RequestContext, *allowed: str) -> None:
     if is_master_admin(context.email):
         return
     if context.role not in allowed:
-        raise AppError("You do not have permission to perform this action.", 403, "permission_denied")
+        raise AppError("You do not have permission to perform this action. Administrator privileges required.", 403, "permission_denied")
 
 
 def _bearer_token(value: str | None) -> str:

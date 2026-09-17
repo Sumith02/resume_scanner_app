@@ -227,3 +227,37 @@ def test_agency_and_compliance(tmp_path: Path, monkeypatch):
     )
     assert export_res.status_code == 200
     assert "exportId" in export_res.json()
+
+
+def test_role_based_permissions_and_scoping(tmp_path: Path, monkeypatch):
+    client = _setup_test_env(tmp_path, monkeypatch)
+    admin_auth = {"Authorization": "Bearer local:sumithsbhatt@gmail.com"}
+
+    # 1. Admin checks /api/me
+    me_admin = client.get("/api/me", headers=admin_auth)
+    assert me_admin.status_code == 200
+    assert me_admin.json()["user"]["role"] == "owner"
+
+    # 2. Admin provisions a recruiter
+    prov_res = client.post(
+        "/api/team/provision",
+        headers=admin_auth,
+        json={"email": "recruiter1@company.com", "fullName": "Jane Recruiter", "role": "recruiter"},
+    )
+    assert prov_res.status_code == 201
+
+    # 3. Recruiter checks /api/me
+    recruiter_auth = {"Authorization": "Bearer local:recruiter1@company.com"}
+    me_recruiter = client.get("/api/me", headers=recruiter_auth)
+    assert me_recruiter.status_code == 200
+    assert me_recruiter.json()["user"]["role"] == "recruiter"
+    # Belongs to same organization as admin
+    assert me_recruiter.json()["workspace"]["id"] == me_admin.json()["workspace"]["id"]
+
+    # 4. Recruiter tries to provision another user - must be 403 Forbidden!
+    forbidden_prov = client.post(
+        "/api/team/provision",
+        headers=recruiter_auth,
+        json={"email": "hacker@test.com", "role": "admin"},
+    )
+    assert forbidden_prov.status_code == 403

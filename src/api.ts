@@ -46,6 +46,25 @@ export function setApiAccessToken(token: string): void {
   accessToken = token;
 }
 
+export interface CurrentUserProfile {
+  user: {
+    id: string;
+    email: string;
+    fullName?: string;
+    role: "owner" | "admin" | "recruiter" | "hiring_manager" | "viewer";
+    mustChangePassword?: boolean;
+  };
+  workspace: {
+    id: string;
+    name?: string;
+    role: "owner" | "admin" | "recruiter" | "hiring_manager" | "viewer";
+  };
+}
+
+export async function fetchCurrentUser(): Promise<CurrentUserProfile> {
+  return request<CurrentUserProfile>("/api/me");
+}
+
 export async function fetchTaxonomy(): Promise<TaxonomyResponse> {
   return request<TaxonomyResponse>("/api/taxonomy");
 }

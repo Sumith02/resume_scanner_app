@@ -29,6 +29,8 @@ import {
   Tags,
   Trash2,
   UploadCloud,
+  User,
+  Shield,
   UserPlus,
   UsersRound,
   X,
@@ -72,7 +74,9 @@ import {
   setApiAccessToken,
   switchAgencyClient,
   updateCandidateProfile,
-  uploadResumes
+  uploadResumes,
+  fetchCurrentUser,
+  type CurrentUserProfile
 } from "./api";
 import { isSupabaseBrowserConfigured, supabase } from "./supabaseClient";
 import {
@@ -141,24 +145,73 @@ const emptyGmailStatus: GmailStatus = {
   message: "Gmail status is unavailable."
 };
 
-const navItems: Array<{ key: ViewKey; label: string; icon: ReactNode; badge?: string }> = [
-  { key: "command_center", label: "Command Center", icon: <Sparkles size={18} /> },
-  { key: "candidates", label: "Talent Database", icon: <UsersRound size={18} /> },
-  { key: "rediscovery", label: "Talent Rediscovery", icon: <Zap size={18} />, badge: "V11 Core" },
-  { key: "graph", label: "Talent Graph", icon: <Network size={18} />, badge: "Relational" },
-  { key: "agency", label: "Multi-Client OS", icon: <Building2 size={18} />, badge: "Agency" },
-  { key: "search", label: "Talent Search", icon: <Search size={18} /> },
-  { key: "pipeline", label: "Pipeline (Kanban)", icon: <Layers3 size={18} /> },
-  { key: "jobs", label: "Jobs & Intelligence", icon: <BriefcaseBusiness size={18} /> },
-  { key: "compare", label: "Comparison", icon: <SlidersHorizontal size={18} /> },
-  { key: "pools", label: "Talent Pools", icon: <Tags size={18} /> },
-  { key: "intake", label: "Intake Center", icon: <UploadCloud size={18} /> },
-  { key: "duplicates", label: "Duplicates", icon: <CircleAlert size={18} /> },
-  { key: "data_quality", label: "Data Quality", icon: <ShieldCheck size={18} /> },
-  { key: "campaigns", label: "Campaigns", icon: <Mail size={18} /> },
-  { key: "reports", label: "Analytics", icon: <BarChart3 size={18} /> },
-  { key: "settings", label: "Admin & Security", icon: <Settings size={18} /> }
-];
+function getNavItems(role: string): Array<{ key: ViewKey; label: string; icon: ReactNode; badge?: string }> {
+  const isAdmin = role === "owner" || role === "admin";
+  const isHiringManager = role === "hiring_manager";
+  const isViewer = role === "viewer";
+
+  if (isViewer) {
+    return [
+      { key: "candidates", label: "Talent Database", icon: <UsersRound size={18} /> },
+      { key: "pipeline", label: "Pipeline (Kanban)", icon: <Layers3 size={18} /> },
+      { key: "reports", label: "Analytics", icon: <BarChart3 size={18} /> },
+      { key: "settings", label: "My Profile", icon: <User size={18} /> }
+    ];
+  }
+
+  if (isHiringManager) {
+    return [
+      { key: "command_center", label: "Command Center", icon: <Sparkles size={18} /> },
+      { key: "candidates", label: "Talent Database", icon: <UsersRound size={18} /> },
+      { key: "pipeline", label: "Pipeline (Kanban)", icon: <Layers3 size={18} /> },
+      { key: "jobs", label: "Jobs & Requirements", icon: <BriefcaseBusiness size={18} /> },
+      { key: "compare", label: "Comparison", icon: <SlidersHorizontal size={18} /> },
+      { key: "reports", label: "Analytics", icon: <BarChart3 size={18} /> },
+      { key: "settings", label: "My Profile", icon: <User size={18} /> }
+    ];
+  }
+
+  if (!isAdmin) {
+    // Standard Recruiter Role
+    return [
+      { key: "command_center", label: "Command Center", icon: <Sparkles size={18} /> },
+      { key: "candidates", label: "Talent Database", icon: <UsersRound size={18} /> },
+      { key: "rediscovery", label: "Talent Rediscovery", icon: <Zap size={18} />, badge: "Rediscover" },
+      { key: "graph", label: "Talent Graph", icon: <Network size={18} />, badge: "Relational" },
+      { key: "search", label: "Talent Search", icon: <Search size={18} /> },
+      { key: "pipeline", label: "Pipeline (Kanban)", icon: <Layers3 size={18} /> },
+      { key: "jobs", label: "Jobs & Intelligence", icon: <BriefcaseBusiness size={18} /> },
+      { key: "compare", label: "Comparison", icon: <SlidersHorizontal size={18} /> },
+      { key: "pools", label: "Talent Pools", icon: <Tags size={18} /> },
+      { key: "intake", label: "Intake Center", icon: <UploadCloud size={18} /> },
+      { key: "duplicates", label: "Duplicates", icon: <CircleAlert size={18} /> },
+      { key: "data_quality", label: "Data Quality", icon: <ShieldCheck size={18} /> },
+      { key: "campaigns", label: "Campaigns", icon: <Mail size={18} /> },
+      { key: "reports", label: "Analytics", icon: <BarChart3 size={18} /> },
+      { key: "settings", label: "My Profile & Settings", icon: <User size={18} /> }
+    ];
+  }
+
+  // Admin / Owner - Full Workspace Suite
+  return [
+    { key: "command_center", label: "Command Center", icon: <Sparkles size={18} /> },
+    { key: "candidates", label: "Talent Database", icon: <UsersRound size={18} /> },
+    { key: "rediscovery", label: "Talent Rediscovery", icon: <Zap size={18} />, badge: "V11 Core" },
+    { key: "graph", label: "Talent Graph", icon: <Network size={18} />, badge: "Relational" },
+    { key: "agency", label: "Multi-Client OS", icon: <Building2 size={18} />, badge: "Agency" },
+    { key: "search", label: "Talent Search", icon: <Search size={18} /> },
+    { key: "pipeline", label: "Pipeline (Kanban)", icon: <Layers3 size={18} /> },
+    { key: "jobs", label: "Jobs & Intelligence", icon: <BriefcaseBusiness size={18} /> },
+    { key: "compare", label: "Comparison", icon: <SlidersHorizontal size={18} /> },
+    { key: "pools", label: "Talent Pools", icon: <Tags size={18} /> },
+    { key: "intake", label: "Intake Center", icon: <UploadCloud size={18} /> },
+    { key: "duplicates", label: "Duplicates", icon: <CircleAlert size={18} /> },
+    { key: "data_quality", label: "Data Quality", icon: <ShieldCheck size={18} /> },
+    { key: "campaigns", label: "Campaigns", icon: <Mail size={18} /> },
+    { key: "reports", label: "Analytics", icon: <BarChart3 size={18} /> },
+    { key: "settings", label: "Admin & Security", icon: <Settings size={18} />, badge: "Admin" }
+  ];
+}
 
 function MandatoryPasswordChangeGuard({
   userEmail,
@@ -449,6 +502,9 @@ export default function App() {
   const [activeView, setActiveView] = useState<ViewKey>("command_center");
   const [intakeMode, setIntakeMode] = useState<IntakeMode>("upload");
 
+  // User & Workspace Authentication Profile
+  const [userProfile, setUserProfile] = useState<CurrentUserProfile | null>(null);
+
   // Core Data State
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [jobs, setJobs] = useState<JobOpening[]>([]);
@@ -544,14 +600,15 @@ export default function App() {
     setLoading(true);
     setError("");
     try {
-      const [candList, rep, gm, jobList, poolList, qList, clientRes] = await Promise.all([
+      const [candList, rep, gm, jobList, poolList, qList, clientRes, userProfileRes] = await Promise.all([
         fetchCandidates().catch(() => []),
         fetchReport().catch(() => emptyReport),
         fetchGmailStatus().catch(() => emptyGmailStatus),
         fetchJobs().catch(() => []),
         fetchTalentPools().catch(() => []),
         fetchProcessingQueue().catch(() => []),
-        fetchAgencyClients().catch(() => ({ clients: [] }))
+        fetchAgencyClients().catch(() => ({ clients: [] })),
+        fetchCurrentUser().catch(() => null)
       ]);
 
       setCandidates(candList);
@@ -561,6 +618,9 @@ export default function App() {
       setTalentPools(poolList);
       setProcessingQueue(qList);
       setAgencyClients(clientRes.clients);
+      if (userProfileRes) {
+        setUserProfile(userProfileRes);
+      }
 
       if (jobList.length > 0 && !rediscoveryJobId) {
         setRediscoveryJobId(jobList[0].id);
@@ -787,18 +847,33 @@ export default function App() {
     );
   }
 
-  const isMasterAdmin = session?.user?.email?.trim().toLowerCase() === "sumithsbhatt@gmail.com";
+  const userEmail = session?.user?.email?.trim().toLowerCase() || "";
+  const isMasterAdmin = userEmail === "sumithsbhatt@gmail.com";
+  const userRole: "owner" | "admin" | "recruiter" | "hiring_manager" | "viewer" =
+    userProfile?.workspace?.role ||
+    userProfile?.user?.role ||
+    (isMasterAdmin ? "owner" : "recruiter");
+  const isAdmin = userRole === "owner" || userRole === "admin";
+  const navItems = useMemo(() => getNavItems(userRole), [userRole]);
+
+  useEffect(() => {
+    if (navItems.length > 0 && !navItems.some((item) => item.key === activeView)) {
+      setActiveView(navItems[0].key);
+    }
+  }, [navItems, activeView]);
+
   const mustChangePassword =
     !isMasterAdmin &&
     Boolean(
       session?.user?.user_metadata?.must_change_password ||
-      session?.user?.user_metadata?.temporary_password
+      session?.user?.user_metadata?.temporary_password ||
+      userProfile?.user?.mustChangePassword
     );
 
   if (mustChangePassword) {
     return (
       <MandatoryPasswordChangeGuard
-        userEmail={session.user.email || ""}
+        userEmail={session.user.email || userProfile?.user?.email || ""}
         onPasswordChanged={(updatedUser) => {
           setSession((prev) => (prev ? { ...prev, user: updatedUser } : null));
           loadWorkspace();
@@ -806,6 +881,7 @@ export default function App() {
         onSignOut={async () => {
           if (supabase) await supabase.auth.signOut();
           setSession(null);
+          setUserProfile(null);
           setApiAccessToken("");
           setCandidates([]);
           setJobs([]);
@@ -873,10 +949,14 @@ export default function App() {
 
         <div className="sidebar-footer">
           <div className="profile-badge">
-            <div className="avatar">NX</div>
+            <div className="avatar" style={{ background: isAdmin ? "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)" : "#1f2937", color: "#fff", fontWeight: 700 }}>
+              {isAdmin ? "AD" : userRole === "hiring_manager" ? "HM" : userRole === "viewer" ? "VW" : "RC"}
+            </div>
             <div className="profile-meta">
-              <strong>Enterprise Team</strong>
-              <span>Private Talent Layer</span>
+              <strong>{userProfile?.workspace?.name || (isAdmin ? "Master Workspace" : "Recruiter Workspace")}</strong>
+              <span style={{ fontSize: "11px", color: isAdmin ? "#f59e0b" : "#94a3b8", textTransform: "capitalize" }}>
+                {isAdmin ? "👑 Workspace Admin" : `${userRole.replace("_", " ")} Role`}
+              </span>
             </div>
           </div>
         </div>
@@ -900,36 +980,38 @@ export default function App() {
             </button>
           </form>
 
-          {/* AGENCY MULTI-CLIENT SWITCHER */}
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-            <Building2 size={16} color="var(--brand)" />
-            <select
-              value={activeClientId}
-              onChange={async (e) => {
-                const newId = e.target.value;
-                setActiveClientId(newId);
-                await switchAgencyClient(newId);
-                setNotice(`Switched active agency workspace to ${newId === "all" ? "All Clients (Master OS)" : newId.toUpperCase()}.`);
-              }}
-              style={{
-                padding: "6px 10px",
-                borderRadius: "6px",
-                border: "1px solid var(--line)",
-                background: "#f8fafc",
-                fontSize: "12px",
-                fontWeight: 600,
-                color: "#1e293b",
-                cursor: "pointer"
-              }}
-            >
-              <option value="all">🌐 All Clients (Agency Master)</option>
-              {agencyClients.map((cl) => (
-                <option key={cl.id} value={cl.id}>
-                  🏢 {cl.code}: {cl.name} ({cl.openJobsCount} jobs, {(cl.candidatePoolCount / 1000).toFixed(1)}k talent)
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* AGENCY MULTI-CLIENT SWITCHER (Visible for Admins or Recruiter agencies) */}
+          {(isAdmin || agencyClients.length > 0) && (
+            <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+              <Building2 size={16} color="var(--brand)" />
+              <select
+                value={activeClientId}
+                onChange={async (e) => {
+                  const newId = e.target.value;
+                  setActiveClientId(newId);
+                  await switchAgencyClient(newId);
+                  setNotice(`Switched active agency workspace to ${newId === "all" ? "All Clients (Master OS)" : newId.toUpperCase()}.`);
+                }}
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: "6px",
+                  border: "1px solid var(--line)",
+                  background: "#f8fafc",
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  color: "#1e293b",
+                  cursor: "pointer"
+                }}
+              >
+                <option value="all">🌐 All Clients (Agency Master)</option>
+                {agencyClients.map((cl) => (
+                  <option key={cl.id} value={cl.id}>
+                    🏢 {cl.code}: {cl.name} ({cl.openJobsCount} jobs, {(cl.candidatePoolCount / 1000).toFixed(1)}k talent)
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <button
             type="button"
@@ -979,7 +1061,11 @@ export default function App() {
                     width: "22px",
                     height: "22px",
                     borderRadius: "50%",
-                    background: isMasterAdmin ? "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)" : "#2563eb",
+                    background: isAdmin
+                      ? "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)"
+                      : userRole === "hiring_manager"
+                      ? "#7c3aed"
+                      : "#2563eb",
                     color: "#ffffff",
                     display: "grid",
                     placeItems: "center",
@@ -987,14 +1073,14 @@ export default function App() {
                     fontWeight: 700
                   }}
                 >
-                  {(session.user.user_metadata?.full_name || session.user.email || "U")[0].toUpperCase()}
+                  {(userProfile?.user?.fullName || session.user.user_metadata?.full_name || session.user.email || "U")[0].toUpperCase()}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.1 }}>
                   <span style={{ fontWeight: 600, color: "#1e293b", maxWidth: "150px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {session.user.user_metadata?.full_name || session.user.email?.split("@")[0]}
+                    {userProfile?.user?.fullName || session.user.user_metadata?.full_name || session.user.email?.split("@")[0]}
                   </span>
-                  <span style={{ fontSize: "10px", color: isMasterAdmin ? "#b45309" : "#64748b", fontWeight: isMasterAdmin ? 700 : 400 }}>
-                    {isMasterAdmin ? "👑 Master Admin (Owner)" : "Recruiter Lead"}
+                  <span style={{ fontSize: "10px", color: isAdmin ? "#b45309" : "#64748b", fontWeight: isAdmin ? 700 : 500, textTransform: "capitalize" }}>
+                    {isAdmin ? "👑 Workspace Admin" : `${userRole.replace("_", " ")}`}
                   </span>
                 </div>
               </div>
@@ -1003,6 +1089,7 @@ export default function App() {
                 onClick={async () => {
                   if (supabase) await supabase.auth.signOut();
                   setSession(null);
+                  setUserProfile(null);
                   setApiAccessToken("");
                   setCandidates([]);
                   setJobs([]);
@@ -1316,7 +1403,12 @@ export default function App() {
               {activeView === "reports" && <ReportsView report={report} />}
 
               {activeView === "settings" && (
-                <SettingsView onRefreshWorkspace={loadWorkspace} currentUserEmail={session?.user?.email || ""} />
+                <SettingsView
+                  onRefreshWorkspace={loadWorkspace}
+                  currentUserEmail={session?.user?.email || ""}
+                  currentUserProfile={userProfile}
+                  currentUserRole={userRole}
+                />
               )}
             </>
           )}
@@ -4623,15 +4715,27 @@ function ReportsView({ report }: { report: ReportSummary }) {
 
 function SettingsView({
   onRefreshWorkspace,
-  currentUserEmail
+  currentUserEmail,
+  currentUserProfile,
+  currentUserRole: propRole
 }: {
   onRefreshWorkspace: () => void;
   currentUserEmail?: string;
+  currentUserProfile?: CurrentUserProfile | null;
+  currentUserRole?: "owner" | "admin" | "recruiter" | "hiring_manager" | "viewer";
 }) {
   const isMasterUser = currentUserEmail?.trim().toLowerCase() === "sumithsbhatt@gmail.com";
   const [members, setMembers] = useState<TeamMember[]>([]);
-  const [currentUserRole, setCurrentUserRole] = useState<TeamMember["role"]>(isMasterUser ? "owner" : "recruiter");
+  const [currentUserRole, setCurrentUserRole] = useState<TeamMember["role"]>(
+    propRole || (isMasterUser ? "owner" : "recruiter")
+  );
   const [loadingMembers, setLoadingMembers] = useState(false);
+
+  // Self-Service Profile Password State
+  const [profileNewPassword, setProfileNewPassword] = useState("");
+  const [profileConfirmPassword, setProfileConfirmPassword] = useState("");
+  const [profilePasswordNotice, setProfilePasswordNotice] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [profilePasswordLoading, setProfilePasswordLoading] = useState(false);
 
   // Form State
   const [provisionEmail, setProvisionEmail] = useState("");
@@ -4709,7 +4813,9 @@ function SettingsView({
     try {
       const res = await fetchTeamMembers();
       setMembers(res.members);
-      if (isMasterUser) {
+      if (propRole) {
+        setCurrentUserRole(propRole);
+      } else if (isMasterUser) {
         setCurrentUserRole("owner");
       } else if (res.currentUserRole) {
         setCurrentUserRole(res.currentUserRole);
@@ -4733,6 +4839,46 @@ function SettingsView({
       })
       .catch(() => {});
   }, []);
+
+  async function handleUpdateProfilePassword(e: FormEvent) {
+    e.preventDefault();
+    setProfilePasswordNotice(null);
+
+    if (profileNewPassword.length < 6) {
+      setProfilePasswordNotice({ type: "error", message: "Permanent password must be at least 6 characters long." });
+      return;
+    }
+    if (profileNewPassword !== profileConfirmPassword) {
+      setProfilePasswordNotice({ type: "error", message: "Passwords do not match. Please re-enter." });
+      return;
+    }
+
+    setProfilePasswordLoading(true);
+    try {
+      if (isSupabaseBrowserConfigured && supabase) {
+        const { error } = await supabase.auth.updateUser({
+          password: profileNewPassword,
+          data: { must_change_password: false, temporary_password: false }
+        });
+        if (error) throw error;
+      }
+      try {
+        await completePasswordChange();
+      } catch {
+        // non-blocking
+      }
+      setProfilePasswordNotice({ type: "success", message: "Password updated successfully!" });
+      setProfileNewPassword("");
+      setProfileConfirmPassword("");
+    } catch (err) {
+      setProfilePasswordNotice({
+        type: "error",
+        message: err instanceof Error ? err.message : "Failed to update password."
+      });
+    } finally {
+      setProfilePasswordLoading(false);
+    }
+  }
 
   async function handleProvision(e: FormEvent) {
     e.preventDefault();
@@ -4790,6 +4936,313 @@ function SettingsView({
   }
 
   const portalUrl = window.location.origin;
+  const effectiveRole = propRole || currentUserRole;
+  const isAdmin = effectiveRole === "owner" || effectiveRole === "admin";
+
+  // NON-ADMIN USER PROFILE & SELF-SERVICE VIEW
+  if (!isAdmin) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--line)", paddingBottom: "16px" }}>
+          <div>
+            <h2 style={{ margin: "0 0 6px 0", display: "flex", alignItems: "center", gap: "10px" }}>
+              <User size={24} color="#2563eb" />
+              <span>My Profile & Account Settings</span>
+            </h2>
+            <p style={{ margin: 0, fontSize: "13px", color: "var(--muted)" }}>
+              Manage your personal credentials, view your workspace profile, and review team permissions.
+            </p>
+          </div>
+          <span
+            style={{
+              padding: "6px 14px",
+              borderRadius: "20px",
+              background: effectiveRole === "hiring_manager" ? "#f3e8ff" : "#eff6ff",
+              color: effectiveRole === "hiring_manager" ? "#6b21a8" : "#1e40af",
+              border: `1px solid ${effectiveRole === "hiring_manager" ? "#d8b4fe" : "#bfdbfe"}`,
+              fontSize: "12px",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.05em"
+            }}
+          >
+            Role: {effectiveRole.replace("_", " ")}
+          </span>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px" }}>
+          {/* LEFT: PERSONAL ACCOUNT & CREDENTIALS */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+            {/* PROFILE CARD */}
+            <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", border: "1px solid var(--line)" }}>
+              <h3 style={{ margin: "0 0 16px 0", fontSize: "16px", display: "flex", alignItems: "center", gap: "8px" }}>
+                <Shield size={18} color="#2563eb" />
+                <span>Account Profile Details</span>
+              </h3>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "14px", fontSize: "13px" }}>
+                <div>
+                  <span style={{ color: "#64748b", fontSize: "11px", textTransform: "uppercase", fontWeight: 600 }}>Full Name</span>
+                  <div style={{ fontWeight: 600, color: "#0f172a", fontSize: "14px", marginTop: "2px" }}>
+                    {currentUserProfile?.user?.fullName || currentUserEmail?.split("@")[0] || "Team Member"}
+                  </div>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748b", fontSize: "11px", textTransform: "uppercase", fontWeight: 600 }}>Work Email</span>
+                  <div style={{ fontWeight: 600, color: "#0f172a", fontSize: "14px", marginTop: "2px" }}>
+                    {currentUserEmail || "Active User"}
+                  </div>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748b", fontSize: "11px", textTransform: "uppercase", fontWeight: 600 }}>Assigned Organization</span>
+                  <div style={{ fontWeight: 600, color: "#0f172a", fontSize: "14px", marginTop: "2px" }}>
+                    {currentUserProfile?.workspace?.name || "Resume Scanner Private Workspace"}
+                  </div>
+                  <div style={{ fontSize: "11px", color: "#94a3b8", fontFamily: "monospace", marginTop: "2px" }}>
+                    Tenant ID: {currentUserProfile?.workspace?.id || "local-organization"}
+                  </div>
+                </div>
+
+                <div>
+                  <span style={{ color: "#64748b", fontSize: "11px", textTransform: "uppercase", fontWeight: 600 }}>Access Tier</span>
+                  <div style={{ marginTop: "4px" }}>
+                    <span style={{ background: "#f1f5f9", color: "#334155", padding: "4px 10px", borderRadius: "6px", fontSize: "12px", fontWeight: 600 }}>
+                      Active Member (Verified)
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* PASSWORD UPDATE CARD */}
+            <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", border: "1px solid var(--line)" }}>
+              <h3 style={{ margin: "0 0 8px 0", fontSize: "16px", display: "flex", alignItems: "center", gap: "8px" }}>
+                <KeyRound size={18} color="#f59e0b" />
+                <span>Change Password</span>
+              </h3>
+              <p style={{ margin: "0 0 16px 0", fontSize: "12px", color: "#64748b" }}>
+                Update your account password. Must be at least 6 characters.
+              </p>
+
+              {profilePasswordNotice && (
+                <div
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: "6px",
+                    marginBottom: "14px",
+                    fontSize: "12px",
+                    background: profilePasswordNotice.type === "success" ? "#f0fdf4" : "#fef2f2",
+                    color: profilePasswordNotice.type === "success" ? "#166534" : "#991b1b",
+                    border: `1px solid ${profilePasswordNotice.type === "success" ? "#bbf7d0" : "#fecaca"}`
+                  }}
+                >
+                  {profilePasswordNotice.message}
+                </div>
+              )}
+
+              <form onSubmit={handleUpdateProfilePassword} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 600, marginBottom: "4px" }}>
+                    New Password
+                  </label>
+                  <input
+                    type="password"
+                    value={profileNewPassword}
+                    onChange={(e) => setProfileNewPassword(e.target.value)}
+                    placeholder="Enter new password"
+                    required
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--line)", boxSizing: "border-box" }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: "block", fontSize: "12px", fontWeight: 600, marginBottom: "4px" }}>
+                    Confirm New Password
+                  </label>
+                  <input
+                    type="password"
+                    value={profileConfirmPassword}
+                    onChange={(e) => setProfileConfirmPassword(e.target.value)}
+                    placeholder="Confirm new password"
+                    required
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: "6px", border: "1px solid var(--line)", boxSizing: "border-box" }}
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={profilePasswordLoading}
+                  style={{
+                    background: "#0f172a",
+                    color: "#fff",
+                    border: "none",
+                    padding: "9px 16px",
+                    borderRadius: "6px",
+                    fontWeight: 600,
+                    fontSize: "13px",
+                    cursor: profilePasswordLoading ? "not-allowed" : "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "8px",
+                    marginTop: "6px"
+                  }}
+                >
+                  {profilePasswordLoading ? <Loader2 size={16} className="spinning" /> : <KeyRound size={16} />}
+                  <span>Update Password</span>
+                </button>
+              </form>
+            </div>
+          </div>
+
+          {/* RIGHT: PERMISSIONS SUMMARY & TEAM DIRECTORY */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+            {/* ROLE PERMISSIONS CARD */}
+            <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", border: "1px solid var(--line)" }}>
+              <h3 style={{ margin: "0 0 12px 0", fontSize: "16px", display: "flex", alignItems: "center", gap: "8px" }}>
+                <ShieldCheck size={18} color="#10b981" />
+                <span>Role & Permissions Overview</span>
+              </h3>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px", fontSize: "13px" }}>
+                {effectiveRole === "recruiter" && (
+                  <>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <Check size={16} color="#16a34a" style={{ flexShrink: 0, marginTop: "2px" }} />
+                      <span><strong>Resume Ingestion & Parsing:</strong> Full access to upload resumes and ingest candidate profiles.</span>
+                    </div>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <Check size={16} color="#16a34a" style={{ flexShrink: 0, marginTop: "2px" }} />
+                      <span><strong>AI Match Scoring & Rediscovery:</strong> Match candidates against jobs and surface overlooked talent.</span>
+                    </div>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <Check size={16} color="#16a34a" style={{ flexShrink: 0, marginTop: "2px" }} />
+                      <span><strong>Hiring Pipelines:</strong> Move candidates across Kanban stages and manage talent pools.</span>
+                    </div>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <Check size={16} color="#16a34a" style={{ flexShrink: 0, marginTop: "2px" }} />
+                      <span><strong>Recruiter Copilot:</strong> AI assistant for interview questions and talent analysis.</span>
+                    </div>
+                  </>
+                )}
+
+                {effectiveRole === "hiring_manager" && (
+                  <>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <Check size={16} color="#16a34a" style={{ flexShrink: 0, marginTop: "2px" }} />
+                      <span><strong>Candidate Review:</strong> Inspect candidate dossiers, experience, and match breakdowns.</span>
+                    </div>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <Check size={16} color="#16a34a" style={{ flexShrink: 0, marginTop: "2px" }} />
+                      <span><strong>Pipeline Collaboration:</strong> Review candidate stages, compare talent, and evaluate fit.</span>
+                    </div>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <Check size={16} color="#16a34a" style={{ flexShrink: 0, marginTop: "2px" }} />
+                      <span><strong>Job Requirements & Analytics:</strong> View job descriptions and hiring reports.</span>
+                    </div>
+                  </>
+                )}
+
+                {effectiveRole === "viewer" && (
+                  <>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <Check size={16} color="#16a34a" style={{ flexShrink: 0, marginTop: "2px" }} />
+                      <span><strong>Read-Only Access:</strong> View talent database, pipelines, and summary analytics.</span>
+                    </div>
+                  </>
+                )}
+
+                <div
+                  style={{
+                    marginTop: "12px",
+                    padding: "12px",
+                    background: "#f8fafc",
+                    borderRadius: "8px",
+                    border: "1px solid #e2e8f0",
+                    fontSize: "12px",
+                    color: "#475569"
+                  }}
+                >
+                  🔒 <strong>Workspace Governance:</strong> Account provisioning, organization-wide email integrations, team role assignments, and GDPR erasure operations are managed exclusively by Workspace Administrators.
+                </div>
+              </div>
+            </div>
+
+            {/* TEAM MEMBERS LIST (READ-ONLY) */}
+            <div style={{ background: "#fff", padding: "24px", borderRadius: "12px", border: "1px solid var(--line)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: "16px" }}>Workspace Team ({members.length})</h3>
+                  <span style={{ fontSize: "11px", color: "var(--muted)" }}>
+                    Colleagues in your organization workspace
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={loadMembers}
+                  style={{
+                    background: "transparent",
+                    border: "1px solid var(--line)",
+                    borderRadius: "4px",
+                    padding: "4px 8px",
+                    fontSize: "11px",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px"
+                  }}
+                >
+                  <RefreshCw size={12} className={loadingMembers ? "spinning" : ""} />
+                  Refresh
+                </button>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {members.map((m) => (
+                  <div
+                    key={m.userId}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: "8px 12px",
+                      background: "#f8fafc",
+                      borderRadius: "6px",
+                      border: "1px solid #e2e8f0"
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: "13px", color: "#1e293b" }}>
+                        {m.fullName || m.email}
+                      </div>
+                      <div style={{ fontSize: "11px", color: "#64748b" }}>{m.email}</div>
+                    </div>
+                    <span
+                      style={{
+                        fontSize: "10px",
+                        fontWeight: 700,
+                        textTransform: "uppercase",
+                        padding: "2px 8px",
+                        borderRadius: "4px",
+                        background: m.role === "owner" ? "#dbeafe" : "#f1f5f9",
+                        color: m.role === "owner" ? "#1e40af" : "#475569"
+                      }}
+                    >
+                      {m.role}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // WORKSPACE ADMINISTRATOR FULL SUITE
 
   return (
     <div>
