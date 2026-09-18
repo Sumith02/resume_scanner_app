@@ -1013,6 +1013,7 @@ def talent_network_graph(context: Context) -> dict[str, object]:
 @app.get("/api/agency/clients")
 def list_agency_clients(context: Context) -> dict[str, object]:
     require_role(context, "admin", "recruiter", "company_admin")
+    require_tier(context, ENT_AGENCY_LIST)
     return {"clients": agency_client_service.list_clients()}
 
 

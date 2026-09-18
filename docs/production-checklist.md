@@ -42,5 +42,14 @@
 - Add malware scanning for every uploaded attachment.
 - Add data retention automation and customer-controlled permanent deletion.
 - Add SAML SSO and SCIM provisioning for enterprise customers.
+- **Two-tier tenant model (alignment note):** master admin (`sumithsbhatt@gmail.com`)
+  is the platform vendor — his **only** duty is creating/deleting/editing **company
+  accounts** (selling access, e.g. "XYZ Company"). He does **not** manage company
+  users. Each company account carries a **company admin**, whose duty is creating
+  3–4 **recruiter** users under that company. Those three roles are the whole model:
+  master (tenant CRUD only) → company admin (its own recruiters) → recruiters (their
+  company's data). Master admin must *not* accumulate the agency/recruiter actions;
+  company admin is the one who brokers his own team. (Design alignment only — not yet
+  implemented; current code still routes some agency actions to master.)
 - Commission an external penetration test.
 - Complete vendor DPAs and a documented GDPR/DPDP data-flow review.

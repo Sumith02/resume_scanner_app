@@ -157,6 +157,45 @@ def test_is_candidate_resume_rejects_non_resume_filenames_even_with_text() -> No
     assert "filename indicates a non-resume" in reason2.lower()
 
 
+def test_is_candidate_resume_rejects_structured_bank_application_forms() -> None:
+    bank_form_text = """
+    State Bank of India
+    Application for the post of Branch Manager
+    Registration Number: SBI/2026/4521
+    Identification Marks: Mole on left cheek
+    1. Name: Rahul Kumar
+    2. Date of Birth: 15-06-1985
+    3. Father's Name: Suresh Kumar
+    4. Permanent Address: MG Road, Bengaluru
+    Category: General
+    Educational Qualification: MBA (Banking & Finance)
+    Work Experience: 12 years
+    Declaration: I hereby declare that the information provided is true.
+    Signature of the Applicant: Rahul Kumar
+    """
+    valid, reason = is_candidate_resume(bank_form_text, "bank_application_form.pdf")
+    assert valid is False
+    assert "application form" in reason.lower()
+
+
+def test_is_candidate_resume_accepts_real_cv_with_common_indian_fields() -> None:
+    # A genuine CV that happens to list DOB / father's name MUST still be accepted
+    resume_text = """
+    Rahul Kumar
+    rahul@example.com | +91 98450 12345 | Bengaluru
+    Date of Birth: 15-06-1985 | Father's Name: Suresh Kumar
+    Summary:
+    Senior Branch Operations Manager with 12 years of experience in retail banking.
+    Experience:
+    Branch Manager - Axis Bank (2018 - Present)
+    Senior Officer - HDFC Bank (2013 - 2018)
+    Skills: Retail Banking, Portfolio Management, Team Leadership, KYC, Risk Management
+    Education: MBA in Banking & Finance, B.Com
+    """
+    valid, reason = is_candidate_resume(resume_text, "rahul_kumar_cv.pdf")
+    assert valid is True, reason
+
+
 def test_classify_email_context_identifies_candidate_applications() -> None:
     # 1. Subject has explicit application signal
     is_cand, is_disq, reason = classify_email_context(

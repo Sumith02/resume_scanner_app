@@ -528,6 +528,35 @@ NON_RESUME_DOC_MARKERS = [
     "thank you for your consideration",
 ]
 
+APPLICATION_FORM_MARKERS = [
+    # Structured application forms: bank/PSU, government, and campus placement forms.
+    # Deliberately excludes common resume fields (date of birth, father's name,
+    # permanent address, marital status) to avoid rejecting genuine Indian CVs.
+    "application for the post of",
+    "post applied for",
+    "post for which applied",
+    "identification marks",
+    "passport size photograph",
+    "passport size photo",
+    "applicant's signature",
+    "applicants signature",
+    "signature of the applicant",
+    "signature of the candidate",
+    "application number",
+    "registration number",
+    "register number",
+    "roll number",
+    "branch opted",
+    "centre code",
+    "center code",
+    "application fee",
+    "category applied for",
+    "hereby declare",
+    "do hereby declare",
+    "examination centre",
+    "exam centre",
+]
+
 INVOICE_KEYWORDS = [
     "tax invoice",
     "commercial invoice",
@@ -666,6 +695,16 @@ def is_candidate_resume(text: str, filename: str) -> tuple[bool, str]:
     # 2. Structural checks
     has_resume_in_name = any(kw in lower_name for kw in ("resume", "cv", "curriculum", "biodata", "profile"))
     has_resume_header = any(marker in normalized for marker in ("curriculum vitae", "resume", "cv", "bio-data", "biodata", "candidate profile"))
+
+    # 2b. Structured application form check: bank/PSU and government application
+    # forms carry template boilerplate that a real resume never contains. Reject
+    # when several of these appear and the document does not self-label as a resume.
+    application_form_hits = [marker for marker in APPLICATION_FORM_MARKERS if marker in normalized]
+    if len(application_form_hits) >= 2 and not (has_resume_in_name or has_resume_header):
+        return (
+            False,
+            f"File rejected: document is a structured application form rather than a candidate resume ({', '.join(application_form_hits[:3])}).",
+        )
 
     has_exp_section = any(
         marker in normalized

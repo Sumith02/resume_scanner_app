@@ -36,7 +36,16 @@ class ResumeService:
         context: RequestContext,
         source: str,
         role: str,
+        *,
+        strict: bool = False,
     ) -> tuple[list[dict[str, Any]], list[dict[str, str]], int]:
+        """
+        Process uploaded or imported candidate documents.
+
+        In strict mode (used by automated imports such as Gmail only candidate
+        resumes are accepted; anything that fails resume recognition is rejected
+        outright instead of being downgraded to 'needs_review'.
+        """
         existing = self.repository.list_applications(context)
         created: list[dict[str, Any]] = []
         failures: list[dict[str, str]] = []
@@ -59,11 +68,13 @@ class ResumeService:
                 is_valid, reject_reason = is_candidate_resume(text, original_name)
                 status = "new"
                 if not is_valid:
+                    if strict:
+                        failures.append({"fileName": original_name, "message": reject_reason})
+                        continue
+                    status = "needs_review"
                     lower_text = text.lower()
                     strong_invalids = ("tax invoice", "commercial invoice", "boarding pass", "e-ticket")
-                    if len(text.strip()) >= 35 and not any(si in lower_text for si in strong_invalids):
-                        status = "needs_review"
-                    else:
+                    if len(text.strip()) < 35 or any(si in lower_text for si in strong_invalids):
                         failures.append({"fileName": original_name, "message": reject_reason})
                         continue
 

@@ -323,6 +323,186 @@ def test_gmail_first_time_sync_from_start_and_subsequent_incremental_sync(
     assert res3["syncCount"] == 3
 
 
+def test_gmail_import_strict_rejects_parseable_transcripts_with_ambiguous_filename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import base64
+    from typing import Any
+
+    service, context = _gmail_service(tmp_path)
+    service.repository.save_gmail_connection(
+        {
+            "email": "recruiter@example.com",
+            "access_token": service.cipher.encrypt("valid-access-token"),
+            "refresh_token": service.cipher.encrypt("valid-refresh-token"),
+            "scope": "gmail.readonly",
+            "token_type": "Bearer",
+            "expiry_date": "2099-01-01T00:00:00Z",
+        },
+        context,
+    )
+
+    def mock_gmail_get(
+        path: str, connection: dict[str, Any], _context: RequestContext, params: dict[str, str] | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if path == "/messages":
+            return {"messages": [{"id": "msg-transcript"}]}, connection
+        if path == "/messages/msg-transcript":
+            return {
+                "id": "msg-transcript",
+                "payload": {
+                    "headers": [
+                        {"name": "Subject", "value": "Semester 8 grade sheet attached"},
+                        {"name": "From", "value": "nit@example.com"},
+                    ],
+                    "parts": [
+                        {
+                            "filename": "Attachment_1.txt",
+                            "mimeType": "text/plain",
+                            "body": {
+                                "data": base64.urlsafe_b64encode(
+                                    b"National Institute of Technology\n"
+                                    b"Statement of Marks / Academic Transcript\n"
+                                    b"Semester Examination 2023\n"
+                                    b"Controller of Examinations\n"
+                                    b"Cumulative Grade Point Average (CGPA): 8.9 / 10\n"
+                                ).decode()
+                            },
+                        }
+                    ],
+                },
+            }, connection
+        raise ValueError(f"Unexpected path: {path}")
+
+    monkeypatch.setattr(service, "_gmail_get", mock_gmail_get)
+
+    result = service.import_resumes(query="resume", role="Open application", max_results=25, context=context)
+
+    # Transcript content must be rejected even though the filename gives no hint
+    assert result["importedCount"] == 0
+    assert len(result["applications"]) == 0
+    assert result["skippedAttachments"] >= 1
+
+
+def test_gmail_import_skips_neutral_email_with_structured_bank_form(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import base64
+    from typing import Any
+
+    service, context = _gmail_service(tmp_path)
+    service.repository.save_gmail_connection(
+        {
+            "email": "recruiter@example.com",
+            "access_token": service.cipher.encrypt("valid-access-token"),
+            "refresh_token": service.cipher.encrypt("valid-refresh-token"),
+            "scope": "gmail.readonly",
+            "token_type": "Bearer",
+            "expiry_date": "2099-01-01T00:00:00Z",
+        },
+        context,
+    )
+
+    def mock_gmail_get(
+        path: str, connection: dict[str, Any], _context: RequestContext, params: dict[str, str] | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if path == "/messages":
+            return {"messages": [{"id": "msg-bank-form"}]}, connection
+        if path == "/messages/msg-bank-form":
+            return {
+                "id": "msg-bank-form",
+                "payload": {
+                    "headers": [
+                        {"name": "Subject", "value": "Application Form - Branch Manager"},
+                        {"name": "From", "value": "sbi@example.com"},
+                    ],
+                    "parts": [
+                        {
+                            "filename": "Application_Form.pdf",
+                            "mimeType": "text/plain",
+                            "body": {
+                                "data": base64.urlsafe_b64encode(
+                                    b"State Bank of India\n"
+                                    b"Application for the post of Branch Manager\n"
+                                    b"Registration Number: SBI/2026/4521\n"
+                                    b"Identification Marks: Mole on left cheek\n"
+                                    b"Name: Rahul Kumar\n"
+                                    b"Work Experience: 12 years\n"
+                                    b"Signature of the Applicant: Rahul Kumar\n"
+                                ).decode()
+                            },
+                        }
+                    ],
+                },
+            }, connection
+        raise ValueError(f"Unexpected path: {path}")
+
+    monkeypatch.setattr(service, "_gmail_get", mock_gmail_get)
+
+    result = service.import_resumes(query="resume", role="Open application", max_results=25, context=context)
+
+    # Neutral, non-candidate email carrying a bank application form must be skipped entirely
+    assert result["importedCount"] == 0
+    assert len(result["applications"]) == 0
+    assert result["skippedAttachments"] == 1
+
+
+def test_gmail_import_refetches_candidate_email_with_explicit_resume_filename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import base64
+    from typing import Any
+
+    service, context = _gmail_service(tmp_path)
+    service.repository.save_gmail_connection(
+        {
+            "email": "recruiter@example.com",
+            "access_token": service.cipher.encrypt("valid-access-token"),
+            "refresh_token": service.cipher.encrypt("valid-refresh-token"),
+            "scope": "gmail.readonly",
+            "token_type": "Bearer",
+            "expiry_date": "2099-01-01T00:00:00Z",
+        },
+        context,
+    )
+
+    def mock_gmail_get(
+        path: str, connection: dict[str, Any], _context: RequestContext, params: dict[str, str] | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if path == "/messages":
+            return {"messages": [{"id": "msg-forward"}]}, connection
+        if path == "/messages/msg-forward":
+            return {
+                "id": "msg-forward",
+                "payload": {
+                    "headers": [
+                        {"name": "Subject", "value": "FW: Profile shared by team"},
+                        {"name": "From", "value": "internal@example.com"},
+                    ],
+                    "parts": [
+                        {
+                            "filename": "priya_profile.txt",
+                            "mimeType": "text/plain",
+                            "body": {
+                                "data": base64.urlsafe_b64encode(
+                                    b"Priya Patel\npriya@example.com\nReact, TypeScript, Next.js, Node.js\n4 years frontend engineer."
+                                ).decode()
+                            },
+                        }
+                    ],
+                },
+            }, connection
+        raise ValueError(f"Unexpected path: {path}")
+
+    monkeypatch.setattr(service, "_gmail_get", mock_gmail_get)
+
+    result = service.import_resumes(query="resume", role="Frontend Engineer", max_results=25, context=context)
+
+    # Neutral/forwarded email but the attachment names itself a profile -> still fetched
+    assert result["importedCount"] == 1
+    assert result["applications"][0]["candidateName"] == "Priya Patel"
+
+
 def test_gmail_email_level_disqualification_skips_invoices_without_parsing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

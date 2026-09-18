@@ -134,6 +134,31 @@ def require_role(context: RequestContext, *allowed: str) -> None:
         raise AppError("You do not have permission to perform this action. Administrator privileges required.", 403, "permission_denied")
 
 
+def require_tier(context: RequestContext, *features: str) -> None:
+    """Fail-closed entitlement gate: the requested feature(s) must ALL be in
+    the requesting tenant's tier.
+
+    The master admin is exempt (master is the platform operator, not a
+    tenant) — master grants tiers, it does not consume them. For any other
+    user, the workspace's tier comes from the tenant record assigned by
+    master; unknown/absent tier yields NOTHING (fail closed).
+    """
+    if is_master_admin(context.email):
+        return
+    tier = getattr(context, "tier", None) or getattr(context, "pricing_tier", None)
+    if tier is None:
+        raise AppError("Your workspace has no assigned pricing tier. Contact your account administrator.", 403, "missing_tier")
+    granted = features_for(tier)
+    missing = [f for f in features if f not in granted]
+    if missing:
+        raise AppError(
+            f"Your <strong>{tier}</strong> plan does not include: {', '.join(missing)}. "
+            "Contact your account administrator to upgrade.",
+            403,
+            "tier_not_entitled",
+        )
+
+
 def _bearer_token(value: str | None) -> str:
     if not value:
         return ""
