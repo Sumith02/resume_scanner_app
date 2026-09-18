@@ -543,8 +543,10 @@ def complete_password_change(context: Context) -> dict[str, object]:
 
 
 @app.post("/api/auth/master-bootstrap")
-def master_bootstrap(payload: MasterBootstrapRequest) -> dict[str, object]:
+def master_bootstrap(payload: MasterBootstrapRequest, context: Context) -> dict[str, object]:
     repository, _, _, _, _ = services.require()
+    if repository.is_master_admin_provisioned():
+        require_role(context, "owner")
     return repository.bootstrap_master_admin(payload.email, payload.password)
 
 
@@ -1009,12 +1011,14 @@ def talent_network_graph(context: Context) -> dict[str, object]:
 
 
 @app.get("/api/agency/clients")
-def list_agency_clients() -> dict[str, object]:
+def list_agency_clients(context: Context) -> dict[str, object]:
+    require_role(context, "owner", "admin", "recruiter")
     return {"clients": agency_client_service.list_clients()}
 
 
 @app.get("/api/agency/overview")
-def agency_overview() -> dict[str, object]:
+def agency_overview(context: Context) -> dict[str, object]:
+    require_role(context, "owner", "admin", "recruiter")
     return agency_client_service.get_agency_overview()
 
 
@@ -1026,7 +1030,8 @@ def create_agency_client(payload: dict[str, Any], context: Context) -> dict[str,
 
 
 @app.post("/api/agency/clients/{client_id}/switch")
-def switch_agency_client(client_id: str) -> dict[str, object]:
+def switch_agency_client(client_id: str, context: Context) -> dict[str, object]:
+    require_role(context, "owner", "admin", "recruiter")
     result = agency_client_service.set_active_client(client_id)
     return result
 

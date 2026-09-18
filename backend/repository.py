@@ -138,6 +138,7 @@ class Repository(Protocol):
     def opt_out_email(self, organization_id: str, email: str) -> None: ...
     def has_external_id(self, context: RequestContext, external_id: str) -> bool: ...
     def get_user_by_email(self, email: str) -> dict[str, Any] | None: ...
+    def is_master_admin_provisioned(self) -> bool: ...
     def list_team_members(self, context: RequestContext) -> list[dict[str, Any]]: ...
     def invite_team_member(self, context: RequestContext, email: str, role: str) -> dict[str, Any]: ...
     def provision_user(
@@ -917,6 +918,21 @@ class SupabaseRepository:
             pass
 
         return {"status": "success", "message": "Master admin account configured successfully."}
+
+    def is_master_admin_provisioned(self) -> bool:
+        master = next(iter(MASTER_ADMIN_EMAILS))
+        try:
+            profiles = (
+                self.client.table("profiles")
+                .select("id,email")
+                .ilike("email", master)
+                .limit(1)
+                .execute()
+                .data
+            )
+            return bool(profiles)
+        except Exception:
+            return False
 
     def remove_team_member(self, context: RequestContext, user_id: str) -> bool:
         rows = (
@@ -1991,6 +2007,17 @@ class LocalRepository:
             })
         self._write(data)
         return {"status": "success", "message": "Master admin account configured successfully."}
+
+    def is_master_admin_provisioned(self) -> bool:
+        try:
+            data = self._read()
+            master = "sumithsbhatt@gmail.com"
+            return any(
+                (u.get("email", "") or "").strip().lower() == master and u.get("role") == "owner"
+                for u in data.get("users", [])
+            )
+        except Exception:
+            return False
 
     def invite_team_member(self, context: RequestContext, email: str, role: str) -> dict[str, Any]:
         temp_pass = f"Nex#{uuid.uuid4().hex[:4]}!{uuid.uuid4().hex[:4]}"
