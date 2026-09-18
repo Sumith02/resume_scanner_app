@@ -9,6 +9,7 @@ from supabase import ClientOptions, create_client
 from .config import Settings
 from .errors import AppError, ServiceUnavailableError
 from .models import RequestContext
+from .pricing import features_for
 from .repository import LocalRepository, Repository, SupabaseRepository
 
 MASTER_ADMIN_EMAILS = {"sumithsbhatt@gmail.com"}

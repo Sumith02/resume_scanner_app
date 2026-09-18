@@ -14,7 +14,10 @@ from fastapi import Depends, FastAPI, File, Form, Header, Query, Request, Upload
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from .auth import AuthService, is_master_admin, require_role
+from .auth import AuthService, is_master_admin, require_role, require_tier
+
+from .pricing import ENT_AGENCY_LIST, require_tier
+from .pricing import ENT_AGENCY_LIST, ENT_SCAN, ENT_TEAM, ENT_POOLS, ENT_ENTERPRISE, require_tier
 from .classifier import SKILL_CATEGORIES
 from .client_service import agency_client_service
 from .config import Settings, get_settings
