@@ -1012,26 +1012,26 @@ def talent_network_graph(context: Context) -> dict[str, object]:
 
 @app.get("/api/agency/clients")
 def list_agency_clients(context: Context) -> dict[str, object]:
-    require_role(context, "owner", "admin", "recruiter")
+    require_role(context, "admin", "recruiter", "company_admin")
     return {"clients": agency_client_service.list_clients()}
 
 
 @app.get("/api/agency/overview")
 def agency_overview(context: Context) -> dict[str, object]:
-    require_role(context, "owner", "admin", "recruiter")
+    require_role(context, "admin", "recruiter", "company_admin")
     return agency_client_service.get_agency_overview()
 
 
 @app.post("/api/agency/clients")
 def create_agency_client(payload: dict[str, Any], context: Context) -> dict[str, object]:
-    require_role(context, "owner", "admin", "recruiter")
+    require_role(context, "admin", "recruiter", "company_admin")
     created = agency_client_service.create_client(payload)
     return {"client": created}
 
 
 @app.post("/api/agency/clients/{client_id}/switch")
 def switch_agency_client(client_id: str, context: Context) -> dict[str, object]:
-    require_role(context, "owner", "admin", "recruiter")
+    require_role(context, "admin", "recruiter", "company_admin")
     result = agency_client_service.set_active_client(client_id)
     return result
 
