@@ -130,7 +130,7 @@ class GmailService:
         organization_id = str(state["organizationId"])
         user_id = str(state["userId"])
         current_role = self.repository.membership_role(organization_id, user_id)
-        if current_role not in {"owner", "admin", "recruiter"}:
+        if current_role not in {"owner", "admin", "recruiter", "company_admin"}:
             raise AppError("You no longer have permission to connect Gmail.", 403, "permission_denied")
         context = RequestContext(
             user_id=user_id,
@@ -224,6 +224,7 @@ class GmailService:
                     context,
                     source=f"Gmail: {connection.get('email', 'careers@company.com')}",
                     role=role,
+                    strict=True,
                 )
 
                 now_iso = utc_now()
@@ -318,6 +319,20 @@ class GmailService:
                     skipped += len(part_attachments)
                     continue
 
+                # Way 1b: Mirror how a candidate actually sends a resume through email.
+                # Emails without candidate application signals (neutral forwards, bank
+                # forms, notices, etc.) are skipped UNLESS an attachment's filename
+                # explicitly identifies itself as a resume/CV/profile.
+                if not is_candidate_email:
+                    has_explicit_resume_attachment = any(
+                        res_kw in str(part.get("filename") or "").lower()
+                        for part in part_attachments
+                        for res_kw in ("resume", "cv", "curriculum", "biodata", "profile")
+                    )
+                    if not has_explicit_resume_attachment:
+                        skipped += len(part_attachments)
+                        continue
+
                 # Way 2: Attachment Selection & Structural Classification
                 candidate_parts: list[tuple[dict[str, Any], str, str]] = []
                 for part in raw_parts:
@@ -382,13 +397,8 @@ class GmailService:
                         doc_text = extract_resume_text(content_bytes, filename)
                         is_valid, _ = is_candidate_resume(doc_text, filename)
                         if not is_valid:
-                            lower_doc = doc_text.lower()
-                            strong_invalids = ("tax invoice", "commercial invoice", "boarding pass", "e-ticket")
-                            if len(doc_text.strip()) >= 35 and not any(si in lower_doc for si in strong_invalids):
-                                pass
-                            else:
-                                skipped += 1
-                                continue
+                            skipped += 1
+                            continue
                     except Exception:
                         skipped += 1
                         continue
@@ -405,6 +415,7 @@ class GmailService:
             context,
             source=f"Gmail: {connection.get('email', '')}",
             role=role,
+            strict=True,
         )
         skipped += duplicate_skips
 
