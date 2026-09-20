@@ -116,6 +116,10 @@ export function LoginPage() {
           </div>
         </div>
       </form>
+      <div style={{ marginTop: 18, textAlign: "center", fontSize: 12, color: "var(--color-text-muted)" }}>
+        <a href="/privacy" style={{ color: "var(--color-text-muted)", marginRight: 14 }}>Privacy Policy</a>
+        <a href="/terms" style={{ color: "var(--color-text-muted)" }}>Terms of Service</a>
+      </div>
     </div>
   );
 }

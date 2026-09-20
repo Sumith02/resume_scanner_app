@@ -25,6 +25,8 @@ import { AnalyticsPage } from "./pages/company/AnalyticsPage";
 import { BillingPage } from "./pages/company/BillingPage";
 import { PortalPage } from "./pages/company/PortalPage";
 import { ClientPortalPage } from "./pages/public/ClientPortalPage";
+import { PrivacyPolicyPage } from "./pages/public/PrivacyPolicyPage";
+import { TermsPage } from "./pages/public/TermsPage";
 
 function FullScreenLoader() {
   return (
@@ -77,6 +79,8 @@ export function App() {
         }
       />
       <Route path="/portal/:token" element={<ClientPortalPage />} />
+      <Route path="/privacy" element={<PrivacyPolicyPage />} />
+      <Route path="/terms" element={<TermsPage />} />
 
       <Route
         path="/"
