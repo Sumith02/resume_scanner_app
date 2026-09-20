@@ -44,6 +44,7 @@ def org_out(o: Organization, seats: dict | None = None) -> dict:
         "email": o.email,
         "status": o.status.value if hasattr(o.status, "value") else o.status,
         "seat_limit": o.seat_limit,
+        "plan_code": getattr(o, "plan_code", None) or "starter",
         "feature_flags": o.feature_flags or {},
         "seats": seats,
         "created_by_user_id": o.created_by_user_id,

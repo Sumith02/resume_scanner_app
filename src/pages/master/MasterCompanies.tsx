@@ -35,6 +35,16 @@ export function MasterCompanies() {
     }
   }
 
+  async function changePlan(org: Company, planCode: string) {
+    try {
+      await api.setCompanyPlan(org.id, planCode);
+      setNotice(`${org.name} plan updated to ${planCode.toUpperCase()}`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Plan update failed");
+    }
+  }
+
   return (
     <>
       {error && <Alert kind="error">{error}</Alert>}
@@ -57,6 +67,7 @@ export function MasterCompanies() {
               <tr>
                 <th>Company</th>
                 <th>Status</th>
+                <th>Plan Tier</th>
                 <th>Seats</th>
                 <th>Created</th>
                 <th style={{ textAlign: "right" }}>Actions</th>
@@ -80,6 +91,26 @@ export function MasterCompanies() {
                   </td>
                   <td>
                     <StatusBadge status={c.status} />
+                  </td>
+                  <td>
+                    <select
+                      value={c.plan_code || "starter"}
+                      style={{
+                        padding: "3px 8px",
+                        fontSize: 12,
+                        borderRadius: 6,
+                        border: "1px solid #cbd5e1",
+                        background: (c.plan_code || "starter") === "growth" ? "#ecfdf5" : (c.plan_code || "starter") === "enterprise" ? "#eff6ff" : "#f8fafc",
+                        color: (c.plan_code || "starter") === "growth" ? "#065f46" : (c.plan_code || "starter") === "enterprise" ? "#1e40af" : "#475569",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                      onChange={(e) => changePlan(c, e.target.value)}
+                    >
+                      <option value="growth">Growth (Gmail Sync)</option>
+                      <option value="enterprise">Enterprise</option>
+                      <option value="starter">Starter (No Sync)</option>
+                    </select>
                   </td>
                   <td>
                     {c.seats ? (

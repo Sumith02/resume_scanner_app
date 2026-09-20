@@ -61,6 +61,7 @@ export interface Company {
   email: string | null;
   status: OrgStatus;
   seat_limit: number;
+  plan_code?: string;
   feature_flags: Record<string, unknown>;
   seats: Seats | null;
   created_at: string | null;

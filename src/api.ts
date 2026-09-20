@@ -151,6 +151,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+  setCompanyPlan: (orgId: number, plan_code: string) =>
+    request<{ organization_id: number; plan_code: string }>(
+      `/api/billing/organizations/${orgId}/plan`,
+      { method: "POST", body: JSON.stringify({ plan_code }) },
+    ),
   inviteCompanyAdmin: (orgId: number, data: { email: string; name: string; role: string }) =>
     request<{ user: User; invite_token: string }>(
       `/api/master/companies/${orgId}/admins`,

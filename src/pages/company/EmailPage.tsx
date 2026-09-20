@@ -65,7 +65,7 @@ export function EmailPage() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Connect failed";
       if (msg.includes("not included in the") || msg.includes("gmail_sync")) {
-        setError("Gmail Sync is a Growth & Enterprise feature. Upgrade your plan in Billing & Usage to activate it.");
+        setError("Gmail Sync is only enabled on Growth & Enterprise plans. Please contact your Platform Administrator to enable it.");
       } else {
         setError(msg);
       }
@@ -101,7 +101,7 @@ export function EmailPage() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Sync failed";
       if (msg.includes("not included in the") || msg.includes("gmail_sync")) {
-        setError("Gmail Sync is a Growth & Enterprise feature. Upgrade your plan in Billing & Usage to activate it.");
+        setError("Gmail Sync is only enabled on Growth & Enterprise plans. Please contact your Platform Administrator to enable it.");
       } else {
         setError(msg);
       }
@@ -123,16 +123,7 @@ export function EmailPage() {
 
   return (
     <>
-      {error && (
-        <Alert kind="error">
-          {error}{" "}
-          {error.includes("Billing & Usage") && (
-            <a href="/app/billing" style={{ fontWeight: 600, textDecoration: "underline", marginLeft: 6 }}>
-              Go to Billing &amp; Usage &rarr;
-            </a>
-          )}
-        </Alert>
-      )}
+      {error && <Alert kind="error">{error}</Alert>}
       {notice && <Alert kind="success">{notice}</Alert>}
 
       <div className="page-head">

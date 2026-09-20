@@ -5,7 +5,6 @@ import {
   Briefcase,
   Building2,
   CalendarClock,
-  CreditCard,
   FileText,
   FolderOpen,
   Handshake,
@@ -48,7 +47,6 @@ const COMPANY_NAV: NavEntry[] = [
   { to: "/app/email", label: "Email", icon: <Mail size={17} /> },
   { to: "/app/analytics", label: "Analytics", icon: <TrendingUp size={17} /> },
   { to: "/app/portal", label: "Client Portal", icon: <Share2 size={17} /> },
-  { to: "/app/billing", label: "Billing", icon: <CreditCard size={17} /> },
   { to: "/app/users", label: "Users & Seats", icon: <Users size={17} /> },
   { to: "/app/audit", label: "Audit Log", icon: <ScrollText size={17} /> },
 ];
