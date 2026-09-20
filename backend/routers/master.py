@@ -180,6 +180,10 @@ def create_company(
         seat_limit=payload.seat_limit,
         admin=require_admin,
     )
+    if payload.plan:
+        from backend.plans import PLANS
+        if payload.plan.lower() in PLANS:
+            org.plan_code = payload.plan.lower()
     org.feature_flags = payload.feature_flags or {}
     org.status = OrgStatus.INVITATION_SENT
     db.commit()

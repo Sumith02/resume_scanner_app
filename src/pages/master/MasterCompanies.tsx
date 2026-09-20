@@ -157,7 +157,7 @@ export function MasterCompanies() {
 }
 
 function CreateCompanyModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [form, setForm] = useState({ name: "", email: "", seat_limit: 10 });
+  const [form, setForm] = useState({ name: "", email: "", seat_limit: 10, plan: "growth" });
   const [result, setResult] = useState<{ email: string; token: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -221,6 +221,17 @@ function CreateCompanyModal({ onClose, onCreated }: { onClose: () => void; onCre
               onChange={(e) => setForm({ ...form, email: e.target.value })}
               placeholder="owner@acmeltd.com"
             />
+          </div>
+          <div className="field">
+            <label>Plan tier</label>
+            <select
+              value={form.plan}
+              onChange={(e) => setForm({ ...form, plan: e.target.value })}
+            >
+              <option value="growth">Growth (Recommended — includes Gmail sync & AI matching)</option>
+              <option value="enterprise">Enterprise (Includes all features + API access)</option>
+              <option value="starter">Starter (Free — manual upload only)</option>
+            </select>
           </div>
           <div className="field">
             <label>Allocated user seats</label>

@@ -63,7 +63,12 @@ export function EmailPage() {
       if (res.auth_url) window.location.href = res.auth_url;
       else setNotice(res.message ?? "Gmail OAuth is not configured.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Connect failed");
+      const msg = e instanceof Error ? e.message : "Connect failed";
+      if (msg.includes("not included in the") || msg.includes("gmail_sync")) {
+        setError("Gmail Sync is a Growth & Enterprise feature. Upgrade your plan in Billing & Usage to activate it.");
+      } else {
+        setError(msg);
+      }
     }
   }
 
@@ -94,7 +99,12 @@ export function EmailPage() {
       }
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Sync failed");
+      const msg = e instanceof Error ? e.message : "Sync failed";
+      if (msg.includes("not included in the") || msg.includes("gmail_sync")) {
+        setError("Gmail Sync is a Growth & Enterprise feature. Upgrade your plan in Billing & Usage to activate it.");
+      } else {
+        setError(msg);
+      }
     } finally {
       setSyncBusy(false);
     }
@@ -113,7 +123,16 @@ export function EmailPage() {
 
   return (
     <>
-      {error && <Alert kind="error">{error}</Alert>}
+      {error && (
+        <Alert kind="error">
+          {error}{" "}
+          {error.includes("Billing & Usage") && (
+            <a href="/app/billing" style={{ fontWeight: 600, textDecoration: "underline", marginLeft: 6 }}>
+              Go to Billing &amp; Usage &rarr;
+            </a>
+          )}
+        </Alert>
+      )}
       {notice && <Alert kind="success">{notice}</Alert>}
 
       <div className="page-head">
