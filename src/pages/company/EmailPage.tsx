@@ -41,6 +41,18 @@ export function EmailPage() {
   }
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const gmailParam = params.get("gmail");
+    if (gmailParam === "connected") {
+      setTab("gmail");
+      setNotice("Gmail account successfully connected! You can now click Sync Mailbox to fetch resumes.");
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (gmailParam === "error") {
+      setTab("gmail");
+      const details = params.get("details");
+      setError(details ? `Gmail connection error: ${decodeURIComponent(details)}` : "Failed to connect Gmail account.");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
     void load();
   }, []);
 
@@ -72,7 +84,14 @@ export function EmailPage() {
     setNotice(null);
     try {
       const res = await api.gmailSync();
-      setNotice(`Sync complete: ${JSON.stringify(res.summary)}`);
+      const summary = (res.summary || {}) as Record<string, any>;
+      if (summary.error) {
+        setError(`Sync issue: ${summary.error}`);
+      } else {
+        const ingested = summary.ingested ?? 0;
+        const skipped = summary.skipped ?? 0;
+        setNotice(`Sync complete: ${ingested} resume(s) ingested, ${skipped} non-resume attachment(s) skipped.`);
+      }
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Sync failed");

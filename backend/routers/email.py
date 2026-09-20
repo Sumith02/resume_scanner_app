@@ -296,9 +296,11 @@ def gmail_callback(
             db.commit()
         finally:
             db.close()
-    except Exception:  # noqa: BLE001 - any OAuth failure returns to the app with an error
-        return RedirectResponse(f"{FRONTEND_URL}/app/email?gmail=error")
-    return RedirectResponse(f"{FRONTEND_URL}/app/email?gmail=connected")
+    except Exception as exc:  # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        return RedirectResponse(f"{frontend_url}/app/email?gmail=error&details={urllib.parse.quote(str(exc))}")
+    return RedirectResponse(f"{frontend_url}/app/email?gmail=connected")
 
 
 @router.post("/gmail/connect-demo", status_code=201)
@@ -340,11 +342,9 @@ def gmail_sync(
     account = _account(db, org_id)
     if account is None:
         raise HTTPException(400, "No Gmail account connected")
-    if account.email and account.email.lower() not in _authorized_emails(db, org_id):
-        raise HTTPException(
-            403,
-            "The connected mailbox is not a registered user email for this company.",
-        )
+    if account.organization_id != org_id:
+        raise HTTPException(403, "Mailbox does not belong to this company")
+
     summary = gmail_service.sync_account(db, org, account, actor_email=user.email)
     log_audit(db, org_id=org_id, actor_user_id=user.id, actor_email=user.email,
               action="gmail.synced", resource_type="email_account", resource_id=account.id,

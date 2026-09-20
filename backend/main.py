@@ -80,6 +80,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.responses import JSONResponse
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=getattr(exc, "headers", None),
+    )
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    import traceback
+    tb = traceback.format_exc()
+    print("UNHANDLED ERROR ON", request.url.path, ":", tb)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"{type(exc).__name__}: {str(exc)}",
+            "error_type": type(exc).__name__,
+            "traceback": tb.splitlines()[-4:],
+        },
+    )
+
 app.include_router(auth.router)
 app.include_router(master.router)
 app.include_router(org.router)

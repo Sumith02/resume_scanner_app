@@ -104,12 +104,16 @@ def ensure_access_token(db, account: EmailAccount) -> str | None:
     refresh_token = decrypt(account.encrypted_refresh_token)
     if not refresh_token:
         return token
-    data = _refresh(refresh_token)
-    account.encrypted_access_token = encrypt(data["access_token"])
-    expires_in = int(data.get("expires_in", 3600))
-    account.token_expiry = utcnow() + timedelta(seconds=expires_in - 60)
-    db.flush()
-    return data["access_token"]
+    try:
+        data = _refresh(refresh_token)
+        account.encrypted_access_token = encrypt(data["access_token"])
+        expires_in = int(data.get("expires_in", 3600))
+        account.token_expiry = utcnow() + timedelta(seconds=expires_in - 60)
+        db.flush()
+        return data["access_token"]
+    except Exception as exc:
+        print("Failed to refresh Gmail token:", exc)
+        return None
 
 
 class GmailClient:
@@ -233,14 +237,22 @@ def _sync_gmail(
     if not token:
         account.status = "NEEDS_REAUTH"
         db.flush()
-        return {"provider": "gmail", "error": "No valid access token", "ingested": 0}
+        return {"provider": "gmail", "error": "No valid access token. Please reconnect Gmail.", "ingested": 0}
 
     client = GmailClient(token)
     processed = set((account.last_sync_summary or {}).get("processed", []))
     ingested, skipped, newly = 0, 0, []
 
     try:
-        for message_id in client.list_messages(max_results=max_messages):
+        messages = client.list_messages(max_results=max_messages)
+        # If no messages found with 45d filter, try broader search
+        if not messages:
+            messages = client.list_messages(
+                query="has:attachment (filename:pdf OR filename:docx OR filename:doc OR filename:txt)",
+                max_results=max_messages,
+            )
+
+        for message_id in messages:
             if message_id in processed:
                 continue
             message = client.get_message(message_id)
@@ -248,22 +260,48 @@ def _sync_gmail(
                 if not looks_like_resume(filename) or is_probably_bad_attachment(filename):
                     skipped += 1
                     continue
-                data = client.get_attachment(message_id, attachment_id)
-                ingest_resume(
-                    db, org=org, filename=filename, data=data,
-                    source=SourceKind.GMAIL, actor_email=actor_email,
-                )
-                ingested += 1
+                try:
+                    data = client.get_attachment(message_id, attachment_id)
+                    ingest_resume(
+                        db, org=org, filename=filename, data=data,
+                        source=SourceKind.GMAIL, actor_email=actor_email,
+                    )
+                    ingested += 1
+                except Exception as att_err:
+                    print(f"Skipping attachment {filename}: {att_err}")
+                    skipped += 1
             newly.append(message_id)
-        profile = client.profile()
-        account.history_id = profile.get("historyId")
-        if not account.email:
-            account.email = profile.get("emailAddress")
+
+        try:
+            profile = client.profile()
+            account.history_id = profile.get("historyId")
+            if not account.email:
+                account.email = profile.get("emailAddress")
+        except Exception:
+            pass
+
         account.status = "CONNECTED"
     except httpx.HTTPStatusError as exc:
         account.status = "ERROR"
+        err_msg = str(exc)
+        try:
+            err_json = exc.response.json()
+            if "error" in err_json and "message" in err_json["error"]:
+                err_msg = err_json["error"]["message"]
+        except Exception:
+            err_msg = exc.response.text or str(exc)
+
+        if "has not been used in project" in err_msg or "disabled" in err_msg.lower():
+            err_msg = (
+                "Gmail API is not enabled in your Google Cloud Console project. "
+                "Go to Google Cloud Console -> APIs & Services -> Library -> Search 'Gmail API' -> Click Enable."
+            )
         db.flush()
-        return {"provider": "gmail", "error": str(exc), "ingested": ingested}
+        return {"provider": "gmail", "error": err_msg, "ingested": ingested}
+    except Exception as exc:
+        account.status = "ERROR"
+        db.flush()
+        return {"provider": "gmail", "error": f"Sync error: {str(exc)}", "ingested": ingested}
 
     summary = {
         "provider": "gmail",
