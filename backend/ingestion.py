@@ -47,32 +47,43 @@ def ingest_resume(
         check_quota(db, org, "candidates", 1)
     text = extract_resume_text(filename, data)
 
-    name = overrides.get("name") or guess_name(text) or filename
-    email = overrides.get("email") or extract_email(text)
-    phone = overrides.get("phone") or extract_phone(text)
+    raw_name = overrides.get("name") or guess_name(text) or filename
+    raw_email = overrides.get("email") or extract_email(text)
+    raw_phone = overrides.get("phone") or extract_phone(text)
     skills = extract_skills(text)
     experience = overrides.get("experience_years")
     if experience is None:
         experience = extract_experience_years(text)
 
-    dups = find_dup_candidates(db, org.id, email, phone, name)
+    clean_name = _clean_pg_text(raw_name) or filename
+    clean_email = _clean_pg_text(raw_email)
+    clean_phone = _clean_pg_text(raw_phone)
+    clean_title = _clean_pg_text(overrides.get("current_title"))
+    clean_company = _clean_pg_text(overrides.get("current_company"))
+    clean_location = _clean_pg_text(overrides.get("location"))
+    raw_summary = overrides.get("summary") or (text[:1000] if text else None)
+    clean_summary = _clean_pg_text(raw_summary)
+    clean_text = _clean_pg_text(text)
+    clean_skills = [_clean_pg_text(s) for s in skills if _clean_pg_text(s)]
+
+    dups = find_dup_candidates(db, org.id, clean_email, clean_phone, clean_name)
     dup_of = dups[0].id if dups else None
 
     candidate = Candidate(
         organization_id=org.id,
-        name=overrides.get("name") or name,
-        email=email,
-        phone=phone,
-        current_title=overrides.get("current_title"),
-        current_company=overrides.get("current_company"),
-        location=overrides.get("location"),
-        summary=overrides.get("summary") or (text[:1000] if text else None),
-        skills=skills,
+        name=clean_name,
+        email=clean_email,
+        phone=clean_phone,
+        current_title=clean_title,
+        current_company=clean_company,
+        location=clean_location,
+        summary=clean_summary,
+        skills=clean_skills,
         experience_years=experience or 0,
         source=source,
         stage=stage,
         duplicate_of_id=dup_of,
-        resume_text=text or None,
+        resume_text=clean_text,
         created_by_user_id=created_by_user_id,
     )
     db.add(candidate)
@@ -100,10 +111,17 @@ def ingest_resume(
             "source": source.value if hasattr(source, "value") else source,
             "filename": filename,
             "duplicate_of": dup_of,
-            "skills": skills[:15],
+            "skills": clean_skills[:15],
         },
     )
-    return {"candidate": candidate, "is_duplicate": dup_of is not None, "parsed_skills": skills}
+    return {"candidate": candidate, "is_duplicate": dup_of is not None, "parsed_skills": clean_skills}
+
+
+def _clean_pg_text(val: str | None) -> str | None:
+    if val is None:
+        return None
+    cleaned = str(val).replace("\x00", "").strip()
+    return cleaned if cleaned else None
 
 
 def looks_like_resume(filename: str, content_type: str | None = None) -> bool:
@@ -115,8 +133,14 @@ def looks_like_resume(filename: str, content_type: str | None = None) -> bool:
 
 
 def is_probably_bad_attachment(filename: str) -> bool:
-    """Filter out certificates, cover letters, signatures and images."""
+    """Filter out certificates, cover letters, signatures, statements and images."""
     lower = (filename or "").lower()
-    bad = ("certificate", "cover", "signature", "sign", "logo", "image",
-           "screenshot", "invoice", "receipt", "offer letter")
+    bad = (
+        "certificate", "cover", "signature", "sign", "logo", "image",
+        "screenshot", "invoice", "receipt", "offer letter",
+        "statement", "downloadstatement", "bank", "payslip", "salary",
+        "tax", "report", "bill", "pass", "form", "w2", "1099", "challan",
+        "ticket", "boarding", "itinerary", "booking", "policy", "insurance",
+        "aadhaar", "pan card", "passport", "license", "licence",
+    )
     return any(b in lower for b in bad)

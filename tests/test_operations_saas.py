@@ -295,3 +295,56 @@ def test_platform_analytics_master_only(client, master):
     r = client.get("/api/analytics/platform", headers=auth_headers(master))
     assert r.status_code == 200, r.text
     assert r.json()["organizations"]["total"] >= 1
+
+
+def test_is_probably_bad_attachment_filters_non_resumes():
+    from backend.ingestion import is_probably_bad_attachment
+
+    # Bank statements and financial/admin docs must be filtered out
+    assert is_probably_bad_attachment("61568XXXX_DownloadStatement_1787905475.pdf") is True
+    assert is_probably_bad_attachment("Bank_Statement_Jan_2026.pdf") is True
+    assert is_probably_bad_attachment("Salary_Slip_August.pdf") is True
+    assert is_probably_bad_attachment("Invoice_9921.pdf") is True
+    assert is_probably_bad_attachment("Tax_Return_Form_1099.pdf") is True
+    assert is_probably_bad_attachment("Aadhaar_Card.pdf") is True
+
+    # Real resumes must NOT be filtered out
+    assert is_probably_bad_attachment("John_Doe_Resume.pdf") is False
+    assert is_probably_bad_attachment("Senior_Engineer_CV.docx") is False
+    assert is_probably_bad_attachment("Jane_Smith.pdf") is False
+
+
+def test_resume_text_and_ingestion_sanitizes_nul_bytes(client, master):
+    from backend.db import SessionLocal
+    from backend.ingestion import ingest_resume
+    from backend.models import Candidate, Organization
+    from backend.resume_service import extract_resume_text
+
+    # Binary data containing NUL bytes should never produce NUL bytes in extracted text
+    raw_corrupted_data = b"%PDF-1.4\x00\x00\x01\x02\x00RandomBinaryData\x00\x00"
+    extracted = extract_resume_text("bad.pdf", raw_corrupted_data)
+    assert "\x00" not in extracted
+
+    # Test candidate ingestion strips any \x00 bytes before inserting into DB
+    org_dict, _tok = _setup(client, master, "Nul Co", "nul@test.com")
+    with SessionLocal() as db:
+        org = db.query(Organization).filter(Organization.id == org_dict["id"]).first()
+        result = ingest_resume(
+            db,
+            org=org,
+            filename="test_nul.txt",
+            data="Alice\x00 Null\nemail\x00@test.com\nPython\x00 Developer".encode(),
+            overrides={
+                "name": "Alice\x00 With Null",
+                "summary": "Summary\x00 with null byte",
+            },
+            meter=False,
+        )
+        cand_id = result["candidate"].id
+        cand = db.query(Candidate).filter(Candidate.id == cand_id).first()
+        assert "\x00" not in cand.name
+        assert "\x00" not in (cand.summary or "")
+        assert "\x00" not in (cand.resume_text or "")
+        for skill in cand.skills:
+            assert "\x00" not in skill
+

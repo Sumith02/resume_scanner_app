@@ -19,6 +19,7 @@ from backend.rbac import (
     PIPELINE_MANAGE,
     TAG_MANAGE,
 )
+from backend.ingestion import _clean_pg_text
 from backend.repository import (
     find_dup_candidates,
     get_candidate,
@@ -191,26 +192,23 @@ async def create_candidate(
         parsed_exp = experience_years
         raw = None
 
-    if not parsed_name:
+    clean_name = _clean_pg_text(parsed_name)
+    if not clean_name:
         raise HTTPException(422, "name is required when no resume is uploaded")
 
-    # Duplicate detection within the tenant.
-    dups = find_dup_candidates(db, org_id, parsed_email, parsed_phone, parsed_name)
-    dup_of = dups[0].id if dups else None
+    clean_email = _clean_pg_text(parsed_email)
+    clean_phone = _clean_pg_text(parsed_phone)
+    clean_title = _clean_pg_text(current_title)
+    clean_company = _clean_pg_text(current_company)
+    clean_location = _clean_pg_text(location)
+    clean_text = _clean_pg_text(resume_text)
+    clean_skills = [_clean_pg_text(s) for s in parsed_skills if _clean_pg_text(s)]
+    raw_summary = summary or (clean_text[:1000] if clean_text else None)
+    clean_summary = _clean_pg_text(raw_summary)
 
-    imports = {
-        "name": parsed_name,
-        "email": parsed_email,
-        "phone": parsed_phone,
-        "current_title": current_title,
-        "current_company": current_company,
-        "location": location,
-        "summary": summary,
-        "skills": parsed_skills,
-        "experience_years": parsed_exp or 0,
-    }
-    if resume_text and not summary:
-        imports["summary"] = resume_text[:1000]
+    # Duplicate detection within the tenant.
+    dups = find_dup_candidates(db, org_id, clean_email, clean_phone, clean_name)
+    dup_of = dups[0].id if dups else None
 
     job_ids = [int(x) for x in job_ids_csv.split(",") if x.strip().isdigit()] if job_ids_csv else []
     from backend.models import SourceKind
@@ -222,19 +220,19 @@ async def create_candidate(
 
     candidate = Candidate(
         organization_id=org_id,
-        name=parsed_name,
-        email=parsed_email,
-        phone=parsed_phone,
-        current_title=current_title,
-        current_company=current_company,
-        location=location,
-        summary=imports.get("summary"),
-        skills=imports.get("skills") or [],
-        experience_years=imports.get("experience_years") or 0,
+        name=clean_name,
+        email=clean_email,
+        phone=clean_phone,
+        current_title=clean_title,
+        current_company=clean_company,
+        location=clean_location,
+        summary=clean_summary,
+        skills=clean_skills,
+        experience_years=parsed_exp or 0,
         source=source,
         stage=stage_enum,
         duplicate_of_id=dup_of,
-        resume_text=resume_text or None,
+        resume_text=clean_text,
         created_by_user_id=user.id,
     )
     candidate.matched_job_ids = job_ids or _match_jobs(db, org_id, candidate.skills)

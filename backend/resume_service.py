@@ -43,21 +43,30 @@ _EXP_YEAR_PROFILE = [
 
 def extract_resume_text(filename: str, data: bytes) -> str:
     lower = filename.lower()
+    text = ""
     if lower.endswith(".pdf"):
-        return _extract_pdf(data) or _decode_text(data)
-    if lower.endswith(".docx"):
-        return _extract_docx(data) or _decode_text(data)
-    if lower.endswith((".txt", ".md", ".text")):
-        return _decode_text(data) or _extract_pdf(data)
-    return _decode_text(data) or _extract_pdf(data) or _extract_docx(data)
+        text = _extract_pdf(data)
+        if not text and not data.startswith(b"%PDF"):
+            text = _decode_text(data)
+    elif lower.endswith(".docx"):
+        text = _extract_docx(data)
+        if not text and not data.startswith(b"PK"):
+            text = _decode_text(data)
+    elif lower.endswith((".txt", ".md", ".text")):
+        text = _decode_text(data)
+    else:
+        text = _extract_pdf(data) or _extract_docx(data) or _decode_text(data)
+    return (text or "").replace("\x00", "")
 
 
 def _decode_text(data: bytes) -> str:
+    if not data or b"\x00" in data:
+        return ""
     try:
-        return data.decode("utf-8")
+        return data.decode("utf-8").replace("\x00", "")
     except UnicodeDecodeError:
         try:
-            return data.decode("latin-1")
+            return data.decode("latin-1").replace("\x00", "")
         except Exception:
             return ""
 
@@ -67,7 +76,8 @@ def _extract_pdf(data: bytes) -> str:
         from pypdf import PdfReader
 
         reader = PdfReader(io.BytesIO(data))
-        return "\n".join((page.extract_text() or "") for page in reader.pages)
+        text = "\n".join((page.extract_text() or "") for page in reader.pages)
+        return (text or "").replace("\x00", "")
     except Exception:
         return ""
 

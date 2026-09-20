@@ -211,12 +211,17 @@ def _sync_demo(db, org: Organization, account: EmailAccount, *, actor_email: str
                 skipped += 1
                 newly.append(path.name)
                 continue
-            ingest_resume(
-                db, org=org, filename=path.name, data=data,
-                source=SourceKind.GMAIL, actor_email=actor_email,
-            )
-            ingested += 1
-            newly.append(path.name)
+            try:
+                with db.begin_nested():
+                    ingest_resume(
+                        db, org=org, filename=path.name, data=data,
+                        source=SourceKind.GMAIL, actor_email=actor_email,
+                    )
+                ingested += 1
+                newly.append(path.name)
+            except Exception as att_err:
+                print(f"Skipping demo resume {path.name}: {att_err}")
+                skipped += 1
 
     summary = {
         "provider": "demo",
@@ -261,11 +266,12 @@ def _sync_gmail(
                     skipped += 1
                     continue
                 try:
-                    data = client.get_attachment(message_id, attachment_id)
-                    ingest_resume(
-                        db, org=org, filename=filename, data=data,
-                        source=SourceKind.GMAIL, actor_email=actor_email,
-                    )
+                    with db.begin_nested():
+                        data = client.get_attachment(message_id, attachment_id)
+                        ingest_resume(
+                            db, org=org, filename=filename, data=data,
+                            source=SourceKind.GMAIL, actor_email=actor_email,
+                        )
                     ingested += 1
                 except Exception as att_err:
                     print(f"Skipping attachment {filename}: {att_err}")
@@ -282,6 +288,10 @@ def _sync_gmail(
 
         account.status = "CONNECTED"
     except httpx.HTTPStatusError as exc:
+        try:
+            db.rollback()
+        except Exception:
+            pass
         account.status = "ERROR"
         err_msg = str(exc)
         try:
@@ -296,11 +306,21 @@ def _sync_gmail(
                 "Gmail API is not enabled in your Google Cloud Console project. "
                 "Go to Google Cloud Console -> APIs & Services -> Library -> Search 'Gmail API' -> Click Enable."
             )
-        db.flush()
+        try:
+            db.flush()
+        except Exception:
+            pass
         return {"provider": "gmail", "error": err_msg, "ingested": ingested}
     except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            pass
         account.status = "ERROR"
-        db.flush()
+        try:
+            db.flush()
+        except Exception:
+            pass
         return {"provider": "gmail", "error": f"Sync error: {str(exc)}", "ingested": ingested}
 
     summary = {
