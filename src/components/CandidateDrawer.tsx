@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Download, Mail, MapPin, Phone, Trash2 } from "lucide-react";
-import { api } from "../api";
+import { api, apiUrl } from "../api";
 import { Alert, Modal, StageBadge } from "./ui";
 import { PIPELINE_STAGES, formatDate, initials, stageLabel } from "../lib/format";
 import type { Candidate, Job, Note, Tag } from "../types";
@@ -158,13 +158,13 @@ export function CandidateDrawer({
                 {cand.has_resume && (
                   <a
                     className="btn sm ghost"
-                    href={`/api/org/candidates/${cand.id}/resume`}
+                    href={apiUrl(`/api/org/candidates/${cand.id}/resume`)}
                     target="_blank"
                     rel="noreferrer"
                     onClick={(e) => {
                       e.preventDefault();
                       const token = localStorage.getItem("nexerra.token");
-                      fetch(`/api/org/candidates/${cand.id}/resume`, {
+                      fetch(apiUrl(`/api/org/candidates/${cand.id}/resume`), {
                         headers: token ? { Authorization: `Bearer ${token}` } : {},
                       })
                         .then((r) => r.blob())

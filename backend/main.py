@@ -59,6 +59,9 @@ app.include_router(analytics.router)
 app.include_router(portal.router)
 
 
+@app.get("/")
+@app.get("/api")
+@app.get("/api/")
 @app.get("/api/health")
 def health():
     return {"status": "ok", "service": "nexerra-talent-os"}

@@ -36,5 +36,10 @@ def get_db():
 
 
 def init_db() -> None:
-    os.makedirs("uploads", exist_ok=True)
+    from backend.config import UPLOAD_DIR
+
+    try:
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+    except OSError:
+        pass
     Base.metadata.create_all(bind=engine)

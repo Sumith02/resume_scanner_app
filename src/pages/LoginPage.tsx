@@ -71,6 +71,50 @@ export function LoginPage() {
           <span className="muted">First time? </span>
           <Link to="/setup">Set up the platform</Link>
         </div>
+
+        <div style={{ marginTop: 20, paddingTop: 16, borderTop: "1px solid var(--border, #334155)" }}>
+          <div style={{ fontWeight: 600, marginBottom: 8, color: "var(--muted)", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            Demo Accounts (Click to autofill)
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <button
+              type="button"
+              className="btn sm secondary"
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}
+              onClick={() => {
+                setEmail("admin@nexerra.io");
+                setPassword("Admin@12345");
+              }}
+            >
+              <span>👑 Master Admin</span>
+              <span className="muted" style={{ fontSize: 11 }}>admin@nexerra.io</span>
+            </button>
+            <button
+              type="button"
+              className="btn sm secondary"
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}
+              onClick={() => {
+                setEmail("owner@northwind.dev");
+                setPassword("Owner@12345");
+              }}
+            >
+              <span>🏢 Company Owner</span>
+              <span className="muted" style={{ fontSize: 11 }}>owner@northwind.dev</span>
+            </button>
+            <button
+              type="button"
+              className="btn sm secondary"
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}
+              onClick={() => {
+                setEmail("recruiter@northwind.dev");
+                setPassword("Recruiter@12345");
+              }}
+            >
+              <span>🎯 Recruiter</span>
+              <span className="muted" style={{ fontSize: 11 }}>recruiter@northwind.dev</span>
+            </button>
+          </div>
+        </div>
       </form>
     </div>
   );

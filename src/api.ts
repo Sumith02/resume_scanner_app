@@ -41,6 +41,14 @@ export function setToken(token: string | null) {
   else localStorage.removeItem(TOKEN_KEY);
 }
 
+export const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
+
+export function apiUrl(path: string): string {
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return `${API_BASE}${normalized}`;
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -59,7 +67,17 @@ async function request<T>(
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (!isForm && options.body) headers.set("Content-Type", "application/json");
 
-  const res = await fetch(path, { ...options, headers });
+  const fullUrl = apiUrl(path);
+  let res: Response;
+  try {
+    res = await fetch(fullUrl, { ...options, headers });
+  } catch {
+    throw new ApiError(
+      0,
+      `Cannot reach API server at ${fullUrl}. Please ensure the backend is running.`,
+    );
+  }
+
   const text = await res.text();
   let payload: unknown = null;
   if (text) {
@@ -74,6 +92,8 @@ async function request<T>(
     if (payload && typeof payload === "object" && "detail" in payload) {
       const d = (payload as { detail: unknown }).detail;
       detail = typeof d === "string" ? d : JSON.stringify(d);
+    } else if (res.status === 404) {
+      detail = `API endpoint not found (404). Ensure the backend is deployed.`;
     }
     throw new ApiError(res.status, detail);
   }

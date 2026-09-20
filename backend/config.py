@@ -7,10 +7,19 @@ try:  # optional: load a local .env for development
 except ImportError:  # pragma: no cover - dotenv is optional in production
     pass
 
+IS_VERCEL = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
+
+_default_db = "sqlite:////tmp/nexerra.db" if IS_VERCEL else "sqlite:///./nexerra.db"
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "sqlite:///./nexerra.db",
+    _default_db,
 )
+
+# Normalize postgres URL if needed (SQLAlchemy 2.0 requires postgresql+psycopg:// or postgresql://)
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+elif DATABASE_URL.startswith("postgresql://") and "+psycopg" not in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
 JWT_SECRET = os.getenv(
     "JWT_SECRET",
@@ -21,7 +30,8 @@ JWT_EXPIRES_MINUTES = int(os.getenv("JWT_EXPIRES_MINUTES", "1440"))
 
 INVITE_EXPIRES_HOURS = int(os.getenv("INVITE_EXPIRES_HOURS", "72"))
 
-UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./uploads")
+_default_upload_dir = "/tmp/uploads" if IS_VERCEL else "./uploads"
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", _default_upload_dir)
 
 BOOTSTRAP_EMAIL = os.getenv("BOOTSTRAP_EMAIL", "admin@nexerra.io")
 BOOTSTRAP_PASSWORD = os.getenv("BOOTSTRAP_PASSWORD", "Admin@12345")
@@ -47,7 +57,8 @@ GMAIL_SCOPES = [
 
 # When Google OAuth isn't configured the Gmail connector runs in demo mode,
 # reading resume files dropped into this local inbox directory.
-DEMO_INBOX_DIR = os.getenv("DEMO_INBOX_DIR", "./uploads/inbox")
+_default_inbox_dir = "/tmp/uploads/inbox" if IS_VERCEL else "./uploads/inbox"
+DEMO_INBOX_DIR = os.getenv("DEMO_INBOX_DIR", _default_inbox_dir)
 
 # ---------------------------------------------------------------------------
 # Outbound email — Phase 4. Falls back to a mock provider when unset.
