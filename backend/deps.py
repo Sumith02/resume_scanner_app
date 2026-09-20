@@ -28,13 +28,20 @@ def get_current_user(
     user = db.get(User, user_id)
     if user is None:
         raise exc
-    if user.status not in ("ACTIVE", "REACTIVATED"):
-        raise HTTPException(status_code=403, detail=f"Account status is {user.status}")
+    status_str = user.status.value if hasattr(user.status, "value") else str(user.status)
+    if status_str in ("INACTIVE", "SUSPENDED"):
+        raise HTTPException(status_code=403, detail=f"Account status is {status_str}")
     return user
 
 
 def require_permission(permission: str):
     def _check(user: User = Depends(get_current_user)) -> User:
+        status_str = user.status.value if hasattr(user.status, "value") else str(user.status)
+        if status_str == "INVITED" or user.must_change_password:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Password change required before accessing platform features",
+            )
         if not has_permission(user.role, permission):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

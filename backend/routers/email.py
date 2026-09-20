@@ -345,6 +345,14 @@ def gmail_sync(
     if account.organization_id != org_id:
         raise HTTPException(403, "Mailbox does not belong to this company")
 
+    authorized = _authorized_emails(db, org_id)
+    if account.email and account.email.lower() not in authorized:
+        if account.is_demo or not account.connected_by_user_id:
+            raise HTTPException(
+                403,
+                "The connected mailbox is not a registered user email for this company.",
+            )
+
     summary = gmail_service.sync_account(db, org, account, actor_email=user.email)
     log_audit(db, org_id=org_id, actor_user_id=user.id, actor_email=user.email,
               action="gmail.synced", resource_type="email_account", resource_id=account.id,

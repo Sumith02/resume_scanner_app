@@ -253,3 +253,44 @@ def test_must_change_password_is_surfaced_and_invited_login_allowed(client):
     )
     assert login.status_code == 200, login.text
     assert login.json()["user"]["must_change_password"] is True
+
+
+def test_invited_user_can_change_password(client):
+    from backend.db import SessionLocal
+    from backend.models import User, UserStatus
+    from backend.security import hash_password
+
+    master = master_token(client)
+    r = client.post(
+        "/api/master/companies",
+        json={"name": "Invited Co", "email": "invited@co.dev", "seat_limit": 2},
+        headers=auth_headers(master),
+    )
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == "invited@co.dev").one()
+        user.status = UserStatus.INVITED
+        user.must_change_password = True
+        user.password_hash = hash_password("TempPass!123")
+        db.add(user)
+        db.commit()
+
+    login = client.post(
+        "/api/auth/login", json={"email": "invited@co.dev", "password": "TempPass!123"}
+    )
+    assert login.status_code == 200
+    token = login.json()["access_token"]
+
+    # Changing password succeeds and activates account
+    chg = client.post(
+        "/api/auth/change-password",
+        json={"current_password": "TempPass!123", "new_password": "NewPermanentPass!123"},
+        headers=auth_headers(token),
+    )
+    assert chg.status_code == 200
+    assert chg.json()["user"]["status"] == "ACTIVE"
+    assert chg.json()["user"]["must_change_password"] is False
+
+    # Now active, can access org jobs endpoint
+    new_token = chg.json()["access_token"]
+    jobs = client.get("/api/org/jobs", headers=auth_headers(new_token))
+    assert jobs.status_code == 200
