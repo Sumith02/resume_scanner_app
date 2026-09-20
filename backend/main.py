@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -26,6 +28,14 @@ from backend.routers import (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    is_testing = "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ
+    if not is_testing:
+        try:
+            from scripts.seed import seed
+
+            seed()
+        except Exception:
+            pass
     yield
 
 
@@ -37,8 +47,24 @@ app = FastAPI(
 )
 
 
+_initialized = False
+
+
 @app.middleware("http")
 async def ensure_api_prefix(request: Request, call_next):
+    global _initialized
+    if not _initialized:
+        _initialized = True
+        try:
+            init_db()
+            is_testing = "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ
+            if not is_testing:
+                from scripts.seed import seed
+
+                seed()
+        except Exception:
+            pass
+
     path = request.scope.get("path", "")
     if not path.startswith("/api"):
         request.scope["path"] = "/api" + (path if path.startswith("/") else f"/{path}")

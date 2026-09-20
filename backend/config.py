@@ -7,7 +7,20 @@ try:  # optional: load a local .env for development
 except ImportError:  # pragma: no cover - dotenv is optional in production
     pass
 
-IS_VERCEL = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
+def _is_serverless_or_readonly() -> bool:
+    if os.getenv("VERCEL") or os.getenv("LAMBDA_TASK_ROOT") or os.getenv("AWS_LAMBDA_FUNCTION_NAME") or os.getenv("AWS_EXECUTION_ENV"):
+        return True
+    try:
+        test_file = "./.write_test"
+        with open(test_file, "w") as f:
+            f.write("1")
+        os.remove(test_file)
+        return False
+    except OSError:
+        return True
+
+
+IS_VERCEL = _is_serverless_or_readonly()
 
 _default_db = "sqlite:////tmp/nexerra.db" if IS_VERCEL else "sqlite:///./nexerra.db"
 DATABASE_URL = os.getenv(
