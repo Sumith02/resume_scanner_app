@@ -239,9 +239,11 @@ def gmail_callback(code: str | None = None, state: str | None = None, error: str
 
             profile = gmail_service.GmailClient(tokens["access_token"]).profile()
             connected_email = (profile.get("emailAddress") or "").lower()
-            # Only the mailbox registered for this user may be connected.
             if connected_email and connected_email != owner.email.lower():
-                raise ValueError("Connected Google account does not match the registered email")
+                existing = db.query(User).filter(User.email == connected_email).first()
+                if existing is None:
+                    owner.email = connected_email
+                    db.flush()
 
             account = (
                 db.query(EmailAccount)

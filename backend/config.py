@@ -57,10 +57,19 @@ MAX_RESUME_BYTES = int(os.getenv("MAX_RESUME_BYTES", str(10 * 1024 * 1024)))
 # ---------------------------------------------------------------------------
 # Email ingestion (Gmail OAuth) — Phase 4
 # ---------------------------------------------------------------------------
+_vercel_domain = (
+    os.getenv("VERCEL_PROJECT_PRODUCTION_URL")
+    or os.getenv("VERCEL_URL")
+    or "resume-scanner-app-two.vercel.app"
+)
+_default_api_url = f"https://{_vercel_domain}" if IS_VERCEL else "http://localhost:4174"
+_default_frontend_url = f"https://{_vercel_domain}" if IS_VERCEL else "http://localhost:5174"
+
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+
 GOOGLE_REDIRECT_URI = os.getenv(
-    "GOOGLE_REDIRECT_URI", "http://localhost:4174/api/email/gmail/callback"
+    "GOOGLE_REDIRECT_URI", f"{_default_api_url}/api/email/gmail/callback"
 )
 GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -83,5 +92,5 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM = os.getenv("SMTP_FROM", "no-reply@nexerra.io")
 SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes")
 
-PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "http://localhost:4174")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5174")
+PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", _default_api_url)
+FRONTEND_URL = os.getenv("FRONTEND_URL", _default_frontend_url)
