@@ -44,12 +44,14 @@ def oauth_configured() -> bool:
     return bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
 
 
-def authorization_url(state: str, login_hint: str | None = None) -> str:
+def authorization_url(
+    state: str, login_hint: str | None = None, redirect_uri: str | None = None
+) -> str:
     if not oauth_configured():
         raise RuntimeError("Google OAuth is not configured")
     params = {
         "client_id": GOOGLE_CLIENT_ID,
-        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "redirect_uri": redirect_uri or GOOGLE_REDIRECT_URI,
         "response_type": "code",
         "scope": " ".join(GMAIL_SCOPES),
         "access_type": "offline",
@@ -62,14 +64,14 @@ def authorization_url(state: str, login_hint: str | None = None) -> str:
     return f"{GOOGLE_AUTH_URL}?{urllib.parse.urlencode(params)}"
 
 
-def exchange_code(code: str) -> dict:
+def exchange_code(code: str, redirect_uri: str | None = None) -> dict:
     resp = httpx.post(
         GOOGLE_TOKEN_URL,
         data={
             "code": code,
             "client_id": GOOGLE_CLIENT_ID,
             "client_secret": GOOGLE_CLIENT_SECRET,
-            "redirect_uri": GOOGLE_REDIRECT_URI,
+            "redirect_uri": redirect_uri or GOOGLE_REDIRECT_URI,
             "grant_type": "authorization_code",
         },
         timeout=30,

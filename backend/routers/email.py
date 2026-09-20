@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import os
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -198,8 +200,29 @@ def gmail_status(
     }
 
 
+def _get_redirect_uri(request: Request) -> str:
+    if os.getenv("GOOGLE_REDIRECT_URI"):
+        return os.getenv("GOOGLE_REDIRECT_URI")
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    if host:
+        proto = request.headers.get("x-forwarded-proto", "https" if "vercel.app" in host else "http")
+        return f"{proto}://{host}/api/email/gmail/callback"
+    return GOOGLE_REDIRECT_URI
+
+
+def _get_frontend_url(request: Request) -> str:
+    if os.getenv("FRONTEND_URL"):
+        return os.getenv("FRONTEND_URL")
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    if host:
+        proto = request.headers.get("x-forwarded-proto", "https" if "vercel.app" in host else "http")
+        return f"{proto}://{host}"
+    return FRONTEND_URL
+
+
 @router.get("/gmail/connect")
 def gmail_connect(
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(require_permission(GMAIL_CONNECT)),
 ):
@@ -214,21 +237,29 @@ def gmail_connect(
             "message": "Google OAuth is not configured. Use demo connect to try the flow.",
         }
     state = create_oauth_state(org_id, user.id)
+    redirect_uri = _get_redirect_uri(request)
     return {
         "oauth_configured": True,
-        "auth_url": gmail_service.authorization_url(state, login_hint=user.email),
-        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "auth_url": gmail_service.authorization_url(state, login_hint=user.email, redirect_uri=redirect_uri),
+        "redirect_uri": redirect_uri,
     }
 
 
 @router.get("/gmail/callback")
-def gmail_callback(code: str | None = None, state: str | None = None, error: str | None = None):
+def gmail_callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+):
     """Browser redirect target for Google OAuth (no bearer token)."""
+    redirect_uri = _get_redirect_uri(request)
+    frontend_url = _get_frontend_url(request)
     if error or not code or not state:
-        return RedirectResponse(f"{FRONTEND_URL}/app/email?gmail=error")
+        return RedirectResponse(f"{frontend_url}/app/email?gmail=error")
     try:
         claims = decode_oauth_state(state)
-        tokens = gmail_service.exchange_code(code)
+        tokens = gmail_service.exchange_code(code, redirect_uri=redirect_uri)
         from backend.db import SessionLocal
 
         db = SessionLocal()
