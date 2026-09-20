@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.db import init_db
@@ -35,6 +35,16 @@ app = FastAPI(
     description="Multi-tenant recruitment operating system — Master Admin → Company → Sub-Users",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def ensure_api_prefix(request: Request, call_next):
+    path = request.scope.get("path", "")
+    if not path.startswith("/api"):
+        request.scope["path"] = "/api" + (path if path.startswith("/") else f"/{path}")
+
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,

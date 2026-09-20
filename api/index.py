@@ -10,28 +10,13 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from backend.db import init_db
-from backend.main import app as _app
-from scripts.seed import seed
+from backend.main import app
 
-# Auto-initialize and seed demo accounts on startup
+# Ensure database tables and demo seed exist when running serverless
 try:
     init_db()
+    from scripts.seed import seed
+
     seed()
 except Exception as e:
-    print(f"[Nexerra Vercel API] Startup note: {e}")
-
-
-class NormalizedPathMiddleware:
-    """Ensure routes are prefixed with /api so FastAPI matches both stripped and non-stripped rewrites."""
-    def __init__(self, app):
-        self.app = app
-
-    async def __call__(self, scope, receive, send):
-        if scope.get("type") in ("http", "websocket"):
-            path = scope.get("path", "")
-            if not path.startswith("/api"):
-                scope["path"] = "/api" + (path if path.startswith("/") else f"/{path}")
-        await self.app(scope, receive, send)
-
-
-app = NormalizedPathMiddleware(_app)
+    print(f"[Nexerra Vercel API] Initialization note: {e}")
