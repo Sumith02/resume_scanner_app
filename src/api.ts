@@ -1,722 +1,385 @@
 import type {
-  AgencyClient,
-  AgencyInvoice,
-  AgencyOverview,
-  ApplicationStatus,
+  AnalyticsOverview,
+  AuditEntry,
   Candidate,
-  CandidateApplication,
-  CandidateEvent,
-  CandidateJobMatch,
-  CandidateStageHistory,
-  ClientJob,
-  ClientShortlist,
-  EligibleCandidate,
-  EmailCampaign,
-  GmailImportResult,
+  CandidateMatches,
+  Company,
+  CopilotResult,
+  EmailAccount,
+  EmailMessage,
+  EmailTemplate,
   GmailStatus,
-  InterviewPlan,
-  InterviewScorecard,
-  JobOffer,
-  JobOpening,
-  NaturalSearchResult,
-  OnboardingRecord,
-  PlacementRecord,
-  ProcessingJob,
-  ProvisionUserPayload,
-  ProvisionUserResult,
-  RecruiterFeedback,
-  RediscoveryResponse,
-  ReportSummary,
-  RetentionPolicy,
-  TalentGraphData,
+  Interview,
+  Invoice,
+  Job,
+  MatchResponse,
+  Note,
+  Offer,
+  OnboardingTask,
+  Pipeline,
+  Plan,
+  PlatformAnalytics,
+  PortalToken,
+  PortalView,
+  SavedSearch,
+  SeatRequest,
+  Seats,
+  Subscription,
+  Tag,
   TalentPool,
-  TaxonomyResponse,
-  TeamMember,
-  UploadResult
+  UsageSummary,
+  User,
 } from "./types";
-import { isSupabaseBrowserConfigured, supabase } from "./supabaseClient";
 
-const jsonHeaders = {
-  "Content-Type": "application/json"
-};
+const TOKEN_KEY = "nexerra.token";
 
-let accessToken = "";
-
-export function setApiAccessToken(token: string): void {
-  accessToken = token;
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+export function setToken(token: string | null) {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
 }
 
-export interface CurrentUserProfile {
-  user: {
-    id: string;
-    email: string;
-    fullName?: string;
-    role: "owner" | "admin" | "recruiter" | "hiring_manager" | "viewer";
-    mustChangePassword?: boolean;
-  };
-  workspace: {
-    id: string;
-    name?: string;
-    role: "owner" | "admin" | "recruiter" | "hiring_manager" | "viewer";
-  };
-}
-
-export async function fetchCurrentUser(): Promise<CurrentUserProfile> {
-  return request<CurrentUserProfile>("/api/me");
-}
-
-export async function fetchTaxonomy(): Promise<TaxonomyResponse> {
-  return request<TaxonomyResponse>("/api/taxonomy");
-}
-
-export async function fetchApplications(): Promise<CandidateApplication[]> {
-  const data = await request<{ applications: CandidateApplication[] }>("/api/applications");
-  return data.applications;
-}
-
-export async function fetchCandidates(): Promise<Candidate[]> {
-  const data = await request<{ candidates: Candidate[] }>("/api/candidates");
-  return data.candidates;
-}
-
-export async function fetchCandidate(id: string): Promise<{ candidate: Candidate; events: CandidateEvent[] }> {
-  return request<{ candidate: Candidate; events: CandidateEvent[] }>(`/api/candidates/${id}`);
-}
-
-export async function updateCandidateProfile(id: string, updates: Partial<Candidate>): Promise<Candidate> {
-  const data = await request<{ candidate: Candidate }>(`/api/candidates/${id}`, {
-    method: "PATCH",
-    headers: jsonHeaders,
-    body: JSON.stringify(updates)
-  });
-  return data.candidate;
-}
-
-export async function revealCandidateIdentity(id: string, reason: string = "Recruiter evaluation"): Promise<Candidate> {
-  const data = await request<{ candidate: Candidate; revealed: boolean }>(`/api/candidates/${id}/reveal`, {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify({ candidateId: id, reason })
-  });
-  return data.candidate;
-}
-
-export async function executeNaturalSearch(query: string): Promise<NaturalSearchResult> {
-  return request<NaturalSearchResult>("/api/search/natural", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify({ query })
-  });
-}
-
-export async function rediscoverTalent(jobId?: string, query?: string, minScore: number = 60): Promise<RediscoveryResponse> {
-  return request<RediscoveryResponse>("/api/rediscovery", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify({ jobId, query, minScore })
-  });
-}
-
-export async function fetchJobMatches(jobId: string): Promise<{ job: JobOpening; matches: Array<{ candidate: Candidate; match: CandidateJobMatch }> }> {
-  return request<{ job: JobOpening; matches: Array<{ candidate: Candidate; match: CandidateJobMatch }> }>(`/api/jobs/${jobId}/matches`);
-}
-
-export async function compareCandidates(candidateIds: string[], jobId?: string): Promise<{
-  job: any;
-  evaluations: Array<{ candidate: Candidate; match: CandidateJobMatch }>;
-  recommendation: string;
-}> {
-  return request<{
-    job: any;
-    evaluations: Array<{ candidate: Candidate; match: CandidateJobMatch }>;
-    recommendation: string;
-  }>("/api/candidates/compare", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify({ candidateIds, jobId })
-  });
-}
-
-export async function fetchTalentPools(): Promise<TalentPool[]> {
-  const data = await request<{ pools: TalentPool[] }>("/api/talent-pools");
-  return data.pools;
-}
-
-export async function createTalentPool(name: string, description: string): Promise<TalentPool> {
-  const data = await request<{ pool: TalentPool }>("/api/talent-pools", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify({ name, description })
-  });
-  return data.pool;
-}
-
-export async function addToTalentPool(poolId: string, candidateIds: string[]): Promise<number> {
-  const data = await request<{ addedCount: number }>(`/api/talent-pools/${poolId}/members`, {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify({ candidateIds })
-  });
-  return data.addedCount;
-}
-
-export async function removeFromTalentPool(poolId: string, candidateId: string): Promise<void> {
-  await request<void>(`/api/talent-pools/${poolId}/members/${candidateId}`, { method: "DELETE" });
-}
-
-export async function sendCopilotMessage(input: {
-  message: string;
-  activeCandidateId?: string;
-  activeJobId?: string;
-}): Promise<{
-  role: "assistant";
-  content: string;
-  toolCalls?: Array<{ tool: string; status: string; count?: number; entities?: string[] }>;
-  actionSuggestions?: string[];
-}> {
-  return request<{
-    role: "assistant";
-    content: string;
-    toolCalls?: Array<{ tool: string; status: string; count?: number; entities?: string[] }>;
-    actionSuggestions?: string[];
-  }>("/api/copilot/chat", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(input)
-  });
-}
-
-export async function fetchProcessingQueue(): Promise<ProcessingJob[]> {
-  const data = await request<{ jobs: ProcessingJob[] }>("/api/queue/jobs");
-  return data.jobs;
-}
-
-export async function mergeDuplicateCandidates(primaryId: string, secondaryId: string): Promise<{ status: string }> {
-  return request<{ status: string }>("/api/duplicates/merge", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify({ primaryCandidateId: primaryId, secondaryCandidateId: secondaryId })
-  });
-}
-
-export async function deleteCandidate(candidateId: string): Promise<void> {
-  await request<void>(`/api/candidates/${candidateId}`, { method: "DELETE" });
-}
-
-export async function fetchReport(): Promise<ReportSummary> {
-  const data = await request<{ report: ReportSummary }>("/api/reports/summary");
-  return data.report;
-}
-
-export async function downloadReport(format: "csv" | "json"): Promise<void> {
-  const response = await fetch(`/api/reports/export?format=${format}`, { headers: authHeaders() });
-  if (!response.ok) {
-    const isJson = response.headers.get("content-type")?.includes("application/json");
-    const data = isJson ? await response.json() : undefined;
-    throw new Error(data?.message ?? `Report download failed with ${response.status}`);
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
   }
-
-  const objectUrl = URL.createObjectURL(await response.blob());
-  const link = document.createElement("a");
-  link.href = objectUrl;
-  link.download = `resume-report.${format}`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(objectUrl);
 }
 
-export async function uploadResumes(files: File[], metadata: { role: string; source: string }): Promise<UploadResult> {
-  const storageClient = supabase;
-  if (isSupabaseBrowserConfigured && storageClient && accessToken) {
+async function request<T>(
+  path: string,
+  options: RequestInit = {},
+  isForm = false,
+): Promise<T> {
+  const headers = new Headers(options.headers);
+  const token = getToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (!isForm && options.body) headers.set("Content-Type", "application/json");
+
+  const res = await fetch(path, { ...options, headers });
+  const text = await res.text();
+  let payload: unknown = null;
+  if (text) {
     try {
-      const manifest = await request<SignedUploadManifest>("/api/uploads/sign", {
-        method: "POST",
-        headers: jsonHeaders,
-        body: JSON.stringify({
-          files: files.map((file) => ({ name: file.name, size: file.size, mimeType: file.type }))
-        })
-      });
-
-      await runWithConcurrency(manifest.uploads, 4, async (upload, index) => {
-        const file = files[index];
-        if (!file) {
-          throw new Error("The upload manifest did not match the selected files.");
-        }
-        const { error } = await storageClient.storage.from("resumes").uploadToSignedUrl(upload.path, upload.token, file, {
-          contentType: file.type || undefined
-        });
-        if (error) {
-          throw new Error(`Could not upload ${file.name}: ${error.message}`);
-        }
-      });
-
-      return await request<UploadResult>("/api/uploads/process", {
-        method: "POST",
-        headers: jsonHeaders,
-        body: JSON.stringify({
-          completionToken: manifest.completionToken,
-          role: metadata.role,
-          source: metadata.source
-        })
-      });
-    } catch (signedErr) {
-      console.warn("Signed upload failed, falling back to server multipart upload:", signedErr);
+      payload = JSON.parse(text);
+    } catch {
+      payload = text;
     }
   }
-
-  const form = new FormData();
-  files.forEach((file) => form.append("resumes", file));
-  form.append("role", metadata.role || "Open application");
-  form.append("source", metadata.source || "Direct upload");
-
-  return request<UploadResult>("/api/applications", {
-    method: "POST",
-    body: form
-  });
+  if (!res.ok) {
+    let detail = `Request failed (${res.status})`;
+    if (payload && typeof payload === "object" && "detail" in payload) {
+      const d = (payload as { detail: unknown }).detail;
+      detail = typeof d === "string" ? d : JSON.stringify(d);
+    }
+    throw new ApiError(res.status, detail);
+  }
+  return payload as T;
 }
 
-interface SignedUploadManifest {
-  uploads: Array<{
-    path: string;
+function qs(params: Record<string, string | number | undefined>): string {
+  const sp = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") sp.set(k, String(v));
+  });
+  const s = sp.toString();
+  return s ? `?${s}` : "";
+}
+
+export const api = {
+  // auth
+  bootstrap: (data: { email?: string; password?: string; name?: string }) =>
+    request<{ message: string; user: User }>("/api/auth/bootstrap", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  login: (email: string, password: string) =>
+    request<{ access_token: string; user: User }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    }),
+  acceptInvite: (email: string, token: string, password: string) =>
+    request<{ access_token: string; user: User }>("/api/auth/accept-invite", {
+      method: "POST",
+      body: JSON.stringify({ email, token, password }),
+    }),
+  changePassword: (current_password: string, new_password: string) =>
+    request<{ access_token: string; user: User }>("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ current_password, new_password }),
+    }),
+  me: () => request<User>("/api/auth/me"),
+
+  // master
+  listCompanies: () => request<Company[]>("/api/master/companies"),
+  createCompany: (data: {
     name: string;
-    size: number;
-    mimeType: string;
-    token: string;
-    signedUrl?: string;
-  }>;
-  completionToken: string;
-}
+    email: string;
+    seat_limit: number;
+    plan?: string;
+  }) =>
+    request<{
+      company: Company;
+      admin: User;
+      invite_token: string;
+    }>("/api/master/companies", { method: "POST", body: JSON.stringify(data) }),
+  setCompanyStatus: (orgId: number, status: string) =>
+    request<{ company: Company }>(`/api/master/companies/${orgId}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+  inviteCompanyAdmin: (orgId: number, data: { email: string; name: string; role: string }) =>
+    request<{ user: User; invite_token: string }>(
+      `/api/master/companies/${orgId}/admins`,
+      { method: "POST", body: JSON.stringify(data) },
+    ),
+  listSeatRequests: () => request<SeatRequest[]>("/api/master/seat-requests"),
+  reviewSeatRequest: (id: number, approve: boolean, reason?: string) =>
+    request<{ message: string }>(`/api/master/seat-requests/${id}/review`, {
+      method: "POST",
+      body: JSON.stringify({ approve, reason }),
+    }),
+  masterAudit: () => request<AuditEntry[]>("/api/master/audit"),
+  masterStats: () =>
+    request<{
+      organizations: number;
+      total_seats: number;
+      total_users: number;
+      total_jobs: number;
+      total_candidates: number;
+      status_breakdown: Record<string, number>;
+    }>("/api/master/stats"),
 
-async function runWithConcurrency<T>(
-  values: T[],
-  concurrency: number,
-  operation: (value: T, index: number) => Promise<void>
-): Promise<void> {
-  let nextIndex = 0;
-  const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
-    while (nextIndex < values.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      await operation(values[index], index);
-    }
-  });
-  await Promise.all(workers);
-}
+  // org
+  seats: () => request<Seats>("/api/org/seats"),
+  usage: () => request<Record<string, unknown>>("/api/org/usage"),
+  requestSeats: (reason?: string) =>
+    request<{ message: string; current: number; requested: number }>(
+      "/api/org/seats/request",
+      { method: "POST", body: JSON.stringify({ reason }) },
+    ),
+  listUsers: () => request<User[]>("/api/org/users"),
+  createUser: (data: { email: string; name: string; role: string }) =>
+    request<{ user: User; invite_token: string; seats: Seats }>("/api/org/users", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateUser: (id: number, data: { name?: string; role?: string; status?: string }) =>
+    request<User>(`/api/org/users/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  orgAudit: () => request<AuditEntry[]>("/api/org/audit"),
 
-export async function fetchGmailStatus(): Promise<GmailStatus> {
-  const data = await request<{ gmail: GmailStatus }>("/api/integrations/gmail/status");
-  return data.gmail;
-}
+  // jobs
+  listJobs: (status?: string) => request<Job[]>(`/api/org/jobs${qs({ status })}`),
+  createJob: (data: Partial<Job> & { title: string }) =>
+    request<Job>("/api/org/jobs", { method: "POST", body: JSON.stringify(data) }),
+  updateJob: (id: number, data: Partial<Job> & { title: string }) =>
+    request<Job>(`/api/org/jobs/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteJob: (id: number) =>
+    request<{ message: string }>(`/api/org/jobs/${id}`, { method: "DELETE" }),
 
-export async function fetchGmailAuthUrl(): Promise<string> {
-  const data = await request<{ url: string }>("/api/integrations/gmail/auth-url");
-  return data.url;
-}
+  // candidates
+  listCandidates: (params: Record<string, string | number | undefined> = {}) =>
+    request<Candidate[]>(`/api/org/candidates${qs(params)}`),
+  getCandidate: (id: number) => request<Candidate>(`/api/org/candidates/${id}`),
+  createCandidateForm: (form: FormData) =>
+    request<Candidate>("/api/org/candidates", { method: "POST", body: form }, true),
+  setStage: (id: number, stage: string) =>
+    request<Candidate>(`/api/org/candidates/${id}/stage`, {
+      method: "PATCH",
+      body: JSON.stringify({ stage }),
+    }),
+  patchCandidateJobs: (id: number, add: number[], remove: number[]) =>
+    request<Candidate>(`/api/org/candidates/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ add_job_ids: add, remove_job_ids: remove }),
+    }),
+  deleteCandidate: (id: number) =>
+    request<{ message: string }>(`/api/org/candidates/${id}`, { method: "DELETE" }),
+  listNotes: (id: number) => request<Note[]>(`/api/org/candidates/${id}/notes`),
+  addNote: (id: number, body: string) =>
+    request<Note>(`/api/org/candidates/${id}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    }),
+  listTags: () => request<Tag[]>("/api/org/tags"),
+  createTag: (name: string, color: string) =>
+    request<Tag>("/api/org/tags", {
+      method: "POST",
+      body: JSON.stringify({ name, color }),
+    }),
+  patchCandidateTags: (id: number, add: number[], remove: number[]) =>
+    request<Candidate>(`/api/org/candidates/${id}/tags`, {
+      method: "PATCH",
+      body: JSON.stringify({ add_tag_ids: add, remove_tag_ids: remove }),
+    }),
+  pipeline: () => request<Pipeline>("/api/org/pipeline"),
 
-export async function importGmailResumes(input: {
-  query: string;
-  role: string;
-  maxResults: number;
-  fullSync?: boolean;
-}): Promise<GmailImportResult> {
-  return request<GmailImportResult>("/api/integrations/gmail/import", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(input)
-  });
-}
+  // ---- Phase 3: intelligence ----
+  listPools: () => request<TalentPool[]>("/api/pools"),
+  getPool: (id: number) => request<TalentPool>(`/api/pools/${id}`),
+  createPool: (data: { name: string; description?: string; is_shared?: boolean }) =>
+    request<TalentPool>("/api/pools", { method: "POST", body: JSON.stringify(data) }),
+  deletePool: (id: number) =>
+    request<null>(`/api/pools/${id}`, { method: "DELETE" }),
+  addPoolMembers: (id: number, candidateIds: number[]) =>
+    request<{ added: number; pool: TalentPool }>(`/api/pools/${id}/members`, {
+      method: "POST",
+      body: JSON.stringify({ candidate_ids: candidateIds }),
+    }),
+  removePoolMember: (id: number, candidateId: number) =>
+    request<null>(`/api/pools/${id}/members/${candidateId}`, { method: "DELETE" }),
+  matchJob: (data: { job_id: number; threshold?: number; exclude_applied?: boolean }) =>
+    request<MatchResponse>("/api/match", { method: "POST", body: JSON.stringify(data) }),
+  candidateMatches: (id: number) =>
+    request<CandidateMatches>(`/api/candidates/${id}/matches`),
+  copilot: (query: string) =>
+    request<CopilotResult>("/api/copilot", {
+      method: "POST",
+      body: JSON.stringify({ query }),
+    }),
+  listSavedSearches: () => request<SavedSearch[]>("/api/saved-searches"),
+  createSavedSearch: (name: string, criteria: Record<string, unknown>) =>
+    request<SavedSearch>("/api/saved-searches", {
+      method: "POST",
+      body: JSON.stringify({ name, criteria }),
+    }),
+  deleteSavedSearch: (id: number) =>
+    request<null>(`/api/saved-searches/${id}`, { method: "DELETE" }),
 
-export async function disconnectGmail(): Promise<GmailStatus> {
-  const data = await request<{ gmail: GmailStatus }>("/api/integrations/gmail/disconnect", {
-    method: "POST"
-  });
-  return data.gmail;
-}
+  // ---- Phase 4: operations ----
+  listInterviews: (params: Record<string, string | number | undefined> = {}) =>
+    request<Interview[]>(`/api/interviews${qs(params)}`),
+  getInterview: (id: number) => request<Interview>(`/api/interviews/${id}`),
+  createInterview: (data: Partial<Interview> & { candidate_id: number }) =>
+    request<Interview>("/api/interviews", { method: "POST", body: JSON.stringify(data) }),
+  updateInterview: (id: number, data: Partial<Interview>) =>
+    request<Interview>(`/api/interviews/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteInterview: (id: number) =>
+    request<null>(`/api/interviews/${id}`, { method: "DELETE" }),
+  submitScorecard: (id: number, data: Record<string, unknown>) =>
+    request<import("./types").Scorecard>(`/api/interviews/${id}/scorecards`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 
-export async function updateApplication(
-  id: string,
-  updates: Partial<Pick<CandidateApplication, "status" | "notes" | "tags" | "role" | "source" | "location" | "primarySkill" | "primarySkillKey">>
-): Promise<CandidateApplication> {
-  const data = await request<{ application: CandidateApplication }>(`/api/applications/${id}`, {
-    method: "PATCH",
-    headers: jsonHeaders,
-    body: JSON.stringify(updates)
-  });
-  return data.application;
-}
+  listOffers: (params: Record<string, string | number | undefined> = {}) =>
+    request<Offer[]>(`/api/offers${qs(params)}`),
+  createOffer: (data: Partial<Offer> & { candidate_id: number }) =>
+    request<Offer>("/api/offers", { method: "POST", body: JSON.stringify(data) }),
+  updateOffer: (id: number, data: Partial<Offer>) =>
+    request<Offer>(`/api/offers/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  setOfferStatus: (id: number, status: string) =>
+    request<Offer>(`/api/offers/${id}/status`, {
+      method: "POST",
+      body: JSON.stringify({ status }),
+    }),
+  deleteOffer: (id: number) => request<null>(`/api/offers/${id}`, { method: "DELETE" }),
 
-export async function bulkUpdateApplications(
-  ids: string[],
-  updates: Partial<{
-    status: ApplicationStatus;
-    primarySkill: string;
-    primarySkillKey: string;
-    location: string;
-    city: string;
-    region: string;
-    country: string;
-    notes: string;
-    tags: string[];
-    role: string;
-    source: string;
-  }>
-): Promise<{ applications: CandidateApplication[]; updatedCount: number }> {
-  return request<{ applications: CandidateApplication[]; updatedCount: number }>("/api/applications/bulk-update", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify({ ids, updates })
-  });
-}
+  listOnboarding: (candidateId?: number) =>
+    request<OnboardingTask[]>(`/api/onboarding${qs({ candidate_id: candidateId })}`),
+  createOnboardingTask: (data: { candidate_id: number; title: string; due_date?: string }) =>
+    request<OnboardingTask>("/api/onboarding", { method: "POST", body: JSON.stringify(data) }),
+  updateOnboardingTask: (id: number, data: Partial<OnboardingTask>) =>
+    request<OnboardingTask>(`/api/onboarding/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteOnboardingTask: (id: number) =>
+    request<null>(`/api/onboarding/${id}`, { method: "DELETE" }),
 
-export async function bulkDeleteApplications(ids: string[]): Promise<number> {
-  const data = await request<{ deletedCount: number }>("/api/applications/bulk-delete", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify({ ids })
-  });
-  return data.deletedCount;
-}
+  listEmailTemplates: () => request<EmailTemplate[]>("/api/email/templates"),
+  createEmailTemplate: (data: { name: string; subject: string; body: string }) =>
+    request<EmailTemplate>("/api/email/templates", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  deleteEmailTemplate: (id: number) =>
+    request<null>(`/api/email/templates/${id}`, { method: "DELETE" }),
+  listEmailMessages: (candidateId?: number) =>
+    request<EmailMessage[]>(`/api/email/messages${qs({ candidate_id: candidateId })}`),
+  sendEmail: (data: {
+    to_email?: string;
+    candidate_id?: number;
+    subject: string;
+    body: string;
+    template_id?: number;
+  }) => request<EmailMessage>("/api/email/send", { method: "POST", body: JSON.stringify(data) }),
+  gmailStatus: () => request<GmailStatus>("/api/email/gmail/status"),
+  gmailConnect: () =>
+    request<{ oauth_configured: boolean; auth_url: string | null; message?: string }>(
+      "/api/email/gmail/connect",
+    ),
+  gmailConnectDemo: () =>
+    request<{ account: EmailAccount; inbox_dir: string }>(
+      "/api/email/gmail/connect-demo",
+      { method: "POST" },
+    ),
+  gmailSync: () =>
+    request<{ summary: Record<string, unknown>; account: EmailAccount }>(
+      "/api/email/gmail/sync",
+      { method: "POST" },
+    ),
+  gmailDisconnect: () => request<null>("/api/email/gmail", { method: "DELETE" }),
 
-export async function fetchJobs(): Promise<JobOpening[]> {
-  const data = await request<{ jobs: JobOpening[] }>("/api/jobs");
-  return data.jobs;
-}
+  // ---- Phase 5: SaaS ----
+  listPlans: () => request<Plan[]>("/api/billing/plans"),
+  usageSummary: () => request<UsageSummary>("/api/billing/usage"),
+  subscription: () =>
+    request<{ plan: Plan; subscription: Subscription | null; seats: { limit: number } }>(
+      "/api/billing/subscription",
+    ),
+  subscribe: (plan_code: string) =>
+    request<{ plan: Plan; subscription: Subscription | null }>("/api/billing/subscribe", {
+      method: "POST",
+      body: JSON.stringify({ plan_code }),
+    }),
+  listInvoices: () => request<Invoice[]>("/api/billing/invoices"),
+  payInvoice: (id: number) =>
+    request<Invoice>(`/api/billing/invoices/${id}/pay`, { method: "POST" }),
+  assignPlan: (orgId: number, plan_code: string, extra: Record<string, unknown> = {}) =>
+    request<{ organization_id: number; plan_code: string; seat_limit: number }>(
+      `/api/billing/organizations/${orgId}/plan`,
+      { method: "POST", body: JSON.stringify({ plan_code, ...extra }) },
+    ),
 
-export async function createJob(input: {
-  title: string;
-  department: string;
-  location: string;
-  description: string;
-}): Promise<JobOpening> {
-  const data = await request<{ job: JobOpening }>("/api/jobs", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(input)
-  });
-  return data.job;
-}
+  listPortalTokens: () => request<PortalToken[]>("/api/portal/tokens"),
+  createPortalToken: (data: {
+    client_name: string;
+    job_ids?: number[];
+    can_view_candidates?: boolean;
+    expires_in_days?: number;
+  }) => request<PortalToken>("/api/portal/tokens", { method: "POST", body: JSON.stringify(data) }),
+  updatePortalToken: (id: number, data: Partial<PortalToken> & { expires_in_days?: number }) =>
+    request<PortalToken>(`/api/portal/tokens/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deletePortalToken: (id: number) =>
+    request<null>(`/api/portal/tokens/${id}`, { method: "DELETE" }),
 
-export async function fetchEligibleCandidates(): Promise<EligibleCandidate[]> {
-  const data = await request<{ candidates: EligibleCandidate[] }>("/api/campaigns/eligible");
-  return data.candidates;
-}
+  analyticsOverview: () => request<AnalyticsOverview>("/api/analytics/overview"),
+  platformAnalytics: () => request<PlatformAnalytics>("/api/analytics/platform"),
 
-export async function fetchCampaigns(): Promise<EmailCampaign[]> {
-  const data = await request<{ campaigns: EmailCampaign[] }>("/api/campaigns");
-  return data.campaigns;
-}
-
-export async function createCampaign(input: {
-  jobId?: string;
-  title: string;
-  subject: string;
-  body: string;
-  applicationIds?: string[];
-  customRecipients?: Array<{ candidateName?: string; email: string; role?: string }>;
-}): Promise<{ campaign: EmailCampaign; providerConfigured: boolean }> {
-  return request<{ campaign: EmailCampaign; providerConfigured: boolean }>("/api/campaigns", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(input)
-  });
-}
-
-export async function fetchTeamMembers(): Promise<{ members: TeamMember[]; currentUserRole: TeamMember["role"] }> {
-  return request<{ members: TeamMember[]; currentUserRole: TeamMember["role"] }>("/api/team/members");
-}
-
-export async function inviteTeamMember(email: string, role: "admin" | "recruiter" | "hiring_manager" | "viewer"): Promise<TeamMember> {
-  const data = await request<{ member: TeamMember }>("/api/team/invitations", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify({ email, role })
-  });
-  return data.member;
-}
-
-export async function provisionUserAccount(payload: ProvisionUserPayload): Promise<ProvisionUserResult> {
-  return request<ProvisionUserResult>("/api/team/provision", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(payload)
-  });
-}
-
-export async function completePasswordChange(): Promise<{ status: string; message: string }> {
-  return request<{ status: string; message: string }>("/api/auth/complete-password-change", {
-    method: "POST",
-    headers: jsonHeaders
-  });
-}
-
-export async function removeTeamMember(userId: string): Promise<void> {
-  await request<void>(`/api/team/members/${userId}`, { method: "DELETE" });
-}
-
-export async function fetchCandidateGraph(candidateId: string): Promise<TalentGraphData> {
-  return request<TalentGraphData>(`/api/candidates/${candidateId}/graph`);
-}
-
-export async function fetchTalentNetworkGraph(): Promise<TalentGraphData> {
-  return request<TalentGraphData>("/api/talent-graph");
-}
-
-export async function fetchAgencyClients(): Promise<{ clients: AgencyClient[] }> {
-  return request<{ clients: AgencyClient[] }>("/api/agency/clients");
-}
-
-export async function fetchAgencyOverview(): Promise<AgencyOverview> {
-  return request<AgencyOverview>("/api/agency/overview");
-}
-
-export async function createAgencyClient(payload: Partial<AgencyClient>): Promise<{ client: AgencyClient }> {
-  return request<{ client: AgencyClient }>("/api/agency/clients", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(payload)
-  });
-}
-
-export async function switchAgencyClient(clientId: string): Promise<{ activeClientId: string; activeClient?: AgencyClient }> {
-  return request<{ activeClientId: string; activeClient?: AgencyClient }>(`/api/agency/clients/${clientId}/switch`, {
-    method: "POST"
-  });
-}
-
-// 1. Interviews & Scorecards
-export async function fetchInterviews(): Promise<InterviewPlan[]> {
-  const data = await request<{ interviews: InterviewPlan[] }>("/api/interviews");
-  return data.interviews;
-}
-
-export async function scheduleInterview(payload: Partial<InterviewPlan>): Promise<InterviewPlan> {
-  const data = await request<{ interview: InterviewPlan }>("/api/interviews", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(payload)
-  });
-  return data.interview;
-}
-
-export async function submitScorecard(payload: Partial<InterviewScorecard>): Promise<InterviewScorecard> {
-  const data = await request<{ scorecard: InterviewScorecard }>(`/api/interviews/${payload.interviewPlanId}/scorecard`, {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(payload)
-  });
-  return data.scorecard;
-}
-
-export async function fetchCandidateInterviews(candidateId: string): Promise<{
-  interviews: InterviewPlan[];
-  scorecards: InterviewScorecard[];
-}> {
-  return request<{ interviews: InterviewPlan[]; scorecards: InterviewScorecard[] }>(`/api/candidates/${candidateId}/interviews`);
-}
-
-// 2. Pipeline & Stage History
-export async function moveCandidatePipelineStage(
-  candidateId: string,
-  toStage: ApplicationStatus,
-  reason: string = "Recruiter pipeline movement",
-  jobId?: string
-): Promise<{ success: boolean; candidate: Candidate; stageHistory: CandidateStageHistory }> {
-  return request<{ success: boolean; candidate: Candidate; stageHistory: CandidateStageHistory }>("/api/pipeline/move", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify({ candidateId, toStage, reason, jobId })
-  });
-}
-
-export async function fetchCandidateStageHistory(candidateId: string): Promise<CandidateStageHistory[]> {
-  const data = await request<{ history: CandidateStageHistory[] }>(`/api/candidates/${candidateId}/stage-history`);
-  return data.history;
-}
-
-// 3. Offers & Onboarding
-export async function fetchOffers(): Promise<JobOffer[]> {
-  const data = await request<{ offers: JobOffer[] }>("/api/offers");
-  return data.offers;
-}
-
-export async function createJobOffer(payload: Partial<JobOffer>): Promise<JobOffer> {
-  const data = await request<{ offer: JobOffer }>("/api/offers", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(payload)
-  });
-  return data.offer;
-}
-
-export async function updateJobOfferStatus(offerId: string, status: JobOffer["status"]): Promise<JobOffer> {
-  const data = await request<{ offer: JobOffer }>(`/api/offers/${offerId}/status`, {
-    method: "PATCH",
-    headers: jsonHeaders,
-    body: JSON.stringify({ status })
-  });
-  return data.offer;
-}
-
-export async function fetchOnboardingRecords(): Promise<OnboardingRecord[]> {
-  const data = await request<{ records: OnboardingRecord[] }>("/api/onboarding");
-  return data.records;
-}
-
-export async function updateOnboardingRecord(
-  onboardingId: string,
-  updates: Partial<OnboardingRecord>
-): Promise<OnboardingRecord> {
-  const data = await request<{ record: OnboardingRecord }>(`/api/onboarding/${onboardingId}`, {
-    method: "PATCH",
-    headers: jsonHeaders,
-    body: JSON.stringify(updates)
-  });
-  return data.record;
-}
-
-// 4. Recruiter Match Feedback
-export async function submitRecruiterMatchFeedback(payload: {
-  candidateId: string;
-  jobId: string;
-  overrideScore: number;
-  feedbackCategory?: string;
-  comments: string;
-}): Promise<RecruiterFeedback> {
-  const data = await request<{ feedback: RecruiterFeedback }>("/api/matching/feedback", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(payload)
-  });
-  return data.feedback;
-}
-
-// 5. Agency Client Jobs, Shortlists & Billing
-export async function fetchClientJobs(clientId: string): Promise<ClientJob[]> {
-  const data = await request<{ jobs: ClientJob[] }>(`/api/agency/clients/${clientId}/jobs`);
-  return data.jobs;
-}
-
-export async function createClientJob(payload: Partial<ClientJob>): Promise<ClientJob> {
-  const data = await request<{ job: ClientJob }>(`/api/agency/clients/${payload.clientId}/jobs`, {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(payload)
-  });
-  return data.job;
-}
-
-export async function shareCandidateWithClient(payload: {
-  clientId: string;
-  candidateId: string;
-  jobId?: string;
-}): Promise<ClientShortlist> {
-  const data = await request<{ shortlist: ClientShortlist }>("/api/agency/shortlists/share", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(payload)
-  });
-  return data.shortlist;
-}
-
-export async function recordClientFeedback(
-  shortlistId: string,
-  status: ClientShortlist["clientStatus"],
-  feedback: string
-): Promise<ClientShortlist> {
-  const data = await request<{ shortlist: ClientShortlist }>(`/api/agency/shortlists/${shortlistId}/feedback`, {
-    method: "PATCH",
-    headers: jsonHeaders,
-    body: JSON.stringify({ status, feedback })
-  });
-  return data.shortlist;
-}
-
-export async function fetchPlacements(): Promise<PlacementRecord[]> {
-  const data = await request<{ placements: PlacementRecord[] }>("/api/agency/placements");
-  return data.placements;
-}
-
-export async function recordPlacement(payload: Partial<PlacementRecord>): Promise<PlacementRecord> {
-  const data = await request<{ placement: PlacementRecord }>("/api/agency/placements", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(payload)
-  });
-  return data.placement;
-}
-
-export async function fetchAgencyInvoices(): Promise<AgencyInvoice[]> {
-  const data = await request<{ invoices: AgencyInvoice[] }>("/api/agency/invoices");
-  return data.invoices;
-}
-
-export async function generateInvoice(payload: Partial<AgencyInvoice>): Promise<AgencyInvoice> {
-  const data = await request<{ invoice: AgencyInvoice }>("/api/agency/invoices", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(payload)
-  });
-  return data.invoice;
-}
-
-// 6. Compliance, GDPR/DPDP, Data Export & Deletion
-export async function exportComplianceData(
-  exportType: "candidates_full" | "audit_logs" | "compliance_dump" = "candidates_full",
-  format: "json" | "csv" = "json"
-): Promise<{ exportId: string; downloadUrl: string; rowCount: number; message: string }> {
-  return request<{ exportId: string; downloadUrl: string; rowCount: number; message: string }>("/api/compliance/export", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify({ exportType, format })
-  });
-}
-
-export async function executeComplianceDeletion(
-  candidateId: string,
-  reason: string = "Candidate GDPR Right to be forgotten request"
-): Promise<{ status: string; message: string }> {
-  return request<{ status: string; message: string }>("/api/compliance/delete-candidate", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify({ candidateId, reason })
-  });
-}
-
-export async function fetchRetentionPolicies(): Promise<RetentionPolicy[]> {
-  const data = await request<{ policies: RetentionPolicy[] }>("/api/compliance/retention-policies");
-  return data.policies;
-}
-
-export async function createRetentionPolicy(payload: Partial<RetentionPolicy>): Promise<RetentionPolicy> {
-  const data = await request<{ policy: RetentionPolicy }>("/api/compliance/retention-policies", {
-    method: "POST",
-    headers: jsonHeaders,
-    body: JSON.stringify(payload)
-  });
-  return data.policy;
-}
-
-
-
-async function request<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
-  const response = await fetch(input, {
-    ...init,
-    headers: {
-      ...authHeaders(),
-      ...(init?.headers ?? {})
-    }
-  });
-  const isJson = response.headers.get("content-type")?.includes("application/json");
-  const data = isJson ? await response.json() : undefined;
-
-  if (!response.ok) {
-    throw new Error(data?.message ?? `Request failed with ${response.status}`);
-  }
-
-  return data as T;
-}
-
-function authHeaders(): HeadersInit {
-  return accessToken ? { Authorization: `Bearer ${accessToken}` } : {};
-}
+  // ---- Public client portal (no auth) ----
+  publicPortal: (token: string) => request<PortalView>(`/api/portal/${token}`),
+  publicPortalCandidates: (token: string, jobId: number) =>
+    request<{
+      job: { id: number; title: string };
+      count: number;
+      candidates: {
+        name: string;
+        current_title: string | null;
+        current_company: string | null;
+        location: string | null;
+        skills: string[];
+        experience_years: number;
+        stage: string;
+      }[];
+    }>(`/api/portal/${token}/jobs/${jobId}/candidates`),
+};

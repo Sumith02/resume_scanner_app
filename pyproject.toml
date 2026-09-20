@@ -1,26 +1,25 @@
 [project]
-name = "resumeflow-api"
-version = "2.0.0"
-description = "Production FastAPI backend for ResumeFlow HR"
-requires-python = ">=3.12,<3.14"
+name = "nexerra-talent-os"
+version = "1.0.0"
+description = "Multi-tenant recruitment operating system (Nexerra Talent OS rebuild)"
+requires-python = ">=3.12"
 dependencies = [
-  "cryptography>=45,<47",
-  "fastapi>=0.117,<1",
-  "httpx>=0.28,<1",
-  "pydantic>=2.11,<3",
-  "pypdf>=6,<7",
-  "python-docx>=1.2,<2",
-  "python-dotenv>=1.1,<2",
-  "python-multipart>=0.0.20,<1",
-  "supabase>=2.18,<3",
-  "uvicorn>=0.35,<1",
+    "fastapi>=0.141,<1",
+    "uvicorn>=0.35,<1",
+    "pydantic>=2.11,<3",
+    "pypdf>=6,<7",
+    "python-docx>=1.2,<2",
+    "python-multipart>=0.0.20,<1",
+    "PyJWT>=2.14,<3",
+    "SQLAlchemy>=2.0,<3",
+    "email-validator>=2.2,<3",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8.4,<9",
-  "pytest-cov>=7,<8",
-  "ruff>=0.12,<1",
+    "pytest>=8.4,<9",
+    "httpx>=0.28,<1",
+    "ruff>=0.12,<1",
 ]
 
 [tool.pytest.ini_options]
@@ -29,12 +28,9 @@ pythonpath = ["."]
 addopts = "-q"
 
 [tool.ruff]
-line-length = 120
-target-version = "py312"
+line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP"]
-ignore = ["E501"]
-
-[tool.vercel]
-entrypoint = "api/index.py"
+ignore = [
+  "B008",  # FastAPI Depends()/File() in default args is the framework idiom
+]

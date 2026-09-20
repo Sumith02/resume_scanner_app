@@ -1,558 +1,432 @@
-export const STATUS_LABELS = {
-  new: "New",
-  needs_review: "Needs review",
-  shortlisted: "Shortlisted",
-  screening: "Screening",
-  interview: "Interview",
-  offer: "Offer",
-  hired: "Hired",
-  hold: "Hold",
-  rejected: "Rejected"
-} as const;
+export type Role =
+  | "MASTER_ADMIN"
+  | "COMPANY_OWNER"
+  | "COMPANY_ADMIN"
+  | "RECRUITER"
+  | "HIRING_MANAGER"
+  | "INTERVIEWER"
+  | "READ_ONLY";
 
-export type ApplicationStatus = keyof typeof STATUS_LABELS;
+export type OrgStatus =
+  | "CREATED"
+  | "INVITATION_SENT"
+  | "ACTIVATED"
+  | "ACTIVE"
+  | "SUSPENDED"
+  | "DEACTIVATED";
 
-export interface SkillCategory {
-  key: string;
-  label: string;
-  description: string;
-  accent: string;
-  keywordCount: number;
+export type UserStatus =
+  | "INVITED"
+  | "ACTIVE"
+  | "INACTIVE"
+  | "SUSPENDED"
+  | "REACTIVATED";
+
+export type CandidateStage =
+  | "NEW"
+  | "PARSED"
+  | "IN_REVIEW"
+  | "SHORTLISTED"
+  | "INTERVIEW"
+  | "OFFER"
+  | "ONBOARDING"
+  | "PLACED"
+  | "REJECTED";
+
+export interface User {
+  id: number;
+  email: string;
+  name: string;
+  role: Role;
+  status: UserStatus;
+  organization_id: number | null;
+  scope: "platform" | "company";
+  permissions: string[];
+  invited: boolean;
+  must_change_password: boolean;
+  last_login_at: string | null;
+  created_at: string | null;
 }
 
-export interface CandidateSkill {
-  skillName: string;
-  normalizedSkill: string;
-  category: string;
-  proficiency: "Expert" | "Proficient" | "Working Knowledge" | string;
-  yearsExperience: number | null;
-  evidenceText: string;
-  confidence: number;
+export interface Seats {
+  limit: number;
+  used: number;
+  available: number;
 }
 
-export interface CandidateExperience {
-  id: string;
-  company: string;
+export interface Company {
+  id: number;
+  name: string;
+  slug: string;
+  email: string | null;
+  status: OrgStatus;
+  seat_limit: number;
+  feature_flags: Record<string, unknown>;
+  seats: Seats | null;
+  created_at: string | null;
+  pending_seat_requests?: number;
+}
+
+export interface SeatRequest {
+  id: number;
+  organization_id: number;
+  company_name?: string;
+  current_seats: number;
+  requested_seats: number;
+  reason: string | null;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  created_at: string | null;
+}
+
+export interface Job {
+  id: number;
   title: string;
-  startDate: string;
-  endDate: string;
-  description: string;
-  confidence: number;
+  client_name: string | null;
+  department: string | null;
+  location: string | null;
+  employment_type: string | null;
+  status: "DRAFT" | "OPEN" | "CLOSED" | "ON_HOLD";
+  salary_range: string | null;
+  requirements: string | null;
+  skills: string[];
+  created_at: string | null;
+  rediscovered_candidate_count?: number;
 }
 
-export interface CandidateEducation {
-  id: string;
-  institution: string;
-  degree: string;
-  field: string;
-  startDate: string;
-  endDate: string;
-  confidence: number;
+export interface Tag {
+  id: number;
+  name: string;
+  color: string;
 }
 
 export interface Candidate {
-  id: string;
-  canonicalName: string;
-  blindId: string;
-  email: string;
-  phone: string;
-  location: string;
-  city: string;
-  region: string;
-  country: string;
-  currentTitle: string;
-  currentCompany: string;
-  profileSummary: string;
-  experienceYears: number | null;
-  primaryDomain: string;
-  primaryDomainKey: string;
-  matchedSkills: string[];
-  skills: CandidateSkill[];
-  experiences: CandidateExperience[];
-  educations: CandidateEducation[];
-  dataQualityScore: number;
-  qualityBreakdown?: {
-    identity: number;
-    skills: number;
-    experience: number;
-    education: number;
-    location: number;
-  };
-  seniority?: string;
-  consentStatus: string;
-  status: ApplicationStatus;
-  role: string;
+  id: number;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  current_title: string | null;
+  current_company: string | null;
+  location: string | null;
+  summary: string | null;
+  skills: string[];
+  experience_years: number;
+  has_resume: boolean;
+  resume_filename: string | null;
   source: string;
-  notes: string;
-  tags: string[];
-  createdAt: string;
-  updatedAt: string;
-  lastActivityAt: string;
-  applicationIds: string[];
+  stage: CandidateStage;
+  duplicate_of_id: number | null;
+  matched_job_ids: number[];
+  createdAt?: string;
+  created_at: string | null;
+  tags: Tag[];
 }
 
-export interface CandidateEvent {
-  id: string;
-  candidateId: string;
-  eventType: string;
-  actorId: string;
-  createdAt: string;
-  metadata?: Record<string, any>;
+export interface Note {
+  id: number;
+  candidate_id: number;
+  author_user_id: number | null;
+  author_name: string | null;
+  body: string;
+  created_at: string | null;
 }
 
-export interface CandidateJobMatch {
-  overallScore: number;
-  scoreBreakdown: {
-    requiredSkills: { earned: number; max: number };
-    preferredSkills: { earned: number; max: number };
-    experience: { earned: number; max: number };
-    education: { earned: number; max: number };
-    semantic: { earned: number; max: number };
-    location: { earned: number; max: number };
-  };
-  matchedSkills: string[];
-  missingSkills: string[];
-  evidence: Array<{ skill: string; status: string; evidence: string }>;
-  interviewQuestions: string[];
-  recommendation: string;
-  confidence: number;
+export interface AuditEntry {
+  id: number;
+  organization_id: number | null;
+  actor_email: string | null;
+  action: string;
+  resource_type: string | null;
+  resource_id: number | null;
+  details: Record<string, unknown>;
+  created_at: string | null;
 }
 
-export interface RediscoveryResult {
-  candidate: Candidate;
-  match: CandidateJobMatch;
-  historicalTag: string;
-  rediscoveryReason: string;
-  overallScore: number;
+export interface Pipeline {
+  stages: CandidateStage[];
+  counts: Partial<Record<CandidateStage, number>>;
 }
 
-export interface RediscoveryResponse {
-  jobTitle: string;
-  metrics: {
-    totalSearched: number;
-    strongMatches: number;
-    previouslyInterviewed: number;
-    previouslyShortlisted: number;
-    otherHistorical: number;
-  };
-  results: RediscoveryResult[];
-}
+// ---------------------------------------------------------------------------
+// Phase 3 — Intelligence
+// ---------------------------------------------------------------------------
 
 export interface TalentPool {
-  id: string;
+  id: number;
   name: string;
-  description: string;
-  createdAt: string;
-  memberCount: number;
+  description: string | null;
+  is_shared: boolean;
+  member_count: number;
+  created_at: string | null;
+  candidates?: Candidate[];
 }
 
-export interface ProcessingJob {
-  id: string;
-  jobType: string;
-  status: "completed" | "processing" | "pending" | "failed";
-  attempts: number;
-  startedAt: string;
-  completedAt?: string;
-  error?: string;
+export interface MatchResult extends Candidate {
+  match_score: number;
+  match_band: "strong" | "possible" | "weak";
+  matched_skills: string[];
+  missing_skills: string[];
+  match_reasons: string[];
 }
 
-export interface CopilotMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  toolCalls?: Array<{ tool: string; status: string; count?: number; entities?: string[] }>;
-  actionSuggestions?: string[];
-  timestamp: string;
+export interface MatchResponse {
+  job_id: number;
+  job_title: string;
+  count: number;
+  results: MatchResult[];
 }
 
-export interface NaturalSearchResult {
+export interface CandidateMatches {
+  candidate_id: number;
+  count: number;
+  results: {
+    job_id: number;
+    job_title: string;
+    match_score: number;
+    match_band: string;
+    matched_skills: string[];
+    missing_skills: string[];
+    match_reasons: string[];
+  }[];
+}
+
+export interface CopilotResult {
   query: string;
-  parsedCriteria: {
+  criteria: {
     skills: string[];
-    minExperience: number | null;
-    location: string;
-    seniority: string;
+    stages: string[];
+    min_experience: number | null;
+    location: string | null;
+    keywords: string[];
   };
-  results: Array<{
-    candidate: Candidate;
-    relevanceScore: number;
-    reasons: string[];
-  }>;
-  totalFound: number;
-}
-
-export interface CandidateApplication {
-  id: string;
-  candidateName: string;
-  email: string;
-  phone: string;
-  location: string;
-  city: string;
-  region: string;
-  country: string;
-  locationConfidence: number;
-  primarySkill: string;
-  primarySkillKey: string;
-  skillScores: Record<string, number>;
-  skillScorePercent: number;
-  matchedSkills: string[];
-  experienceYears: number | null;
-  summary: string;
-  textPreview: string;
-  resumeTextLength: number;
-  originalName: string;
-  storedName: string;
-  mimeType: string;
-  fileSize: number;
-  uploadedAt: string;
-  updatedAt: string;
-  source: string;
-  role: string;
-  status: ApplicationStatus;
-  notes: string;
-  tags: string[];
-  duplicateOf: string | null;
-}
-
-export interface ReportSummary {
-  total: number;
-  uploadedToday: number;
-  needsReview: number;
-  duplicateCount: number;
-  averageSkillScore: number;
-  bySkill: Array<{ key: string; label: string; count: number }>;
-  byLocation: Array<{ location: string; count: number }>;
-  byStatus: Array<{ status: ApplicationStatus; count: number }>;
-  topSkills: Array<{ skill: string; count: number }>;
-  recentUploads: CandidateApplication[];
-}
-
-export interface TaxonomyResponse {
-  skillCategories: SkillCategory[];
-  statuses: ApplicationStatus[];
-}
-
-export interface UploadResult {
-  applications: CandidateApplication[];
-  failures: Array<{ fileName: string; message: string }>;
+  count: number;
   message: string;
+  candidates: Candidate[];
+}
+
+export interface SavedSearch {
+  id: number;
+  name: string;
+  criteria: Record<string, unknown>;
+  created_at: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Operations
+// ---------------------------------------------------------------------------
+
+export type InterviewStatus = "SCHEDULED" | "COMPLETED" | "CANCELLED" | "NO_SHOW";
+export type InterviewMode = "VIDEO" | "ONSITE" | "PHONE";
+
+export interface Interview {
+  id: number;
+  candidate_id: number;
+  job_id: number | null;
+  title: string | null;
+  scheduled_at: string | null;
+  duration_minutes: number;
+  mode: InterviewMode;
+  location: string | null;
+  status: InterviewStatus;
+  interviewer_user_id: number | null;
+  scorecard_count: number;
+  average_rating: number | null;
+  created_at: string | null;
+  scorecards?: Scorecard[];
+}
+
+export interface Scorecard {
+  id: number;
+  interview_id: number;
+  interviewer_user_id: number | null;
+  technical: number | null;
+  communication: number | null;
+  culture_fit: number | null;
+  overall: number | null;
+  recommendation: string | null;
+  notes: string | null;
+  created_at: string | null;
+}
+
+export type OfferStatus = "DRAFT" | "SENT" | "ACCEPTED" | "DECLINED" | "WITHDRAWN";
+
+export interface Offer {
+  id: number;
+  candidate_id: number;
+  job_id: number | null;
+  salary: number | null;
+  currency: string;
+  employment_type: string | null;
+  start_date: string | null;
+  status: OfferStatus;
+  notes: string | null;
+  created_at: string | null;
+}
+
+export type OnboardingStatus = "PENDING" | "IN_PROGRESS" | "DONE";
+
+export interface OnboardingTask {
+  id: number;
+  candidate_id: number;
+  title: string;
+  status: OnboardingStatus;
+  due_date: string | null;
+  completed_at: string | null;
+}
+
+export interface EmailTemplate {
+  id: number;
+  name: string;
+  subject: string;
+  body: string;
+  created_at: string | null;
+}
+
+export interface EmailMessage {
+  id: number;
+  candidate_id: number | null;
+  template_id: number | null;
+  to_email: string;
+  subject: string;
+  body: string;
+  status: string;
+  provider: string;
+  error: string | null;
+  sent_at: string | null;
+  created_at: string | null;
+}
+
+export interface EmailAccount {
+  id: number;
+  provider: string;
+  email: string | null;
+  status: string;
+  is_demo: boolean;
+  history_id: string | null;
+  last_sync_at: string | null;
+  last_sync_summary: Record<string, unknown>;
 }
 
 export interface GmailStatus {
-  configured: boolean;
-  connected: boolean;
-  email: string;
-  updatedAt: string;
-  lastSyncedAt?: string;
-  syncCount?: number;
-  defaultQuery: string;
-  message: string;
-  redirectUri?: string;
-  missingKeys?: string[];
+  oauth_configured: boolean;
+  demo_available: boolean;
+  account: EmailAccount | null;
+  smtp_configured: boolean;
 }
 
-export interface GmailImportResult {
-  applications: CandidateApplication[];
-  failures: Array<{ fileName: string; message: string }>;
-  importedCount: number;
-  scannedMessages: number;
-  skippedAttachments: number;
-  isIncremental?: boolean;
-  lastSyncedAt?: string;
-  syncCount?: number;
-  message: string;
-}
+// ---------------------------------------------------------------------------
+// Phase 5 — SaaS
+// ---------------------------------------------------------------------------
 
-export interface JobOpening {
-  id: string;
-  title: string;
-  department: string;
-  location: string;
-  description: string;
-  status: "draft" | "open" | "closed" | "archived";
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface EligibleCandidate {
-  applicationId: string;
-  candidateName: string;
-  email: string;
-  role: string;
-  status: string;
-  primarySkill: string;
-}
-
-export interface EmailCampaign {
-  id: string;
-  title: string;
-  subject: string;
-  body: string;
-  status: "draft" | "sending" | "sent" | "failed";
-  totalRecipients: number;
-  sentCount: number;
-  failedCount: number;
-  sentAt: string | null;
-  createdAt: string;
-}
-
-export interface TeamMember {
-  userId: string;
-  email: string;
-  fullName: string;
-  role: "owner" | "admin" | "recruiter" | "hiring_manager" | "viewer";
-  joinedAt: string;
-  invited?: boolean;
-  mustChangePassword?: boolean;
-  temporaryPassword?: string;
-}
-
-export interface ProvisionUserPayload {
-  email: string;
-  fullName?: string;
-  role: "admin" | "recruiter" | "hiring_manager" | "viewer";
-  temporaryPassword?: string;
-}
-
-export interface ProvisionUserResult {
-  member: TeamMember;
-  emailSent: boolean;
-  emailMessage?: string;
-  temporaryPassword: string;
-  organizationName: string;
-}
-
-export interface FilterState {
-  query: string;
-  skill: string;
-  location: string;
-  status: string;
-  experienceMin?: number;
-  dataQualityMin?: number;
-}
-
-export type SortKey = "lastActivityAt" | "uploadedAt" | "skillScorePercent" | "candidateName" | "location" | "status" | "experienceYears";
-
-export interface TalentGraphNode {
-  id: string;
-  label: string;
-  type: "candidate" | "skill" | "company" | "role" | "education" | "location" | "job" | "interview" | "similar_candidate" | string;
-  category?: string;
-  proficiency?: string;
-  entity?: string;
-  currentTitle?: string;
-  location?: string;
-  experienceYears?: number;
-  similarityScore?: number;
-  reasons?: string[];
-  department?: string;
-  matchScore?: number;
-  [key: string]: unknown;
-}
-
-export interface TalentGraphLink {
-  source: string;
-  target: string;
-  relation: "HAS_SKILL" | "WORKED_AT" | "HELD_ROLE" | "STUDIED_AT" | "BASED_IN" | "APPLIED_TO" | "INTERVIEW_HISTORY" | "SIMILAR_TO" | string;
-  label?: string;
-  weight?: number;
-}
-
-export interface TalentGraphData {
-  candidateId?: string;
-  nodes: TalentGraphNode[];
-  links: TalentGraphLink[];
-  metrics?: {
-    totalNodes: number;
-    totalRelationships: number;
-    skillsCount: number;
-    companiesCount: number;
-    similarCandidatesCount: number;
-  };
-  summary?: {
-    candidatesAnalyzed: number;
-    connectedSkills: number;
-    alumniCompanies: number;
-    graphDensity: number;
-  };
-  similarCandidates?: Array<{
-    candidate: Candidate;
-    similarityScore: number;
-    reasons: string[];
-  }>;
-}
-
-export interface AgencyClient {
-  id: string;
+export interface Plan {
   code: string;
   name: string;
-  industry: string;
-  openJobsCount: number;
-  candidatePoolCount: number;
-  recruiterCount: number;
-  tier: string;
-  slaHours: number;
-  primaryRecruiter: string;
-  assignedRecruiters: string[];
+  price_monthly_cents: number;
+  seat_limit: number;
+  quotas: Record<string, number>;
+  features: string[];
+}
+
+export interface UsageSummary {
+  plan: Plan;
+  period: string;
+  metrics: Record<
+    string,
+    { used: number; limit: number; remaining: number; percent: number }
+  >;
+  features: Record<string, boolean>;
+}
+
+export interface Subscription {
+  id: number;
+  plan_code: string;
   status: string;
-  avgPlacementDays: number;
-  recentVacancies: string[];
+  seats: number;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
 }
 
-export interface AgencyOverview {
-  totalClients: number;
-  totalOpenJobs: number;
-  totalCandidateIntelligence: number;
-  totalAgencyRecruiters: number;
-  activeClientId: string;
-  clients: AgencyClient[];
-}
-
-export interface InterviewPlan {
-  id: string;
-  candidateId: string;
-  candidateName?: string;
-  jobId?: string;
-  jobTitle?: string;
-  title: string;
-  interviewType: "screening" | "technical" | "system_design" | "cultural" | "executive";
-  interviewerName: string;
-  scheduledAt: string;
-  status: "scheduled" | "in_progress" | "completed" | "cancelled";
-  meetingLink: string;
-  notes: string;
-  createdAt: string;
-  scorecardCount?: number;
-}
-
-export interface InterviewScorecard {
-  id: string;
-  interviewPlanId: string;
-  candidateId: string;
-  interviewerName: string;
-  technicalRating: number;
-  communicationRating: number;
-  problemSolvingRating: number;
-  cultureFitRating: number;
-  overallRecommendation: "strong_hire" | "hire" | "neutral" | "no_hire" | "strong_no_hire";
-  strengths: string;
-  concerns: string;
-  detailedFeedback: string;
-  submittedAt: string;
-}
-
-export interface CandidateStageHistory {
-  id: string;
-  candidateId: string;
-  jobId?: string;
-  fromStage: string;
-  toStage: string;
-  changedBy: string;
-  reason: string;
-  durationInStageHours?: number;
-  createdAt: string;
-}
-
-export interface JobOffer {
-  id: string;
-  candidateId: string;
-  candidateName?: string;
-  jobId?: string;
-  jobTitle?: string;
-  baseSalary: number;
+export interface Invoice {
+  id: number;
+  number: string;
+  amount_cents: number;
   currency: string;
-  bonus: number;
-  equity: string;
-  joiningDate: string;
-  expirationDate: string;
-  status: "draft" | "pending_approval" | "sent" | "accepted" | "declined" | "revoked";
-  createdBy: string;
-  createdAt: string;
-}
-
-export interface OnboardingRecord {
-  id: string;
-  candidateId: string;
-  candidateName?: string;
-  offerId?: string;
-  backgroundCheckStatus: "pending" | "passed" | "flagged";
-  documentsVerified: boolean;
-  equipmentProvisioned: boolean;
-  startDate: string;
-  buddyAssigned: string;
-  status: "in_progress" | "completed";
-  createdAt: string;
-}
-
-export interface RecruiterFeedback {
-  id: string;
-  candidateId: string;
-  jobId: string;
-  recruiterId: string;
-  overrideScore: number;
-  feedbackCategory: "skill_accuracy" | "experience_relevance" | "false_positive" | "false_negative" | "general";
-  comments: string;
-  createdAt: string;
-}
-
-export interface ClientJob {
-  id: string;
-  clientId: string;
-  title: string;
-  department: string;
   status: string;
-  targetHires: number;
-  filledHires: number;
-  feePercentage: number;
-  createdAt: string;
+  lines: { description: string; amount_cents: number }[];
+  period: string;
+  issued_at: string | null;
+  due_at: string | null;
+  paid_at: string | null;
 }
 
-export interface ClientShortlist {
-  id: string;
-  clientId: string;
-  candidateId: string;
-  candidateName?: string;
-  jobId?: string;
-  sharedAt: string;
-  clientStatus: "pending_review" | "accepted" | "rejected" | "interview_requested";
-  clientFeedback: string;
+export interface PortalToken {
+  id: number;
+  client_name: string;
+  job_ids: number[];
+  can_view_candidates: boolean;
+  is_active: boolean;
+  expires_at: string | null;
+  last_viewed_at: string | null;
+  created_at: string | null;
+  token?: string;
 }
 
-export interface PlacementRecord {
-  id: string;
-  clientId: string;
-  clientName?: string;
-  candidateId: string;
-  candidateName?: string;
-  jobId?: string;
-  placedDate: string;
-  baseSalary: number;
-  placementFee: number;
-  guaranteeDays: number;
-  invoiceStatus: "unbilled" | "invoiced" | "paid";
-  createdAt: string;
+export interface PortalView {
+  client_name: string;
+  organization: string | null;
+  can_view_candidates: boolean;
+  jobs: {
+    id: number;
+    title: string;
+    location: string | null;
+    status: string;
+    employment_type: string | null;
+    candidates: { total: number; by_stage: Record<string, number> } | null;
+  }[];
 }
 
-export interface AgencyInvoice {
-  id: string;
-  clientId: string;
-  clientName?: string;
-  invoiceNumber: string;
-  amount: number;
-  currency: string;
-  dueDate: string;
-  status: "unpaid" | "draft" | "sent" | "paid" | "overdue";
-  issuedAt: string;
-  paidAt?: string;
+export interface AnalyticsOverview {
+  totals: {
+    candidates: number;
+    jobs: number;
+    open_jobs: number;
+    interviews: number;
+    offers: number;
+    hires: number;
+    duplicates: number;
+  };
+  funnel: { stage: string; count: number }[];
+  conversion: Record<string, number>;
+  sources: { source: string; count: number }[];
+  top_skills: { skill: string; count: number }[];
+  offers: { by_status: { status: string; count: number }[]; acceptance_rate: number };
+  interview_load: { user_id: number; name: string; count: number }[];
+  recruiter_performance: { user_id: number; name: string; candidates: number }[];
+  job_performance: {
+    job_id: number;
+    title: string;
+    status: string;
+    candidates: number;
+    offers: number;
+    hires: number;
+  }[];
 }
 
-export interface RetentionPolicy {
-  id: string;
-  policyName: string;
-  dataType: "resumes" | "audit_logs" | "rejected_candidates";
-  retentionDays: number;
-  action: "delete" | "anonymize" | "archive";
-  isActive: boolean;
-  createdAt: string;
+export interface PlatformAnalytics {
+  organizations: {
+    total: number;
+    by_status: { status: string; count: number }[];
+    by_plan: { plan: string; count: number }[];
+    mrr_cents: number;
+  };
+  totals: Record<string, number>;
+  top_orgs: {
+    id: number;
+    name: string;
+    status: string;
+    plan: string;
+    seat_limit: number;
+    candidates: number;
+    jobs: number;
+  }[];
 }
-

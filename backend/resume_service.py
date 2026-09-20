@@ -1,197 +1,161 @@
 from __future__ import annotations
 
-import hashlib
+import io
 import re
 import uuid
-from collections.abc import Iterable
-from io import BytesIO
-from pathlib import Path
-from typing import Any
+from datetime import datetime
 
-from docx import Document
-from pypdf import PdfReader
+SKILL_LEXICON = [
+    "python", "python3", "java", "javascript", "typescript", "golang", "go",
+    "rust", "c++", "c#", "csharp", "ruby", "php", "swift", "kotlin", "scala",
+    "sql", "postgres", "postgresql", "mysql", "mongodb", "redis", "elasticsearch",
+    "dynamodb", "oracle", "mssql", "sqlite",
+    "react", "redux", "next.js", "nextjs", "vue", "angular", "svelte", "node.js",
+    "nodejs", "express", "fastapi", "django", "flask", "spring", "rails",
+    "docker", "kubernetes", "k8s", "terraform", "ansible", "aws", "gcp",
+    "azure", "linux", "git", "ci/cd", "jenkins", "github actions", "graphql",
+    "rest api", "grpc", "websockets", "microservices", "serverless",
+    "machine learning", "ml", "deep learning", "nlp", "natural language processing",
+    "computer vision", "pandas", "numpy", "tensorflow", "pytorch", "scikit-learn",
+    "data science", "data analysis", "etl", "spark", "airflow", "databricks",
+    "tableau", "power bi", "looker", "excel",
+    "product management", "product management", "agile", "scrum", "kanban",
+    "jira", "confluence", "figma", "sketch", "design", "ui/ux", "ux design",
+    "ui design", "prototyping", "user research",
+    "salesforce", "hubspot", "marketing", "seo", "content marketing",
+    "crm", "saas", "fintech", "e-commerce", "ecommerce",
+    "leadership", "team leadership", "project management", "stakeholder management",
+    "communication", "go-to-market", "gtm", "account management",
+    "recruitment", "talent acquisition", "sourcing", "ats", "boolean search",
+    "linkedin", "hiring", "staffing", "hr", "human resources", "payroll",
+    "excel", "powerpoint", "word",
+    "bash", "shell", "powershell", "api", "oauth", "jwt", "security",
+    "cybersecurity", "penetration testing", "soc", "devops", "sre",
+    "networking", "tcp/ip", "hadoop", "kafka", "rabbitmq", "numpy",
+]
 
-from .classifier import analyze_resume, is_candidate_resume
-from .config import Settings
-from .errors import AppError
-from .models import RequestContext
-from .repository import Repository, safe_file_name, utc_now
-
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
-MIME_BY_EXTENSION = {
-    ".pdf": "application/pdf",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".txt": "text/plain",
-}
-
-
-class ResumeService:
-    def __init__(self, settings: Settings, repository: Repository) -> None:
-        self.settings = settings
-        self.repository = repository
-
-    def process(
-        self,
-        files: Iterable[dict[str, Any]],
-        context: RequestContext,
-        source: str,
-        role: str,
-        *,
-        strict: bool = False,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, str]], int]:
-        """
-        Process uploaded or imported candidate documents.
-
-        In strict mode (used by automated imports such as Gmail only candidate
-        resumes are accepted; anything that fails resume recognition is rejected
-        outright instead of being downgraded to 'needs_review'.
-        """
-        existing = self.repository.list_applications(context)
-        created: list[dict[str, Any]] = []
-        failures: list[dict[str, str]] = []
-        skipped = 0
-
-        for file in files:
-            original_name = str(file.get("name") or "resume")
-            content = file.get("content") or b""
-            external_id = str(file.get("externalId") or "")
-            storage_path = str(file.get("storagePath") or "")
-            try:
-                self._validate_file(original_name, content)
-                if external_id and self.repository.has_external_id(context, external_id):
-                    skipped += 1
-                    continue
-
-                mime_type = str(file.get("mimeType") or MIME_BY_EXTENSION[Path(original_name).suffix.lower()])
-                checksum = hashlib.sha256(content).hexdigest()
-                text = extract_resume_text(content, original_name)
-                is_valid, reject_reason = is_candidate_resume(text, original_name)
-                status = "new"
-                if not is_valid:
-                    if strict:
-                        failures.append({"fileName": original_name, "message": reject_reason})
-                        continue
-                    status = "needs_review"
-                    lower_text = text.lower()
-                    strong_invalids = ("tax invoice", "commercial invoice", "boarding pass", "e-ticket")
-                    if len(text.strip()) < 35 or any(si in lower_text for si in strong_invalids):
-                        failures.append({"fileName": original_name, "message": reject_reason})
-                        continue
-
-                analysis = analyze_resume(text, original_name)
-                duplicate = _find_duplicate(existing + created, analysis["email"], analysis["phone"], checksum)
-                if duplicate:
-                    if storage_path:
-                        self.repository.delete_resume_objects([storage_path])
-                    skipped += 1
-                    failures.append({
-                        "fileName": original_name,
-                        "message": f"Candidate '{duplicate.get('candidateName', 'Candidate')}' ({duplicate.get('email') or 'duplicate file'}) is already indexed in your workspace.",
-                    })
-                    continue
-
-                application_id = str(uuid.uuid4())
-                object_path = storage_path or (
-                    f"{context.organization_id}/{application_id}/{safe_file_name(original_name)}"
-                )
-                now = utc_now()
-                application = {
-                    **analysis,
-                    "id": application_id,
-                    "originalName": original_name,
-                    "storedName": object_path,
-                    "fileChecksum": checksum,
-                    "sourceExternalId": external_id or None,
-                    "mimeType": mime_type,
-                    "fileSize": len(content),
-                    "uploadedAt": now,
-                    "updatedAt": now,
-                    "source": _clean(source, "Direct upload", 180),
-                    "role": _clean(role, "Open application", 180),
-                    "status": "needs_review" if (status == "needs_review" or int(analysis["resumeTextLength"]) < 80) else "new",
-                    "notes": "",
-                    "tags": [],
-                    "duplicateOf": None,
-                }
-                if not storage_path:
-                    self.repository.upload_resume(object_path, content, mime_type)
-                try:
-                    saved = self.repository.insert_applications([application], context)[0]
-                except Exception:
-                    if external_id and self.repository.has_external_id(context, external_id):
-                        skipped += 1
-                        continue
-                    self.repository.delete_resume_objects([object_path])
-                    raise
-                created.append(saved)
-                self.repository.audit(context, "application.created", "application", application_id, {"source": source})
-            except Exception as error:
-                if storage_path:
-                    self.repository.delete_resume_objects([storage_path])
-                failures.append({"fileName": original_name, "message": _safe_error(error)})
-
-        return created, failures, skipped
-
-    def _validate_file(self, name: str, content: bytes) -> None:
-        extension = Path(name).suffix.lower()
-        if extension not in ALLOWED_EXTENSIONS:
-            raise AppError("Only PDF, DOCX, and TXT resumes are supported.")
-        if not content:
-            raise AppError("The uploaded file is empty.")
-        if len(content) > self.settings.max_upload_bytes:
-            raise AppError("The resume exceeds the 14 MB file limit.")
+_JOB_TITLE_WEIGHT = 1.0
+_EXP_YEAR_PROFILE = [
+    (r"(?:^|\s)(20\d\d|19\d\d)\s*[-–—]\s*(?:present|now|current|today)\b", datetime.now().year),
+    (r"(?:^|\s)(20\d\d|19\d\d)\s*[-–—]\s*(20\d\d|19\d\d)\b", None),
+]
 
 
-def extract_resume_text(content: bytes, name: str) -> str:
-    extension = Path(name).suffix.lower()
-    if extension == ".pdf":
-        reader = PdfReader(BytesIO(content), strict=False)
-        if len(reader.pages) > 100:
-            raise AppError("PDF exceeds the 100-page processing limit.")
-        return "\n".join((page.extract_text() or "") for page in reader.pages).strip()
-    if extension == ".docx":
-        document = Document(BytesIO(content))
-        paragraphs = [paragraph.text for paragraph in document.paragraphs]
-        tables = [cell.text for table in document.tables for row in table.rows for cell in row.cells]
-        return "\n".join(paragraphs + tables).strip()
-    if extension == ".txt":
-        for encoding in ("utf-8-sig", "utf-16", "latin-1"):
-            try:
-                return content.decode(encoding).strip()
-            except UnicodeDecodeError:
-                continue
-    raise AppError("Could not read this resume file.")
+def extract_resume_text(filename: str, data: bytes) -> str:
+    lower = filename.lower()
+    if lower.endswith(".pdf"):
+        return _extract_pdf(data) or _decode_text(data)
+    if lower.endswith(".docx"):
+        return _extract_docx(data) or _decode_text(data)
+    if lower.endswith((".txt", ".md", ".text")):
+        return _decode_text(data) or _extract_pdf(data)
+    return _decode_text(data) or _extract_pdf(data) or _extract_docx(data)
 
 
-def _find_duplicate(
-    applications: list[dict[str, Any]], email: object, phone: object, checksum: str
-) -> dict[str, Any] | None:
-    normalized_email = str(email or "").strip().lower()
-    raw_phone = re.sub(r"\D", "", str(phone or ""))
-    normalized_phone = raw_phone[-10:] if len(raw_phone) >= 7 else ""
-    clean_checksum = str(checksum or "").strip()
+def _decode_text(data: bytes) -> str:
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            return data.decode("latin-1")
+        except Exception:
+            return ""
 
-    for application in applications:
-        app_email = str(application.get("email") or "").strip().lower()
-        email_match = bool(normalized_email and app_email and app_email == normalized_email)
 
-        app_raw_phone = re.sub(r"\D", "", str(application.get("phone") or ""))
-        app_norm_phone = app_raw_phone[-10:] if len(app_raw_phone) >= 7 else ""
-        phone_match = bool(normalized_phone and app_norm_phone and app_norm_phone == normalized_phone)
+def _extract_pdf(data: bytes) -> str:
+    try:
+        from pypdf import PdfReader
 
-        app_checksum = str(application.get("fileChecksum") or "").strip()
-        checksum_match = bool(clean_checksum and app_checksum and app_checksum == clean_checksum)
+        reader = PdfReader(io.BytesIO(data))
+        return "\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception:
+        return ""
 
-        if email_match or phone_match or checksum_match:
-            return application
+
+def _extract_docx(data: bytes) -> str:
+    try:
+        from docx import Document
+
+        doc = Document(io.BytesIO(data))
+        parts = []
+        for para in doc.paragraphs:
+            if para.text.strip():
+                parts.append(para.text.strip())
+        for table in doc.tables:
+            for row in table.rows:
+                cells = [c.text.strip() for c in row.cells]
+                parts.append(" | ".join(cells))
+        return "\n".join(parts)
+    except Exception:
+        return ""
+
+
+def extract_skills(text: str) -> list[str]:
+    lower = text.lower()
+    found: list[str] = []
+    for skill in SKILL_LEXICON:
+        pattern = re.compile(rf"\b{re.escape(skill)}\b", re.IGNORECASE)
+        if pattern.search(lower):
+            if skill not in found:
+                found.append(skill)
+    return found
+
+
+def extract_experience_years(text: str) -> int:
+    years = 0.0
+    for pattern, end_year in _EXP_YEAR_PROFILE:
+        for m in re.finditer(pattern, text):
+            start = int(m.group(1))
+            end = end_year if end_year else int(m.group(2))
+            if start < end and 1970 <= start <= datetime.now().year:
+                span = max(0.0, end - start)
+                # Prefer the longest continuous span found.
+                years = max(years, span)
+    if years == 0.0:
+        for m in re.finditer(r"(?:^|\s)(\d{1,2})\s*\+?\s*(?:years?|yrs?)\b", text, re.IGNORECASE):
+            years = max(years, float(m.group(1)))
+    return int(round(years))
+
+
+def extract_email(text: str) -> str | None:
+    m = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", text)
+    return m.group(0).strip() if m else None
+
+
+def extract_phone(text: str) -> str | None:
+    m = re.search(
+        r"(?:\+?\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}", text
+    )
+    return m.group(0).strip() if m else None
+
+
+def guess_name(text: str) -> str | None:
+    first_lines = [ln.strip() for ln in text.splitlines() if ln.strip()][:6]
+    for ln in first_lines:
+        if len(ln) <= 200 and all(c.isalpha() or c in ". '-–" for c in ln):
+            words = [w for w in re.split(r"\s+", ln) if w]
+            if 2 <= len(words) <= 4:
+                return ln
     return None
 
 
-def _clean(value: str, fallback: str, maximum: int) -> str:
-    return (value.strip() or fallback)[:maximum]
+def detect_duplicate_key(candidate) -> tuple[str | None, str | None, str | None]:
+    email = (candidate.email or "").strip().lower() or None
+    phone = re.sub(r"[^\d]", "", candidate.phone or "") or None
+    name = (candidate.name or "").strip().lower() or None
+    return email, phone, name
 
 
-def _safe_error(error: Exception) -> str:
-    if isinstance(error, AppError):
-        return error.message
-    return "The resume could not be processed."
+def save_upload(
+    org_id: int, candidate_id: int, filename: str, data: bytes, upload_dir: str
+) -> str:
+
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
+    rel = f"org_{org_id}/cand_{candidate_id}_{uuid.uuid4().hex[:8]}.{ext}"
+    full = f"{upload_dir}/{rel}"
+    import os
+
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, "wb") as fh:
+        fh.write(data)
+    return rel

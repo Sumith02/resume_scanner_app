@@ -1,620 +1,298 @@
+"""Resume ingestion from email (Phase 4).
+
+Gmail is treated as a *source adapter*: it yields `(filename, bytes)` for
+resume-like attachments and hands them to `ingestion.ingest_resume`, the same
+pipeline used by manual uploads. That means parsing, dedupe, storage, audit and
+quota metering are identical no matter where a resume came from.
+
+Two providers:
+  * Real Gmail REST (OAuth 2.0) when GOOGLE_CLIENT_ID/SECRET are configured.
+  * A local demo inbox when they are not, so the whole flow is runnable and
+    testable without live Google credentials.
+"""
 from __future__ import annotations
 
 import base64
-import time
 import urllib.parse
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
-from typing import Any
 
 import httpx
 
-from .classifier import NON_RESUME_FILENAMES, classify_email_context, is_candidate_resume
-from .config import Settings
-from .crypto import SignedState, TokenCipher
-from .errors import AppError, ServiceUnavailableError
-from .models import RequestContext
-from .repository import Repository, utc_now
-from .resume_service import ALLOWED_EXTENSIONS, MIME_BY_EXTENSION, ResumeService, extract_resume_text
+from backend.config import (
+    DEMO_INBOX_DIR,
+    GMAIL_SCOPES,
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
+    GOOGLE_REDIRECT_URI,
+)
+from backend.crypto import decrypt, encrypt
+from backend.ingestion import ingest_resume, is_probably_bad_attachment, looks_like_resume
+from backend.models import EmailAccount, Organization, SourceKind, utcnow
 
-GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
-DEFAULT_QUERY = "has:attachment (filename:pdf OR filename:docx OR filename:txt)"
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
-GMAIL_API_ROOT = "https://gmail.googleapis.com/gmail/v1/users/me"
+GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me"
+GMAIL_QUERY = (
+    "has:attachment (filename:pdf OR filename:docx OR filename:doc OR filename:txt)"
+    " newer_than:45d"
+)
+MAX_PROCESSED_TRACKED = 500
 
 
-class GmailService:
-    def __init__(self, settings: Settings, repository: Repository, resumes: ResumeService) -> None:
-        self.settings = settings
-        self.repository = repository
-        self.resumes = resumes
-        self.cipher = TokenCipher(settings.token_encryption_key)
-        self.state = SignedState(settings.oauth_state_secret)
-
-    def missing_configuration(self) -> list[str]:
-        missing: list[str] = []
-        if not self.settings.google_client_id:
-            missing.append("GOOGLE_CLIENT_ID")
-        if not self.settings.google_client_secret:
-            missing.append("GOOGLE_CLIENT_SECRET")
-        if not self.settings.google_redirect_uri:
-            missing.append("GOOGLE_REDIRECT_URI")
-        if not self.settings.oauth_state_secret or len(self.settings.oauth_state_secret) < 32:
-            missing.append("RESUMEFLOW_OAUTH_STATE_SECRET")
-        if not self.settings.token_encryption_key or len(self.settings.token_encryption_key) < 32:
-            missing.append("TOKEN_ENCRYPTION_KEY")
-        return missing
-
-    def status(self, context: RequestContext) -> dict[str, object]:
-        connection = self.repository.get_gmail_connection(context)
-        configured = self.settings.gmail_configured or self.settings.allow_demo_mode
-        missing = self.missing_configuration() if not self.settings.gmail_configured else []
-        if connection:
-            message = "Gmail is connected and ready for resume imports."
-        elif configured:
-            message = "Ready to connect company mailbox via Google OAuth."
-        else:
-            message = (
-                f"Gmail requires OAuth credentials in server environment ({', '.join(missing)})."
-                if missing
-                else "Gmail OAuth requires configuration."
-            )
-        return {
-            "configured": configured,
-            "connected": bool(connection),
-            "email": connection.get("email", "") if connection else "",
-            "updatedAt": connection.get("updated_at", "") if connection else "",
-            "lastSyncedAt": (connection.get("last_synced_at") or connection.get("lastSyncedAt") or "") if connection else "",
-            "syncCount": int(connection.get("sync_count", 0)) if connection else 0,
-            "defaultQuery": DEFAULT_QUERY,
-            "redirectUri": self.settings.google_redirect_uri,
-            "missingKeys": missing,
-            "message": message,
-        }
-
-    def authorization_url(self, context: RequestContext) -> str:
-        if not self.settings.gmail_configured:
-            if self.settings.allow_demo_mode:
-                now = utc_now()
-                user_email = (context.email or "").strip()
-                demo_email = user_email if "@" in user_email else "careers@company.com"
-                self.repository.save_gmail_connection(
-                    {
-                        "email": demo_email,
-                        "access_token": self.cipher.encrypt("demo-access-token"),
-                        "refresh_token": self.cipher.encrypt("demo-refresh-token"),
-                        "scope": GMAIL_SCOPE,
-                        "token_type": "Bearer",
-                        "expiry_date": "2099-01-01T00:00:00Z",
-                        "created_at": now,
-                        "token_version": 1,
-                    },
-                    context,
-                )
-                self.repository.audit(
-                    context, "gmail.connected", "gmail_connection", None, {"email": demo_email}
-                )
-                origin = str(self.settings.app_origin or "http://localhost:5173").rstrip("/")
-                return f"{origin}/?gmail=connected"
-            self._require_configured()
-        state = self.state.create(
-            {
-                "userId": context.user_id,
-                "organizationId": context.organization_id,
-                "email": context.email,
-                "role": context.role,
-                "origin": self.settings.app_origin,
-            }
-        )
-        params = urllib.parse.urlencode(
-            {
-                "client_id": self.settings.google_client_id,
-                "redirect_uri": self.settings.google_redirect_uri,
-                "response_type": "code",
-                "scope": GMAIL_SCOPE,
-                "access_type": "offline",
-                "prompt": "consent",
-                "include_granted_scopes": "true",
-                "state": state,
-            }
-        )
-        return f"{GOOGLE_AUTH_URL}?{params}"
-
-    def callback(self, code: str, state_value: str) -> str:
-        self._require_configured()
-        if not code or not state_value:
-            raise AppError("Google did not return a valid authorization response.", 400, "invalid_oauth_callback")
-        state = self.state.verify(state_value)
-        organization_id = str(state["organizationId"])
-        user_id = str(state["userId"])
-        current_role = self.repository.membership_role(organization_id, user_id)
-        if current_role not in {"owner", "admin", "recruiter", "company_admin"}:
-            raise AppError("You no longer have permission to connect Gmail.", 403, "permission_denied")
-        context = RequestContext(
-            user_id=user_id,
-            organization_id=organization_id,
-            email=str(state.get("email", "")),
-            role=current_role,
-            authenticated=True,
-        )
-        token = self._token_request(
-            {
-                "code": code,
-                "client_id": self.settings.google_client_id,
-                "client_secret": self.settings.google_client_secret,
-                "redirect_uri": self.settings.google_redirect_uri,
-                "grant_type": "authorization_code",
-            }
-        )
-        refresh_token = str(token.get("refresh_token") or "")
-        if not refresh_token:
-            raise AppError(
-                "Google did not issue offline access. Reconnect Gmail and approve access.", 409, "missing_refresh_token"
-            )
-        profile = self._raw_gmail_get("/profile", str(token["access_token"]))
-        now = utc_now()
-        self.repository.save_gmail_connection(
-            {
-                "email": profile.get("emailAddress") or "Connected Gmail account",
-                "access_token": self.cipher.encrypt(str(token["access_token"])),
-                "refresh_token": self.cipher.encrypt(refresh_token),
-                "scope": str(token.get("scope") or GMAIL_SCOPE),
-                "token_type": str(token.get("token_type") or "Bearer"),
-                "expiry_date": _expiry_iso(int(token.get("expires_in") or 3600)),
-                "created_at": now,
-                "token_version": 1,
-            },
-            context,
-        )
-        self.repository.audit(
-            context, "gmail.connected", "gmail_connection", None, {"email": profile.get("emailAddress", "")}
-        )
-        origin = str(state.get("origin") or self.settings.app_origin).rstrip("/")
-        return f"{origin}/?gmail=connected"
-
-    def disconnect(self, context: RequestContext) -> None:
-        connection = self.repository.get_gmail_connection(context)
-        if connection:
-            try:
-                refresh_token = self.cipher.decrypt(str(connection["refresh_token"]))
-                httpx.post(GOOGLE_REVOKE_URL, params={"token": refresh_token}, timeout=10)
-            except Exception:
-                pass
-        self.repository.delete_gmail_connection(context)
-        self.repository.audit(context, "gmail.disconnected", "gmail_connection", None)
-
-    def import_resumes(
-        self,
-        query: str,
-        role: str,
-        max_results: int,
-        context: RequestContext,
-        full_sync: bool = False,
-    ) -> dict[str, object]:
-        connection = self.repository.get_gmail_connection(context)
-        if not connection:
-            raise AppError("Connect Gmail before importing resumes.", 409, "gmail_not_connected")
-
-        if not self.settings.gmail_configured:
-            if self.settings.allow_demo_mode:
-                sample_resumes = [
-                    (
-                        "alex_rivers_backend.txt",
-                        b"Alex Rivers\nEmail: alex.rivers@example.com\nPhone: (555) 234-5678\nSkills: Python, FastAPI, PostgreSQL, Docker, Kubernetes\nExperience: 5 years Senior Backend Engineer designing distributed microservices.",
-                    ),
-                    (
-                        "maya_lin_frontend.txt",
-                        b"Maya Lin\nEmail: maya.lin@example.com\nPhone: (555) 345-6789\nSkills: React, TypeScript, Next.js, CSS, GraphQL\nExperience: 4 years Frontend Specialist building responsive SaaS dashboards.",
-                    ),
-                    (
-                        "david_kim_fullstack.txt",
-                        b"David Kim\nEmail: david.kim@example.com\nPhone: (555) 456-7890\nSkills: Python, React, AWS, Node.js, SQL\nExperience: 6 years Full Stack Lead shipping cloud applications.",
-                    ),
-                ]
-
-                files = [
-                    {"name": fname, "content": content, "mimeType": "text/plain"}
-                    for fname, content in sample_resumes
-                ]
-
-                applications, failures, duplicate_skips = self.resumes.process(
-                    files,
-                    context,
-                    source=f"Gmail: {connection.get('email', 'careers@company.com')}",
-                    role=role,
-                    strict=True,
-                )
-
-                now_iso = utc_now()
-                sync_count = int(connection.get("sync_count", 0)) + 1
-                updated_connection = {
-                    **connection,
-                    "last_synced_at": now_iso,
-                    "sync_count": sync_count,
-                }
-                self.repository.save_gmail_connection(updated_connection, context)
-
-                return {
-                    "applications": applications,
-                    "failures": failures,
-                    "importedCount": len(applications),
-                    "scannedMessages": len(sample_resumes),
-                    "skippedAttachments": 0,
-                    "isIncremental": False,
-                    "lastSyncedAt": now_iso,
-                    "syncCount": sync_count,
-                    "message": f"Imported {len(applications)} resume{'s' if len(applications) != 1 else ''} from Gmail.",
-                }
-            self._require_configured()
-
-        user_query = (query.strip() or DEFAULT_QUERY)[:500]
-        max_results = max(1, min(max_results, 500))
-
-        last_synced_at = connection.get("last_synced_at") or connection.get("lastSyncedAt")
-        is_incremental = bool(last_synced_at and not full_sync)
-
-        # On subsequent runs: continue incrementally from where it left off last time
-        effective_query = user_query
-        if is_incremental:
-            last_epoch = int(_parse_time(str(last_synced_at)))
-            if last_epoch > 0:
-                after_epoch = max(0, last_epoch - 86400)
-                if "after:" not in user_query.lower() and "newer_than:" not in user_query.lower():
-                    effective_query = f"{user_query} after:{after_epoch}"
-
-        # Fetch messages with pagination support (so first-time fetch can retrieve all from starting)
-        messages: list[dict[str, Any]] = []
-        page_token = None
-        while len(messages) < max_results:
-            batch_size = min(100, max_results - len(messages))
-            params: dict[str, str] = {"q": effective_query, "maxResults": str(batch_size)}
-            if page_token:
-                params["pageToken"] = page_token
-            listing, connection = self._gmail_get("/messages", connection, context, params=params)
-            page_messages = listing.get("messages") or []
-            if not page_messages:
-                break
-            messages.extend(page_messages)
-            page_token = listing.get("nextPageToken")
-            if not page_token:
-                break
-
-        skipped = 0
-        attachments_seen = 0
-        newest_message_timestamp = 0
-
-        def resume_files():
-            nonlocal attachments_seen, connection, skipped, newest_message_timestamp
-            for message_ref in messages:
-                message_id = str(message_ref.get("id") or "")
-                if not message_id:
-                    continue
-                message, connection = self._gmail_get(
-                    f"/messages/{message_id}", connection, context, params={"format": "full"}
-                )
-
-                # Track internalDate for incremental watermark checkpoint
-                msg_internal_date = int(message.get("internalDate") or 0)
-                if msg_internal_date > newest_message_timestamp:
-                    newest_message_timestamp = msg_internal_date
-
-                # Extract email context: Subject, snippet, sender, body text
-                email_ctx = _extract_email_context(message)
-
-                # Way 1: Analyze Email Level Context (Subject, Snippet, Body Content)
-                # Disqualifies non-recruitment emails (invoices, tickets, newsletters, bank statements)
-                # directly at the email level without wasting time/quota parsing PDFs!
-                is_candidate_email, is_disqualified, _ = classify_email_context(
-                    subject=email_ctx["subject"],
-                    snippet=email_ctx["snippet"],
-                    body=email_ctx["body"],
-                )
-
-                raw_parts = _flatten_parts(message.get("payload") or {})
-                part_attachments = [p for p in raw_parts if p.get("filename")]
-
-                if is_disqualified:
-                    skipped += len(part_attachments)
-                    continue
-
-                # Way 1b: Mirror how a candidate actually sends a resume through email.
-                # Emails without candidate application signals (neutral forwards, bank
-                # forms, notices, etc.) are skipped UNLESS an attachment's filename
-                # explicitly identifies itself as a resume/CV/profile.
-                if not is_candidate_email:
-                    has_explicit_resume_attachment = any(
-                        res_kw in str(part.get("filename") or "").lower()
-                        for part in part_attachments
-                        for res_kw in ("resume", "cv", "curriculum", "biodata", "profile")
-                    )
-                    if not has_explicit_resume_attachment:
-                        skipped += len(part_attachments)
-                        continue
-
-                # Way 2: Attachment Selection & Structural Classification
-                candidate_parts: list[tuple[dict[str, Any], str, str]] = []
-                for part in raw_parts:
-                    filename = str(part.get("filename") or "").strip()
-                    if not filename:
-                        continue
-                    extension = Path(filename).suffix.lower()
-                    if extension not in ALLOWED_EXTENSIONS:
-                        skipped += 1
-                        continue
-
-                    lower_filename = filename.lower()
-                    # Filter out attachments matching non-resume document patterns
-                    # (e.g. certificates, marksheets, transcripts, diplomas, cover letters, LORs, passports, invoices)
-                    if any(non_kw in lower_filename for non_kw in NON_RESUME_FILENAMES):
-                        if not any(res_kw in lower_filename for res_kw in ("resume", "cv", "curriculum", "biodata")):
-                            skipped += 1
-                            continue
-
-                    candidate_parts.append((part, filename, extension))
-
-                if not candidate_parts:
-                    continue
-
-                # Attachment Prioritization per Message:
-                # When candidates submit an application with multiple files (e.g. CV + degree + cover letter),
-                # prioritize explicit resume/CV files and ignore accompanying collateral.
-                explicit_resumes = [
-                    item
-                    for item in candidate_parts
-                    if any(res_kw in item[1].lower() for res_kw in ("resume", "cv", "curriculum", "biodata"))
-                ]
-                parts_to_process = explicit_resumes if explicit_resumes else candidate_parts
-                skipped += len(candidate_parts) - len(parts_to_process)
-
-                # Content verification: download and inspect each candidate attachment
-                for part, filename, extension in parts_to_process:
-                    attachments_seen += 1
-                    if attachments_seen > self.settings.max_upload_files:
-                        skipped += 1
-                        continue
-                    body = part.get("body") or {}
-                    encoded = body.get("data")
-                    attachment_id = body.get("attachmentId")
-                    if not encoded and attachment_id:
-                        attachment, connection = self._gmail_get(
-                            f"/messages/{message_id}/attachments/{attachment_id}", connection, context
-                        )
-                        encoded = attachment.get("data")
-                    if not encoded:
-                        skipped += 1
-                        continue
-
-                    try:
-                        content_bytes = _decode_base64url(str(encoded))
-                    except Exception:
-                        skipped += 1
-                        continue
-
-                    # Pre-validate extracted document text: only candidate resumes are yielded
-                    try:
-                        doc_text = extract_resume_text(content_bytes, filename)
-                        is_valid, _ = is_candidate_resume(doc_text, filename)
-                        if not is_valid:
-                            skipped += 1
-                            continue
-                    except Exception:
-                        skipped += 1
-                        continue
-
-                    yield {
-                        "name": filename,
-                        "content": content_bytes,
-                        "mimeType": str(part.get("mimeType") or MIME_BY_EXTENSION[extension]),
-                        "externalId": f"gmail:{message_id}:{attachment_id or filename}",
-                    }
-
-        applications, failures, duplicate_skips = self.resumes.process(
-            resume_files(),
-            context,
-            source=f"Gmail: {connection.get('email', '')}",
-            role=role,
-            strict=True,
-        )
-        skipped += duplicate_skips
-
-        # Save incremental watermark
-        now_iso = utc_now()
-        sync_count = int(connection.get("sync_count", 0)) + 1
-        updated_connection = {
-            **connection,
-            "last_synced_at": now_iso if (applications or messages) else connection.get("last_synced_at"),
-            "last_message_date": newest_message_timestamp or connection.get("last_message_date", 0),
-            "sync_count": sync_count,
-        }
-        self.repository.save_gmail_connection(updated_connection, context)
-
-        self.repository.audit(
-            context,
-            "gmail.imported",
-            "gmail_connection",
-            None,
-            {
-                "importedCount": len(applications),
-                "scannedMessages": len(messages),
-                "skippedAttachments": skipped,
-                "isIncremental": is_incremental,
-                "lastSyncedAt": now_iso,
-                "syncCount": sync_count,
-            },
-        )
-
-        mode_label = "incremental update" if is_incremental else "full scan from start"
-        if applications:
-            import_msg = f"Imported {len(applications)} resume{'s' if len(applications) != 1 else ''} from Gmail ({mode_label})."
-        elif skipped:
-            import_msg = f"Gmail scan complete ({mode_label}): 0 new resumes ({skipped} skipped - already indexed or non-resume attachments)."
-        else:
-            import_msg = f"Gmail scan complete ({mode_label}): No candidate resume attachments found."
-
-        return {
-            "applications": applications,
-            "failures": failures,
-            "importedCount": len(applications),
-            "scannedMessages": len(messages),
-            "skippedAttachments": skipped,
-            "isIncremental": is_incremental,
-            "lastSyncedAt": now_iso,
-            "syncCount": sync_count,
-            "message": import_msg,
-        }
-
-    def _gmail_get(
-        self,
-        path: str,
-        connection: dict[str, Any],
-        context: RequestContext,
-        params: dict[str, str] | None = None,
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        active = self._ensure_access_token(connection, context)
-        access_token = self.cipher.decrypt(str(active["access_token"]))
-        try:
-            return self._raw_gmail_get(path, access_token, params), active
-        except _Unauthorized:
-            active = self._refresh(active, context)
-            access_token = self.cipher.decrypt(str(active["access_token"]))
-            return self._raw_gmail_get(path, access_token, params), active
-
-    def _raw_gmail_get(self, path: str, access_token: str, params: dict[str, str] | None = None) -> dict[str, Any]:
-        try:
-            response = httpx.get(
-                f"{GMAIL_API_ROOT}{path}",
-                headers={"Authorization": f"Bearer {access_token}"},
-                params=params,
-                timeout=30,
-            )
-        except httpx.HTTPError as error:
-            raise ServiceUnavailableError("Gmail could not be reached. Please try again.") from error
-        if response.status_code == 401:
-            raise _Unauthorized()
-        return _google_response(response)
-
-    def _ensure_access_token(self, connection: dict[str, Any], context: RequestContext) -> dict[str, Any]:
-        expires_at = _parse_time(str(connection.get("expiry_date") or ""))
-        return self._refresh(connection, context) if expires_at <= time.time() + 120 else connection
-
-    def _refresh(self, connection: dict[str, Any], context: RequestContext) -> dict[str, Any]:
-        refresh_token = self.cipher.decrypt(str(connection["refresh_token"]))
-        try:
-            token = self._token_request(
-                {
-                    "refresh_token": refresh_token,
-                    "client_id": self.settings.google_client_id,
-                    "client_secret": self.settings.google_client_secret,
-                    "grant_type": "refresh_token",
-                }
-            )
-        except AppError as error:
-            if "invalid_grant" in error.message.lower() or "expired or revoked" in error.message.lower():
-                raise AppError(
-                    "Gmail access expired or was revoked. Reconnect the mailbox to continue.",
-                    409,
-                    "gmail_reconnect_required",
-                ) from error
-            raise
-        updated = {
-            **connection,
-            "access_token": self.cipher.encrypt(str(token["access_token"])),
-            "refresh_token": connection["refresh_token"],
-            "scope": str(token.get("scope") or connection.get("scope") or GMAIL_SCOPE),
-            "token_type": str(token.get("token_type") or connection.get("token_type") or "Bearer"),
-            "expiry_date": _expiry_iso(int(token.get("expires_in") or 3600)),
-            "token_version": 1,
-        }
-        self.repository.save_gmail_connection(updated, context)
-        return updated
-
-    def _token_request(self, data: dict[str, str]) -> dict[str, Any]:
-        try:
-            response = httpx.post(GOOGLE_TOKEN_URL, data=data, timeout=30)
-        except httpx.HTTPError as error:
-            raise ServiceUnavailableError("Google OAuth could not be reached. Please try again.") from error
-        return _google_response(response)
-
-    def _require_configured(self) -> None:
-        if not self.settings.gmail_configured:
-            missing = self.missing_configuration()
-            missing_text = f": {', '.join(missing)}" if missing else ""
-            raise ServiceUnavailableError(
-                f"Gmail OAuth or token encryption is not fully configured. Missing server environment variables{missing_text}."
-            )
+def oauth_configured() -> bool:
+    return bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
 
 
-class _Unauthorized(Exception):
-    pass
-
-
-def _google_response(response: httpx.Response) -> dict[str, Any]:
-    try:
-        payload = response.json()
-    except ValueError:
-        payload = {}
-    if response.is_error:
-        detail = payload.get("error_description")
-        if not detail and isinstance(payload.get("error"), dict):
-            detail = payload["error"].get("message")
-        raise AppError(str(detail or "Google rejected the request."), 502, "google_api_error")
-    return payload
-
-
-def _flatten_parts(part: dict[str, Any]) -> list[dict[str, Any]]:
-    result = [part]
-    for child in part.get("parts") or []:
-        result.extend(_flatten_parts(child))
-    return result
-
-
-def _extract_email_context(message: dict[str, Any]) -> dict[str, Any]:
-    payload = message.get("payload") or {}
-    headers_list = payload.get("headers") or []
-    headers: dict[str, str] = {}
-    for h in headers_list:
-        name = str(h.get("name") or "").lower()
-        if name in {"subject", "from", "to", "date"}:
-            headers[name] = str(h.get("value") or "")
-
-    subject = headers.get("subject", "")
-    sender = headers.get("from", "")
-    snippet = str(message.get("snippet") or "")
-
-    body_chunks: list[str] = []
-    for part in _flatten_parts(payload):
-        mime = str(part.get("mimeType") or "").lower()
-        if mime == "text/plain":
-            body_obj = part.get("body") or {}
-            encoded = body_obj.get("data")
-            if encoded:
-                try:
-                    body_chunks.append(_decode_base64url(str(encoded)).decode("utf-8", errors="ignore"))
-                except Exception:
-                    pass
-
-    full_body = "\n".join(body_chunks).strip() if body_chunks else snippet
-
-    return {
-        "subject": subject,
-        "sender": sender,
-        "snippet": snippet,
-        "body": full_body[:4000],
+def authorization_url(state: str, login_hint: str | None = None) -> str:
+    if not oauth_configured():
+        raise RuntimeError("Google OAuth is not configured")
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": " ".join(GMAIL_SCOPES),
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "true",
+        "state": state,
     }
+    if login_hint:
+        params["login_hint"] = login_hint
+    return f"{GOOGLE_AUTH_URL}?{urllib.parse.urlencode(params)}"
 
 
-def _decode_base64url(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+def exchange_code(code: str) -> dict:
+    resp = httpx.post(
+        GOOGLE_TOKEN_URL,
+        data={
+            "code": code,
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "redirect_uri": GOOGLE_REDIRECT_URI,
+            "grant_type": "authorization_code",
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
-def _expiry_iso(seconds: int) -> str:
-    return (datetime.now(UTC) + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
+def _refresh(refresh_token: str) -> dict:
+    resp = httpx.post(
+        GOOGLE_TOKEN_URL,
+        data={
+            "refresh_token": refresh_token,
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "grant_type": "refresh_token",
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
-def _parse_time(value: str) -> float:
+def ensure_access_token(db, account: EmailAccount) -> str | None:
+    """Return a valid access token, refreshing in place when expired."""
+    token = decrypt(account.encrypted_access_token)
+    expiry = account.token_expiry
+    if token and (expiry is None or expiry > utcnow()):
+        return token
+    refresh_token = decrypt(account.encrypted_refresh_token)
+    if not refresh_token:
+        return token
+    data = _refresh(refresh_token)
+    account.encrypted_access_token = encrypt(data["access_token"])
+    expires_in = int(data.get("expires_in", 3600))
+    account.token_expiry = utcnow() + timedelta(seconds=expires_in - 60)
+    db.flush()
+    return data["access_token"]
+
+
+class GmailClient:
+    def __init__(self, access_token: str):
+        self.headers = {"Authorization": f"Bearer {access_token}"}
+
+    def _get(self, path: str, params: dict | None = None) -> dict:
+        r = httpx.get(f"{GMAIL_API}{path}", headers=self.headers, params=params, timeout=30)
+        r.raise_for_status()
+        return r.json()
+
+    def profile(self) -> dict:
+        return self._get("/profile")
+
+    def list_messages(self, query: str = GMAIL_QUERY, max_results: int = 25) -> list[str]:
+        data = self._get("/messages", {"q": query, "maxResults": max_results})
+        return [m["id"] for m in data.get("messages", [])]
+
+    def get_message(self, message_id: str) -> dict:
+        return self._get(f"/messages/{message_id}", {"format": "full"})
+
+    def get_attachment(self, message_id: str, attachment_id: str) -> bytes:
+        data = self._get(f"/messages/{message_id}/attachments/{attachment_id}")
+        return base64.urlsafe_b64decode(data["data"].encode())
+
+    def send_raw(self, raw: str) -> dict:
+        r = httpx.post(
+            f"{GMAIL_API}/messages/send",
+            headers=self.headers,
+            json={"raw": raw},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()
+
+
+def _walk_attachments(payload: dict):
+    """Yield (filename, attachment_id) for every attachment in a message."""
+    stack = [payload]
+    while stack:
+        part = stack.pop()
+        children = part.get("parts")
+        if children:
+            stack.extend(children)
+        filename = part.get("filename")
+        body = part.get("body", {}) or {}
+        if filename and body.get("attachmentId"):
+            yield filename, body["attachmentId"]
+
+
+def _decoded_header(message: dict, name: str) -> str:
+    for header in message.get("payload", {}).get("headers", []) or []:
+        if header.get("name", "").lower() == name.lower():
+            return header.get("value", "")
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Sync
+# ---------------------------------------------------------------------------
+
+def sync_account(
+    db,
+    org: Organization,
+    account: EmailAccount,
+    *,
+    actor_email: str = "gmail-sync",
+    max_messages: int = 25,
+) -> dict:
+    if account.is_demo or not oauth_configured():
+        return _sync_demo(db, org, account, actor_email=actor_email)
+    return _sync_gmail(db, org, account, actor_email=actor_email, max_messages=max_messages)
+
+
+def _mark_processed(account: EmailAccount, keys: list[str], summary: dict) -> None:
+    existing = list((account.last_sync_summary or {}).get("processed", []))
+    merged = existing + [k for k in keys if k not in existing]
+    merged = merged[-MAX_PROCESSED_TRACKED:]
+    account.last_sync_summary = {**summary, "processed": merged}
+
+
+def _sync_demo(db, org: Organization, account: EmailAccount, *, actor_email: str) -> dict:
+    inbox = Path(DEMO_INBOX_DIR)
+    processed = set((account.last_sync_summary or {}).get("processed", []))
+    ingested, skipped, newly = 0, 0, []
+
+    if inbox.exists():
+        for path in sorted(inbox.iterdir()):
+            if not path.is_file() or path.name.startswith("."):
+                continue
+            if path.name in processed:
+                continue
+            data = path.read_bytes()
+            if not looks_like_resume(path.name) or is_probably_bad_attachment(path.name):
+                skipped += 1
+                newly.append(path.name)
+                continue
+            ingest_resume(
+                db, org=org, filename=path.name, data=data,
+                source=SourceKind.GMAIL, actor_email=actor_email,
+            )
+            ingested += 1
+            newly.append(path.name)
+
+    summary = {
+        "provider": "demo",
+        "ingested": ingested,
+        "skipped": skipped,
+        "last_run": utcnow().isoformat(),
+    }
+    account.last_sync_at = utcnow()
+    _mark_processed(account, newly, summary)
+    db.flush()
+    return summary
+
+
+def _sync_gmail(
+    db, org: Organization, account: EmailAccount, *, actor_email: str, max_messages: int
+) -> dict:
+    token = ensure_access_token(db, account)
+    if not token:
+        account.status = "NEEDS_REAUTH"
+        db.flush()
+        return {"provider": "gmail", "error": "No valid access token", "ingested": 0}
+
+    client = GmailClient(token)
+    processed = set((account.last_sync_summary or {}).get("processed", []))
+    ingested, skipped, newly = 0, 0, []
+
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
-    except ValueError:
-        return 0
+        for message_id in client.list_messages(max_results=max_messages):
+            if message_id in processed:
+                continue
+            message = client.get_message(message_id)
+            for filename, attachment_id in _walk_attachments(message.get("payload", {})):
+                if not looks_like_resume(filename) or is_probably_bad_attachment(filename):
+                    skipped += 1
+                    continue
+                data = client.get_attachment(message_id, attachment_id)
+                ingest_resume(
+                    db, org=org, filename=filename, data=data,
+                    source=SourceKind.GMAIL, actor_email=actor_email,
+                )
+                ingested += 1
+            newly.append(message_id)
+        profile = client.profile()
+        account.history_id = profile.get("historyId")
+        if not account.email:
+            account.email = profile.get("emailAddress")
+        account.status = "CONNECTED"
+    except httpx.HTTPStatusError as exc:
+        account.status = "ERROR"
+        db.flush()
+        return {"provider": "gmail", "error": str(exc), "ingested": ingested}
+
+    summary = {
+        "provider": "gmail",
+        "ingested": ingested,
+        "skipped": skipped,
+        "last_run": utcnow().isoformat(),
+    }
+    account.last_sync_at = utcnow()
+    _mark_processed(account, newly, summary)
+    db.flush()
+    return summary
+
+
+def save_gmail_tokens(account: EmailAccount, tokens: dict, email: str | None = None) -> None:
+    account.encrypted_access_token = encrypt(tokens.get("access_token"))
+    if tokens.get("refresh_token"):
+        account.encrypted_refresh_token = encrypt(tokens["refresh_token"])
+    if tokens.get("expires_in"):
+        account.token_expiry = utcnow() + timedelta(seconds=int(tokens["expires_in"]) - 60)
+    if email:
+        account.email = email
+    account.status = "CONNECTED"
+
+
+def build_raw_email(sender: str, to: str, subject: str, body: str) -> str:
+    message = (
+        f"From: {sender}\r\n"
+        f"To: {to}\r\n"
+        f"Subject: {subject}\r\n"
+        "MIME-Version: 1.0\r\n"
+        'Content-Type: text/plain; charset="UTF-8"\r\n\r\n'
+        f"{body}"
+    )
+    return base64.urlsafe_b64encode(message.encode()).decode()

@@ -1,205 +1,100 @@
+"""Outbound email (Phase 4).
+
+Provider priority: an org's connected Gmail account, else configured SMTP, else
+a mock provider that records the message so the whole flow works in dev.
+"""
 from __future__ import annotations
 
-import html
-import time
-from typing import Any
+import smtplib
+from email.mime.text import MIMEText
 
-import httpx
+from sqlalchemy.orm import Session
 
-from .config import Settings
-from .crypto import SignedState
-from .errors import AppError
-
-
-class EmailService:
-    def __init__(self, settings: Settings) -> None:
-        self.settings = settings
-        self.unsubscribe_signer = SignedState(settings.oauth_state_secret, max_age_seconds=366 * 24 * 60 * 60)
-
-    def deliver_campaign(
-        self,
-        campaign_id: str,
-        subject: str,
-        body: str,
-        organization_id: str,
-        recipients: list[dict[str, Any]],
-    ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-        if not self.settings.email_configured:
-            return [], []
-
-        sent: list[dict[str, str]] = []
-        failed: list[dict[str, str]] = []
-        for offset in range(0, len(recipients), 100):
-            batch = recipients[offset : offset + 100]
-            payload = [
-                {
-                    "from": self.settings.mail_from,
-                    "to": [recipient["email"]],
-                    "subject": subject,
-                    "html": self._render_body(body, organization_id, recipient),
-                    "headers": {"List-Unsubscribe": f"<{self._unsubscribe_url(organization_id, recipient['email'])}>"},
-                    "tags": [
-                        {"name": "campaign_id", "value": campaign_id},
-                        {"name": "application_id", "value": recipient["applicationId"]},
-                    ],
-                }
-                for recipient in batch
-            ]
-            try:
-                response = self._send_batch(payload, campaign_id, offset // 100)
-                response.raise_for_status()
-                response_data = response.json().get("data", [])
-                for index, recipient in enumerate(batch):
-                    provider_id = response_data[index].get("id", "") if index < len(response_data) else ""
-                    sent.append({"email": recipient["email"], "providerMessageId": provider_id})
-            except (httpx.HTTPError, ValueError) as error:
-                message = _provider_error(error)
-                failed.extend({"email": recipient["email"], "message": message} for recipient in batch)
-        return sent, failed
-
-    def send_welcome_account_email(
-        self,
-        email: str,
-        full_name: str,
-        temporary_password: str,
-        role: str,
-        organization_name: str,
-    ) -> tuple[bool, str]:
-        """Dispatches account confirmation and temporary password to a newly provisioned user."""
-        if not self.settings.email_configured:
-            return False, "Email service is unconfigured on server (missing RESEND_API_KEY or SMTP credentials)."
-
-        display_name = full_name.strip() or email.split("@")[0].title()
-        role_label = role.replace("_", " ").title()
-        subject = f"Your {organization_name} Account Credentials (Temporary Password)"
-        html_content = (
-            f"<div style='font-family: Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 28px; border: 1px solid #e2e8f0; border-radius: 8px;'>"
-            f"<div style='margin-bottom: 20px;'>"
-            f"<strong style='font-size: 20px; color: #0f172a;'>RESUME SCANNER</strong>"
-            f"</div>"
-            f"<p>Hello <strong>{html.escape(display_name)}</strong>,</p>"
-            f"<p>Your account has been created by an administrator on <strong>{html.escape(organization_name)}</strong> with the role of <strong>{html.escape(role_label)}</strong>.</p>"
-            f"<div style='background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 18px; margin: 20px 0;'>"
-            f"<div style='margin-bottom: 8px;'><strong>Portal URL:</strong> <a href='{html.escape(self.settings.app_origin)}'>{html.escape(self.settings.app_origin)}</a></div>"
-            f"<div style='margin-bottom: 8px;'><strong>Login Email:</strong> {html.escape(email)}</div>"
-            f"<div><strong>Temporary Password:</strong> <code style='background: #e2e8f0; padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 15px; letter-spacing: 1px;'>{html.escape(temporary_password)}</code></div>"
-            f"</div>"
-            f"<div style='background: #eff6ff; border-left: 4px solid #2563eb; padding: 12px 14px; margin-bottom: 20px; font-size: 13px; color: #1e40af; border-radius: 4px;'>"
-            f"<strong>Security Requirement:</strong> Because this is a temporary password, you will be required to create your own secure, permanent password immediately upon your first login."
-            f"</div>"
-            f"<p style='font-size: 13px; color: #64748b;'>If you have questions, please reach out directly to your organization administrator.</p>"
-            f"<hr style='border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;' />"
-            f"<p style='font-size: 11px; color: #94a3b8;'>© 2026 Resume Scanner. Automated Account Security.</p>"
-            f"</div>"
-        )
-
-        # 1. Try SMTP if configured
-        if self.settings.smtp_configured:
-            try:
-                import smtplib
-                from email.mime.multipart import MIMEMultipart
-                from email.mime.text import MIMEText
-
-                sender = self.settings.smtp_from or self.settings.smtp_user or self.settings.mail_from
-                msg = MIMEMultipart("alternative")
-                msg["Subject"] = subject
-                msg["From"] = sender
-                msg["To"] = email
-                msg.attach(MIMEText(html_content, "html"))
-
-                port = self.settings.smtp_port or 587
-                if port == 465:
-                    with smtplib.SMTP_SSL(self.settings.smtp_host, port, timeout=12) as server:
-                        if self.settings.smtp_user and self.settings.smtp_password:
-                            server.login(self.settings.smtp_user, self.settings.smtp_password)
-                        server.sendmail(sender, [email], msg.as_string())
-                else:
-                    with smtplib.SMTP(self.settings.smtp_host, port, timeout=12) as server:
-                        server.starttls()
-                        if self.settings.smtp_user and self.settings.smtp_password:
-                            server.login(self.settings.smtp_user, self.settings.smtp_password)
-                        server.sendmail(sender, [email], msg.as_string())
-                return True, "Email sent successfully via SMTP."
-            except Exception as exc:
-                if not (self.settings.resend_api_key and self.settings.mail_from):
-                    return False, f"SMTP delivery failed: {exc}"
-
-        # 2. Try Resend if configured
-        if self.settings.resend_api_key and self.settings.mail_from:
-            try:
-                response = httpx.post(
-                    "https://api.resend.com/emails",
-                    headers={
-                        "Authorization": f"Bearer {self.settings.resend_api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "from": self.settings.mail_from,
-                        "to": [email],
-                        "subject": subject,
-                        "html": html_content,
-                    },
-                    timeout=15,
-                )
-                response.raise_for_status()
-                return True, "Email sent successfully via Resend."
-            except Exception as exc:
-                return False, f"Resend API delivery failed: {exc}"
-
-        return False, "No active email provider available."
-
-    def _send_batch(self, payload: list[dict[str, Any]], campaign_id: str, batch_number: int) -> httpx.Response:
-        response: httpx.Response | None = None
-        for attempt in range(3):
-            response = httpx.post(
-                "https://api.resend.com/emails/batch",
-                headers={
-                    "Authorization": f"Bearer {self.settings.resend_api_key}",
-                    "Content-Type": "application/json",
-                    "Idempotency-Key": f"campaign-{campaign_id}-batch-{batch_number}",
-                },
-                json=payload,
-                timeout=30,
-            )
-            if response.status_code != 429:
-                return response
-            retry_after = min(float(response.headers.get("retry-after", "1")), 5)
-            time.sleep(retry_after * (attempt + 1))
-        assert response is not None
-        return response
-
-    def verify_unsubscribe(self, token: str) -> tuple[str, str]:
-        payload = self.unsubscribe_signer.verify(token)
-        organization_id = str(payload.get("organizationId", ""))
-        email = str(payload.get("email", ""))
-        if not organization_id or not email:
-            raise AppError("Invalid unsubscribe link.", 400, "invalid_unsubscribe")
-        return organization_id, email
-
-    def _unsubscribe_url(self, organization_id: str, email: str) -> str:
-        token = self.unsubscribe_signer.create({"organizationId": organization_id, "email": email})
-        return f"{self.settings.app_origin}/api/email/unsubscribe?token={token}"
-
-    def _render_body(self, template: str, organization_id: str, recipient: dict[str, Any]) -> str:
-        safe_body = html.escape(template)
-        safe_body = safe_body.replace("{{name}}", html.escape(recipient.get("candidateName") or "there"))
-        safe_body = safe_body.replace("{{email}}", html.escape(recipient["email"]))
-        safe_body = safe_body.replace("\n", "<br>")
-        unsubscribe_url = html.escape(self._unsubscribe_url(organization_id, recipient["email"]), quote=True)
-        return (
-            '<div style="font-family:Arial,sans-serif;line-height:1.6;color:#18212f">'
-            f"{safe_body}"
-            '<p style="margin-top:32px;font-size:12px;color:#667085">'
-            f'<a href="{unsubscribe_url}">Unsubscribe from future opening notifications</a>'
-            "</p></div>"
-        )
+from backend import gmail_service
+from backend.config import SMTP_FROM, SMTP_HOST, SMTP_PASSWORD, SMTP_PORT, SMTP_USE_TLS, SMTP_USER
+from backend.models import EmailAccount, EmailMessage, utcnow
 
 
-def _provider_error(error: Exception) -> str:
-    if isinstance(error, httpx.HTTPStatusError):
-        try:
-            payload = error.response.json()
-            return str(payload.get("message") or payload.get("name") or "Email provider rejected the batch")[:1000]
-        except ValueError:
-            return f"Email provider returned {error.response.status_code}"
-    return "Email provider could not be reached"
+def smtp_configured() -> bool:
+    return bool(SMTP_HOST)
+
+
+def send_email(
+    db: Session,
+    *,
+    org_id: int,
+    to_email: str,
+    subject: str,
+    body: str,
+    candidate_id: int | None = None,
+    template_id: int | None = None,
+    created_by_user_id: int | None = None,
+) -> EmailMessage:
+    message = EmailMessage(
+        organization_id=org_id,
+        candidate_id=candidate_id,
+        template_id=template_id,
+        to_email=to_email,
+        subject=subject,
+        body=body,
+        status="QUEUED",
+        created_by_user_id=created_by_user_id,
+    )
+    db.add(message)
+    db.flush()
+
+    account = (
+        db.query(EmailAccount)
+        .filter(EmailAccount.organization_id == org_id, EmailAccount.status == "CONNECTED")
+        .first()
+    )
+    try:
+        if account and not account.is_demo and gmail_service.oauth_configured():
+            token = gmail_service.ensure_access_token(db, account)
+            if token:
+                raw = gmail_service.build_raw_email(account.email or SMTP_FROM, to_email, subject, body)
+                gmail_service.GmailClient(token).send_raw(raw)
+                message.provider = "GMAIL"
+            else:
+                message.provider = "MOCK"
+        elif smtp_configured():
+            _send_smtp(to_email, subject, body)
+            message.provider = "SMTP"
+        else:
+            message.provider = "MOCK"
+        message.status = "SENT"
+        message.sent_at = utcnow()
+    except Exception as exc:  # noqa: BLE001 - surface provider failure on the record
+        message.status = "FAILED"
+        message.provider = "SMTP" if smtp_configured() else "MOCK"
+        message.error = str(exc)
+    db.flush()
+    return message
+
+
+def _send_smtp(to_email: str, subject: str, body: str) -> None:
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = SMTP_FROM
+    msg["To"] = to_email
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
+        if SMTP_USE_TLS:
+            server.starttls()
+        if SMTP_USER:
+            server.login(SMTP_USER, SMTP_PASSWORD)
+        server.sendmail(SMTP_FROM, [to_email], msg.as_string())
+
+
+def send_system_email(to_email: str, subject: str, body: str) -> str:
+    """Platform/transactional mail (invitations, credentials).
+
+    Not persisted as a tenant EmailMessage so it never pollutes a company
+    outbox. Returns the provider used ("SMTP", "MOCK" or "FAILED").
+    """
+    if not SMTP_HOST:
+        return "MOCK"
+    try:
+        _send_smtp(to_email, subject, body)
+        return "SMTP"
+    except Exception:  # noqa: BLE001 - invitation delivery must not crash provisioning
+        return "FAILED"
