@@ -23,7 +23,6 @@ import { OffersPage } from "./pages/company/OffersPage";
 import { EmailPage } from "./pages/company/EmailPage";
 import { AnalyticsPage } from "./pages/company/AnalyticsPage";
 import { PortalPage } from "./pages/company/PortalPage";
-import { BillingPage } from "./pages/company/BillingPage";
 import { ClientPortalPage } from "./pages/public/ClientPortalPage";
 import { PrivacyPolicyPage } from "./pages/public/PrivacyPolicyPage";
 import { TermsPage } from "./pages/public/TermsPage";
@@ -248,16 +247,6 @@ export function App() {
           <RequireAuth>
             <Layout title="Client Portal">
               <PortalPage />
-            </Layout>
-          </RequireAuth>
-        }
-      />
-      <Route
-        path="/app/billing"
-        element={
-          <RequireAuth>
-            <Layout title="Billing & Usage">
-              <BillingPage />
             </Layout>
           </RequireAuth>
         }
