@@ -128,9 +128,13 @@ def _clean_pg_text(val: str | None) -> str | None:
 
 def looks_like_resume(filename: str, content_type: str | None = None) -> bool:
     lower = (filename or "").lower()
+    if content_type:
+        ctype = content_type.lower()
+        if "pdf" in ctype or "word" in ctype or "officedocument" in ctype:
+            return True
     if lower.endswith((".pdf", ".docx", ".doc", ".txt", ".md", ".rtf", ".odt")):
         return True
-    resume_markers = ("resume", "cv", "curriculum")
+    resume_markers = ("resume", "cv", "curriculum", "biodata", "profile", "candidate", "applicant")
     return any(m in lower for m in resume_markers)
 
 

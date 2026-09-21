@@ -97,9 +97,20 @@ export function EmailPage() {
         const skipped = summary.skipped ?? 0;
         const checked = summary.checked_emails ?? 0;
         const total = summary.total_found ?? checked;
-        setNotice(
-          `Sync complete: ${ingested} resume(s) imported, ${skipped} non-resume attachment(s) skipped. (Checked ${checked} of ${total} matching emails in inbox).`
-        );
+        const cands = (summary.ingested_candidates || []) as string[];
+        const errors = (summary.errors || []) as string[];
+
+        let text = "";
+        if (ingested > 0) {
+          const names = cands.length > 0 ? ` (${cands.join(", ")})` : "";
+          text = `Sync complete: ${ingested} resume(s) imported${names}, ${skipped} non-resume attachment(s) skipped. (Checked ${checked} threads in inbox).`;
+        } else {
+          text = `Sync finished: 0 resumes imported, ${skipped} non-resume attachments skipped. (Checked ${checked} of ${total} threads in inbox).`;
+        }
+        if (errors.length > 0) {
+          text += ` [${errors.length} issue(s): ${errors.slice(0, 3).join("; ")}]`;
+        }
+        setNotice(text);
       }
       await load();
     } catch (e) {

@@ -118,6 +118,37 @@ def ensure_access_token(db, account: EmailAccount) -> str | None:
         return None
 
 
+def _clean_header_value(val: str) -> str:
+    if not val:
+        return ""
+    try:
+        from email.header import decode_header
+        parts = decode_header(val)
+        out = []
+        for text, charset in parts:
+            if isinstance(text, bytes):
+                out.append(text.decode(charset or "utf-8", errors="replace"))
+            else:
+                out.append(str(text))
+        return " ".join(out).strip()
+    except Exception:
+        return str(val).strip()
+
+
+def _safe_b64decode(raw: str | bytes | None) -> bytes:
+    if not raw:
+        return b""
+    if isinstance(raw, bytes):
+        s = raw.decode("ascii", errors="ignore")
+    else:
+        s = str(raw)
+    s = s.strip().replace("-", "+").replace("_", "/")
+    pad = len(s) % 4
+    if pad:
+        s += "=" * (4 - pad)
+    return base64.b64decode(s)
+
+
 class GmailClient:
     def __init__(self, access_token: str):
         self.headers = {"Authorization": f"Bearer {access_token}"}
@@ -130,16 +161,23 @@ class GmailClient:
     def profile(self) -> dict:
         return self._get("/profile")
 
-    def list_messages(self, query: str = GMAIL_QUERY, max_results: int = 25) -> list[str]:
+    def list_messages(self, query: str = GMAIL_QUERY, max_results: int = 50) -> list[dict]:
         data = self._get("/messages", {"q": query, "maxResults": max_results})
-        return [m["id"] for m in data.get("messages", [])]
+        return data.get("messages", [])
 
     def get_message(self, message_id: str) -> dict:
         return self._get(f"/messages/{message_id}", {"format": "full"})
 
+    def list_threads(self, query: str = GMAIL_QUERY, max_results: int = 50) -> list[str]:
+        data = self._get("/threads", {"q": query, "maxResults": max_results})
+        return [t["id"] for t in data.get("threads", [])]
+
+    def get_thread(self, thread_id: str) -> dict:
+        return self._get(f"/threads/{thread_id}", {"format": "full"})
+
     def get_attachment(self, message_id: str, attachment_id: str) -> bytes:
         data = self._get(f"/messages/{message_id}/attachments/{attachment_id}")
-        return base64.urlsafe_b64decode(data["data"].encode())
+        return _safe_b64decode(data.get("data", ""))
 
     def send_raw(self, raw: str) -> dict:
         r = httpx.post(
@@ -153,40 +191,48 @@ class GmailClient:
 
 
 def _walk_attachments(payload: dict):
-    """Yield (filename, attachment_id, inline_data) for every attachment in a message."""
+    """Yield (filename, attachment_id, inline_data, mime_type) for every attachment in a message."""
     stack = [payload]
     while stack:
         part = stack.pop()
         children = part.get("parts")
         if children:
             stack.extend(children)
-        filename = part.get("filename")
+        filename = _clean_header_value(part.get("filename", "") or "")
         if not filename:
             for h in part.get("headers", []) or []:
                 hname = h.get("name", "").lower()
                 if hname in ("content-disposition", "content-type"):
                     m = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';\r\n]+)', h.get("value", ""), re.IGNORECASE)
                     if m:
-                        filename = m.group(1).strip()
+                        filename = _clean_header_value(m.group(1).strip())
                         break
         mime_type = (part.get("mimeType") or "").lower()
+
+        # Skip plain message body parts
+        if not filename and mime_type in ("text/plain", "text/html", "multipart/alternative", "multipart/mixed", "multipart/related"):
+            continue
+
         if not filename:
-            if mime_type == "application/pdf":
+            if "pdf" in mime_type:
                 filename = "resume.pdf"
-            elif "wordprocessingml" in mime_type or mime_type == "application/msword":
+            elif "word" in mime_type or "officedocument" in mime_type:
                 filename = "resume.docx"
 
         body = part.get("body", {}) or {}
         attachment_id = body.get("attachmentId")
         inline_data = body.get("data")
+        if not filename and attachment_id:
+            filename = "attachment.pdf"
+
         if filename and (attachment_id or inline_data):
-            yield filename, attachment_id, inline_data
+            yield filename, attachment_id, inline_data, mime_type
 
 
 def _decoded_header(message: dict, name: str) -> str:
     for header in message.get("payload", {}).get("headers", []) or []:
         if header.get("name", "").lower() == name.lower():
-            return header.get("value", "")
+            return _clean_header_value(header.get("value", ""))
     return ""
 
 
@@ -256,7 +302,7 @@ def _sync_demo(db, org: Organization, account: EmailAccount, *, actor_email: str
 
 
 def _sync_gmail(
-    db, org: Organization, account: EmailAccount, *, actor_email: str, max_messages: int = 50, full_scan: bool = False
+    db, org: Organization, account: EmailAccount, *, actor_email: str, max_messages: int = 100, full_scan: bool = False
 ) -> dict:
     token = ensure_access_token(db, account)
     if not token:
@@ -267,6 +313,8 @@ def _sync_gmail(
     client = GmailClient(token)
     processed = set() if full_scan else set((account.last_sync_summary or {}).get("processed", []))
     ingested, skipped, newly = 0, 0, []
+    ingested_candidates = []
+    errors = []
 
     try:
         # Search strategy:
@@ -274,63 +322,102 @@ def _sync_gmail(
         resume_query = (
             "has:attachment (resume OR cv OR curriculum OR candidate OR applicant OR application OR profile OR biodata OR job OR hire OR developer OR engineer)"
         )
-        tier1 = client.list_messages(query=resume_query, max_results=max_messages)
+        tier1_threads = client.list_threads(query=resume_query, max_results=max_messages)
+        tier1_msgs = client.list_messages(query=resume_query, max_results=max_messages)
 
         # Tier 2: Any email with attachment in Gmail
         general_query = "has:attachment"
-        tier2 = client.list_messages(query=general_query, max_results=max_messages)
+        tier2_threads = client.list_threads(query=general_query, max_results=max_messages)
+        tier2_msgs = client.list_messages(query=general_query, max_results=max_messages)
 
-        seen_ids = set()
-        messages = []
-        for mid in tier1 + tier2:
-            if mid not in seen_ids:
-                seen_ids.add(mid)
-                messages.append(mid)
+        seen_threads = set()
+        thread_ids = []
+        for tid in tier1_threads + tier2_threads:
+            if tid and tid not in seen_threads:
+                seen_threads.add(tid)
+                thread_ids.append(tid)
+
+        for m in tier1_msgs + tier2_msgs:
+            tid = m.get("threadId")
+            if tid and tid not in seen_threads:
+                seen_threads.add(tid)
+                thread_ids.append(tid)
 
         checked_count = 0
-        for message_id in messages:
-            if message_id in processed:
+        for thread_id in thread_ids:
+            if thread_id in processed:
                 continue
             checked_count += 1
-            message = client.get_message(message_id)
 
-            sender_header = _decoded_header(message, "From")
-            sender_name, sender_email = parseaddr(sender_header)
-            sender_name = sender_name.strip() if sender_name else None
-            sender_email = sender_email.strip().lower() if sender_email else None
+            try:
+                thread = client.get_thread(thread_id)
+            except Exception as thr_err:
+                print(f"Error fetching thread {thread_id}: {thr_err}")
+                continue
 
-            candidate_overrides = {}
-            if sender_name:
-                candidate_overrides["name"] = sender_name
-            if sender_email:
-                candidate_overrides["email"] = sender_email
+            messages = thread.get("messages", [])
+            thread_had_ingestion = False
 
-            message_had_ingestion = False
-            for filename, attachment_id, inline_data in _walk_attachments(message.get("payload", {})):
-                if not looks_like_resume(filename) or is_probably_bad_attachment(filename):
-                    skipped += 1
-                    continue
-                try:
-                    with db.begin_nested():
-                        if inline_data:
-                            data = base64.urlsafe_b64decode(inline_data.encode())
-                        elif attachment_id:
-                            data = client.get_attachment(message_id, attachment_id)
-                        else:
-                            continue
-                        ingest_resume(
-                            db, org=org, filename=filename, data=data,
-                            source=SourceKind.GMAIL, actor_email=actor_email,
-                            overrides=candidate_overrides,
-                        )
-                    ingested += 1
-                    message_had_ingestion = True
-                except Exception as att_err:
-                    print(f"Skipping attachment {filename}: {att_err}")
-                    skipped += 1
+            for message in messages:
+                msg_id = message.get("id")
+                sender_header = _decoded_header(message, "From")
+                sender_name, sender_email = parseaddr(sender_header)
+                sender_name = sender_name.strip() if sender_name else None
+                sender_email = sender_email.strip().lower() if sender_email else None
 
-            if message_had_ingestion:
-                newly.append(message_id)
+                # Don't attribute candidate data to the recruiter's own email in reply threads
+                is_mailbox_owner = bool(sender_email and account.email and sender_email == account.email.lower())
+
+                candidate_overrides = {}
+                if not is_mailbox_owner:
+                    if sender_name:
+                        candidate_overrides["name"] = sender_name
+                    if sender_email:
+                        candidate_overrides["email"] = sender_email
+
+                for filename, attachment_id, inline_data, mime_type in _walk_attachments(message.get("payload", {})):
+                    lower_fn = (filename or "").lower()
+                    # Skip common image formats unless named with resume keywords
+                    if lower_fn.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp")) and not any(k in lower_fn for k in ("resume", "cv", "profile", "biodata")):
+                        skipped += 1
+                        continue
+
+                    if not looks_like_resume(filename, mime_type) or is_probably_bad_attachment(filename):
+                        skipped += 1
+                        continue
+
+                    try:
+                        with db.begin_nested():
+                            if inline_data:
+                                data = _safe_b64decode(inline_data)
+                            elif attachment_id:
+                                data = client.get_attachment(msg_id, attachment_id)
+                            else:
+                                continue
+
+                            if not data or len(data) < 30:
+                                skipped += 1
+                                continue
+
+                            res = ingest_resume(
+                                db, org=org, filename=filename, data=data,
+                                source=SourceKind.GMAIL, actor_email=actor_email,
+                                overrides=candidate_overrides,
+                            )
+                        ingested += 1
+                        thread_had_ingestion = True
+                        cand = res.get("candidate")
+                        cname = getattr(cand, "name", None) or sender_name or filename
+                        if cname and cname not in ingested_candidates:
+                            ingested_candidates.append(cname)
+                    except Exception as att_err:
+                        err_str = str(att_err)
+                        print(f"Skipping attachment {filename} in thread {thread_id}: {err_str}")
+                        errors.append(f"{filename}: {err_str}")
+                        skipped += 1
+
+            if thread_had_ingestion:
+                newly.append(thread_id)
 
         try:
             profile = client.profile()
@@ -382,7 +469,9 @@ def _sync_gmail(
         "ingested": ingested,
         "skipped": skipped,
         "checked_emails": checked_count,
-        "total_found": len(messages),
+        "total_found": len(thread_ids),
+        "ingested_candidates": ingested_candidates,
+        "errors": errors[:10],
         "last_run": utcnow().isoformat(),
     }
     account.last_sync_at = utcnow()
