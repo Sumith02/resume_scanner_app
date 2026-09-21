@@ -205,13 +205,20 @@ RESUME_SECTION_PATTERNS = [
 ]
 
 
-def is_valid_resume_content(text: str, filename: str) -> tuple[bool, str]:
+def is_valid_resume_content(
+    text: str, filename: str, *, strict: bool = False
+) -> tuple[bool, str]:
     """Inspect text and filename to verify the document is a genuine resume, not an invoice, bill, receipt, or random PDF."""
     if not text or len(text.strip()) < 20:
         return False, "Document text is empty or unreadable"
 
     lower = text.lower()
     lower_fn = (filename or "").lower()
+
+    if strict:
+        valid, reason = _validate_mailbox_resume(text)
+        if not valid:
+            return valid, reason
 
     # 1. Immediate rejection: check for explicit invoice / bill / statement patterns
     for pat in INVOICE_BILL_PATTERNS:
@@ -263,6 +270,46 @@ def is_valid_resume_content(text: str, filename: str) -> tuple[bool, str]:
         return True, "Technical skills and candidate contact details found"
 
     return False, "Document lacks resume structure or professional skills"
+
+
+def _validate_mailbox_resume(text: str) -> tuple[bool, str]:
+    """Require a personal career document, independent of filename or email subject.
+
+    Count distinct section families at line boundaries, not repeated keywords in
+    prose. This keeps a cover letter mentioning skills/experience from qualifying.
+    No technical skill vocabulary is required, so nontechnical CVs qualify too.
+    """
+    lower = text.lower()
+    non_resume_patterns = (
+        r"\bdear\s+(?:hiring\s+manager|recruiter|sir|madam|recruitment\s+team)\b",
+        r"\bi\s+am\s+writing\s+to\s+(?:apply|express)\b",
+        r"\bplease\s+find\s+(?:my\s+)?(?:attached|enclosed)\s+(?:resume|cv)\b",
+        r"(?m)^\s*(?:cover(?:ing)?\s+letter|job\s+description|offer\s+letter|"
+        r"appointment\s+letter|experience\s+letter|relieving\s+letter|"
+        r"academic\s+transcript|statement\s+of\s+purpose)\b",
+        r"\b(?:we\s+are\s+(?:looking\s+for|hiring)|the\s+ideal\s+candidate|"
+        r"required\s+qualifications|key\s+responsibilities|this\s+certifies\s+that)\b",
+    )
+    if any(re.search(pattern, lower) for pattern in non_resume_patterns):
+        return False, "Document is a supporting letter, job description, or certificate"
+
+    families = (
+        r"(?:(?:work|professional|relevant)\s+experience|experience|employment(?:\s+history)?|internships?)",
+        r"(?:education(?:al\s+(?:background|qualifications?))?|academic\s+(?:background|history|qualifications?|details))",
+        r"(?:(?:(?:technical|key|professional|core)\s+)?skills|core\s+competencies)",
+        r"(?:(?:(?:personal|academic|selected|key)\s+)?projects)",
+        r"(?:(?:professional|career|personal)\s+(?:summary|profile)|summary|career\s+objective|objective|about\s+me)",
+    )
+    sections = sum(
+        bool(re.search(rf"(?m)^\s*(?:[•#*\-]\s*)?{family}\s*(?::|[|]|$)", lower))
+        for family in families
+    )
+    contact = bool(extract_email(text) or extract_phone(text) or re.search(
+        r"\b(?:linkedin\.com/in/|github\.com/|behance\.net/)", lower
+    ))
+    if sections < 2 or not contact:
+        return False, "Attachment lacks distinct resume sections and personal contact details"
+    return True, "Personal resume structure found"
 
 
 def _decode_text(data: bytes) -> str:

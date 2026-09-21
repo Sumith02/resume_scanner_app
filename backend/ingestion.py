@@ -44,7 +44,7 @@ def ingest_resume(
     """
     overrides = overrides or {}
     text = extract_resume_text(filename, data)
-    valid, reason = is_valid_resume_content(text, filename)
+    valid, reason = is_valid_resume_content(text, filename, strict=source == SourceKind.GMAIL)
     if not valid:
         raise ValueError(f"Skipped non-resume document '{filename}': {reason}")
 

@@ -150,7 +150,7 @@ def test_gmail_sync_requires_plan_and_ingests_demo(client, master):
     inbox = Path(DEMO_INBOX_DIR)
     inbox.mkdir(parents=True, exist_ok=True)
     (inbox / "gmail_resume_pdf.pdf").write_bytes(
-        b"Priya Gmail\npriya@gmail.com\nPython Django AWS 8 years experience"
+        b"Priya Gmail\npriya@gmail.com\nSkills: Python Django AWS\nExperience: 8 years"
     )
     (inbox / "company_logo.png").write_bytes(b"not a resume")
 
@@ -382,4 +382,3 @@ def test_resume_validation_filters_invoices_and_bills():
     )
     is_valid, reason = is_valid_resume_content(resume_text, "sumith k s (1).pdf")
     assert is_valid
-
