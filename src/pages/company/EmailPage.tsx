@@ -83,19 +83,23 @@ export function EmailPage() {
     }
   }
 
-  async function sync() {
+  async function sync(fullScan = false) {
     setSyncBusy(true);
     setError(null);
     setNotice(null);
     try {
-      const res = await api.gmailSync();
+      const res = await api.gmailSync({ full_scan: fullScan });
       const summary = (res.summary || {}) as Record<string, any>;
       if (summary.error) {
         setError(`Sync issue: ${summary.error}`);
       } else {
         const ingested = summary.ingested ?? 0;
         const skipped = summary.skipped ?? 0;
-        setNotice(`Sync complete: ${ingested} resume(s) ingested, ${skipped} non-resume attachment(s) skipped.`);
+        const checked = summary.checked_emails ?? 0;
+        const total = summary.total_found ?? checked;
+        setNotice(
+          `Sync complete: ${ingested} resume(s) imported, ${skipped} non-resume attachment(s) skipped. (Checked ${checked} of ${total} matching emails in inbox).`
+        );
       }
       await load();
     } catch (e) {
@@ -232,12 +236,22 @@ export function EmailPage() {
                 {gmail.account.last_sync_summary &&
                   ` · ${JSON.stringify(gmail.account.last_sync_summary)}`}
               </div>
-              <button className="btn primary" disabled={syncBusy} onClick={sync}>
-                <RefreshCw size={15} /> {syncBusy ? "Syncing…" : "Sync now"}
-              </button>
-              <button className="btn ghost" onClick={disconnect}>
-                Disconnect
-              </button>
+              <div className="flex" style={{ gap: 8, alignItems: "center" }}>
+                <button className="btn primary" disabled={syncBusy} onClick={() => sync(false)}>
+                  <RefreshCw size={15} /> {syncBusy ? "Syncing…" : "Sync now"}
+                </button>
+                <button
+                  className="btn secondary"
+                  disabled={syncBusy}
+                  onClick={() => sync(true)}
+                  title="Force a deep scan of all emails with attachments in your inbox, re-checking any previously skipped emails"
+                >
+                  <RefreshCw size={15} /> Deep Scan (All)
+                </button>
+                <button className="btn ghost" onClick={disconnect}>
+                  Disconnect
+                </button>
+              </div>
             </>
           ) : (
             <>

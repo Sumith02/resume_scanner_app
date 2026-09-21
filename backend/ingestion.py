@@ -6,6 +6,8 @@ quota metering happen in exactly one place.
 """
 from __future__ import annotations
 
+import re
+
 from sqlalchemy.orm import Session
 
 from backend.config import UPLOAD_DIR
@@ -133,14 +135,42 @@ def looks_like_resume(filename: str, content_type: str | None = None) -> bool:
 
 
 def is_probably_bad_attachment(filename: str) -> bool:
-    """Filter out certificates, cover letters, signatures, statements and images."""
-    lower = (filename or "").lower()
-    bad = (
-        "certificate", "cover", "signature", "sign", "logo", "image",
-        "screenshot", "invoice", "receipt", "offer letter",
-        "statement", "downloadstatement", "bank", "payslip", "salary",
-        "tax", "report", "bill", "pass", "form", "w2", "1099", "challan",
-        "ticket", "boarding", "itinerary", "booking", "policy", "insurance",
-        "aadhaar", "pan card", "passport", "license", "licence",
+    """Filter out certificates, cover letters, statements, invoices, and IDs without false-positives."""
+    lower = (filename or "").lower().strip()
+
+    # Explicit resume indicators take precedence
+    has_resume_indicator = any(m in lower for m in ("resume", "cv", "curriculum", "biodata"))
+
+    # Distinct substrings that are always non-resumes
+    distinct_bad = (
+        "cover_letter", "cover-letter", "coverletter", "covering_letter", "coveringletter",
+        "certificate", "certification",
+        "salary_slip", "salaryslip", "payslip", "pay_slip",
+        "downloadstatement", "statement",
+        "invoice", "receipt", "challan",
+        "offer_letter", "offerletter", "appointment_letter", "relieving_letter",
+        "boarding_pass", "boardingpass", "e-ticket", "eticket", "itinerary",
+        "pan_card", "pancard", "aadhaar", "passport",
+        "screenshot", "signature",
     )
-    return any(b in lower for b in bad)
+
+    # Tokenized word matching (avoids matching 'form' in 'platform', 'sign' in 'designer')
+    tokens = set(re.findall(r"[a-z0-9]+", lower))
+    bad_tokens = {
+        "statement", "downloadstatement", "invoice", "receipt", "bill", "bills",
+        "payslip", "payslips", "salary", "challan", "ticket", "tickets",
+        "itinerary", "booking", "policy", "insurance", "bank",
+        "aadhaar", "passport", "license", "licence", "certificate", "certificates",
+        "screenshot", "signature", "w2", "1099",
+    }
+
+    if has_resume_indicator:
+        return any(t in tokens for t in ("cover", "coverletter", "certificate", "certification", "screenshot", "signature"))
+
+    if any(b in lower for b in distinct_bad):
+        return True
+
+    if any(t in tokens for t in bad_tokens):
+        return True
+
+    return False

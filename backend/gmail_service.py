@@ -151,7 +151,7 @@ class GmailClient:
 
 
 def _walk_attachments(payload: dict):
-    """Yield (filename, attachment_id) for every attachment in a message."""
+    """Yield (filename, attachment_id, inline_data) for every attachment in a message."""
     stack = [payload]
     while stack:
         part = stack.pop()
@@ -160,8 +160,10 @@ def _walk_attachments(payload: dict):
             stack.extend(children)
         filename = part.get("filename")
         body = part.get("body", {}) or {}
-        if filename and body.get("attachmentId"):
-            yield filename, body["attachmentId"]
+        attachment_id = body.get("attachmentId")
+        inline_data = body.get("data")
+        if filename and (attachment_id or inline_data):
+            yield filename, attachment_id, inline_data
 
 
 def _decoded_header(message: dict, name: str) -> str:
@@ -181,11 +183,12 @@ def sync_account(
     account: EmailAccount,
     *,
     actor_email: str = "gmail-sync",
-    max_messages: int = 25,
+    max_messages: int = 50,
+    full_scan: bool = False,
 ) -> dict:
     if account.is_demo or not oauth_configured():
-        return _sync_demo(db, org, account, actor_email=actor_email)
-    return _sync_gmail(db, org, account, actor_email=actor_email, max_messages=max_messages)
+        return _sync_demo(db, org, account, actor_email=actor_email, full_scan=full_scan)
+    return _sync_gmail(db, org, account, actor_email=actor_email, max_messages=max_messages, full_scan=full_scan)
 
 
 def _mark_processed(account: EmailAccount, keys: list[str], summary: dict) -> None:
@@ -195,9 +198,9 @@ def _mark_processed(account: EmailAccount, keys: list[str], summary: dict) -> No
     account.last_sync_summary = {**summary, "processed": merged}
 
 
-def _sync_demo(db, org: Organization, account: EmailAccount, *, actor_email: str) -> dict:
+def _sync_demo(db, org: Organization, account: EmailAccount, *, actor_email: str, full_scan: bool = False) -> dict:
     inbox = Path(DEMO_INBOX_DIR)
-    processed = set((account.last_sync_summary or {}).get("processed", []))
+    processed = set() if full_scan else set((account.last_sync_summary or {}).get("processed", []))
     ingested, skipped, newly = 0, 0, []
 
     if inbox.exists():
@@ -236,7 +239,7 @@ def _sync_demo(db, org: Organization, account: EmailAccount, *, actor_email: str
 
 
 def _sync_gmail(
-    db, org: Organization, account: EmailAccount, *, actor_email: str, max_messages: int
+    db, org: Organization, account: EmailAccount, *, actor_email: str, max_messages: int = 50, full_scan: bool = False
 ) -> dict:
     token = ensure_access_token(db, account)
     if not token:
@@ -245,29 +248,47 @@ def _sync_gmail(
         return {"provider": "gmail", "error": "No valid access token. Please reconnect Gmail.", "ingested": 0}
 
     client = GmailClient(token)
-    processed = set((account.last_sync_summary or {}).get("processed", []))
+    processed = set() if full_scan else set((account.last_sync_summary or {}).get("processed", []))
     ingested, skipped, newly = 0, 0, []
 
     try:
-        messages = client.list_messages(max_results=max_messages)
-        # If no messages found with 45d filter, try broader search
-        if not messages:
-            messages = client.list_messages(
-                query="has:attachment (filename:pdf OR filename:docx OR filename:doc OR filename:txt)",
-                max_results=max_messages,
-            )
+        # Multi-tier search:
+        # 1. Emails with explicit resume / candidate / CV keywords
+        resume_query = (
+            "has:attachment (filename:pdf OR filename:docx OR filename:doc) "
+            "(resume OR cv OR curriculum OR candidate OR applicant OR application OR profile OR biodata OR job OR hire)"
+        )
+        tier1 = client.list_messages(query=resume_query, max_results=max_messages)
 
+        # 2. Broader search for any PDF / DOCX attachments
+        general_query = "has:attachment (filename:pdf OR filename:docx OR filename:doc)"
+        tier2 = client.list_messages(query=general_query, max_results=max_messages)
+
+        seen_ids = set()
+        messages = []
+        for mid in tier1 + tier2:
+            if mid not in seen_ids:
+                seen_ids.add(mid)
+                messages.append(mid)
+
+        checked_count = 0
         for message_id in messages:
             if message_id in processed:
                 continue
+            checked_count += 1
             message = client.get_message(message_id)
-            for filename, attachment_id in _walk_attachments(message.get("payload", {})):
+            for filename, attachment_id, inline_data in _walk_attachments(message.get("payload", {})):
                 if not looks_like_resume(filename) or is_probably_bad_attachment(filename):
                     skipped += 1
                     continue
                 try:
                     with db.begin_nested():
-                        data = client.get_attachment(message_id, attachment_id)
+                        if inline_data:
+                            data = base64.urlsafe_b64decode(inline_data.encode())
+                        elif attachment_id:
+                            data = client.get_attachment(message_id, attachment_id)
+                        else:
+                            continue
                         ingest_resume(
                             db, org=org, filename=filename, data=data,
                             source=SourceKind.GMAIL, actor_email=actor_email,
@@ -327,6 +348,8 @@ def _sync_gmail(
         "provider": "gmail",
         "ingested": ingested,
         "skipped": skipped,
+        "checked_emails": checked_count,
+        "total_found": len(messages),
         "last_run": utcnow().isoformat(),
     }
     account.last_sync_at = utcnow()

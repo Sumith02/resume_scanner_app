@@ -365,6 +365,7 @@ def gmail_connect_demo(
 
 @router.post("/gmail/sync")
 def gmail_sync(
+    full_scan: bool = Query(False),
     db: Session = Depends(get_db),
     user: User = Depends(require_permission(GMAIL_CONNECT)),
 ):
@@ -387,7 +388,7 @@ def gmail_sync(
                 "The connected mailbox is not a registered user email for this company.",
             )
 
-    summary = gmail_service.sync_account(db, org, account, actor_email=user.email)
+    summary = gmail_service.sync_account(db, org, account, actor_email=user.email, full_scan=full_scan)
     log_audit(db, org_id=org_id, actor_user_id=user.id, actor_email=user.email,
               action="gmail.synced", resource_type="email_account", resource_id=account.id,
               details=summary)

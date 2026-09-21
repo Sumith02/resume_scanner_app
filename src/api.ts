@@ -345,9 +345,9 @@ export const api = {
       "/api/email/gmail/connect-demo",
       { method: "POST" },
     ),
-  gmailSync: () =>
+  gmailSync: (opts?: { full_scan?: boolean }) =>
     request<{ summary: Record<string, unknown>; account: EmailAccount }>(
-      "/api/email/gmail/sync",
+      opts?.full_scan ? "/api/email/gmail/sync?full_scan=true" : "/api/email/gmail/sync",
       { method: "POST" },
     ),
   gmailDisconnect: () => request<null>("/api/email/gmail", { method: "DELETE" }),
