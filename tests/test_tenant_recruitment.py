@@ -151,8 +151,8 @@ def test_permission_based_rbac(client, master):
     assert cand.status_code == 200
     cand_id = cand.json()["id"]
 
-    # Recruiter cannot delete a candidate (no CANDIDATE_DELETE).
-    assert client.delete(f"/api/org/candidates/{cand_id}", headers=auth_headers(rec_tok)).status_code == 403
+    # Recruiter can delete a candidate (CANDIDATE_DELETE).
+    assert client.delete(f"/api/org/candidates/{cand_id}", headers=auth_headers(rec_tok)).status_code == 200
 
     # Recruiter is not a user manager.
     assert client.get("/api/org/users", headers=auth_headers(rec_tok)).status_code == 403
@@ -162,10 +162,11 @@ def test_permission_based_rbac(client, master):
         headers=auth_headers(rec_tok),
     ).status_code in (403,)
 
-    # Read-only can read but not create.
+    # Read-only can read but not create or delete.
     assert client.get("/api/org/candidates", headers=auth_headers(ro_tok)).status_code == 200
     assert client.post("/api/org/jobs", json={"title": "X"}, headers=auth_headers(ro_tok)).status_code == 403
     assert upload_candidate(client, ro_tok, name="No").status_code == 403
+    assert client.delete(f"/api/org/candidates/9999", headers=auth_headers(ro_tok)).status_code == 403
 
 
 def test_pipeline_stage_and_search(client, master):
@@ -302,3 +303,104 @@ def test_candidate_single_and_bulk_delete(client, master):
     # Confirm all deleted
     remaining = client.get("/api/org/candidates", headers=auth_headers(tok)).json()
     assert len(remaining) == 0
+
+
+def test_resume_content_validation_strictly_rejects_invoices_and_accepts_resumes():
+    from backend.resume_service import is_valid_resume_content
+
+    # 1. Genuine resumes must pass
+    sumith_resume = """
+    Sumith K S
+    sumith@gmail.com | +91 9876543210
+    Bengaluru, India | https://github.com/sumith
+
+    Professional Summary:
+    Passionate Frontend Developer with 3+ years experience building responsive web apps with React and JavaScript.
+
+    Technical Skills:
+    React, JavaScript, TypeScript, HTML5, CSS3, Tailwind CSS, Redux, Git
+
+    Work Experience:
+    Frontend Developer at Tech Corp (2022 - Present)
+    - Developed customer facing web applications.
+    - Improved page load speed and accessibility.
+
+    Education:
+    Bachelor of Engineering in Computer Science (2018 - 2022)
+    """
+    valid, reason = is_valid_resume_content(sumith_resume, "sumith k s (1).pdf")
+    assert valid is True, f"Sumith's resume should be valid: {reason}"
+
+    karthik_resume = """
+    Karthik S Kashyap
+    karthik@example.com
+    Skills: Python, Django, FastAPI, Docker, PostgreSQL
+    Experience: 4 years as Backend Engineer
+    Projects: Microservices architecture for fintech
+    Education: B.Tech in Information Science
+    """
+    valid, reason = is_valid_resume_content(karthik_resume, "KARTHIK_S_KASHYAP.pdf")
+    assert valid is True, f"Karthik's resume should be valid: {reason}"
+
+    # 2. Invoices, bills, receipts, bank statements must be strictly rejected
+    invoice_doc = """
+    TAX INVOICE
+    Invoice No: INV-2024-0988
+    Date: 12-Sep-2024
+    Bill To: ABC Technologies Pvt Ltd
+    GSTIN: 29AABCU9603R1ZM
+    Description: Software development & design services
+    Qty: 1 | Unit Price: 45000.00
+    Sub Total: 45000.00
+    CGST 9%: 4050.00
+    SGST 9%: 4050.00
+    Grand Total: 53100.00
+    Mode of Payment: NEFT / Bank Transfer
+    """
+    valid, reason = is_valid_resume_content(invoice_doc, "Invoice_0988.pdf")
+    assert valid is False, "Invoice must be rejected"
+
+    amazon_order = """
+    Order Confirmation - Order # 402-1234567-8901234
+    Sold by: Cloudtail India Pvt Ltd
+    Shipping Address: Sumith, 12th Cross, Bengaluru
+    Items Ordered: Wireless Mouse, USB Cable
+    Total Amount: INR 1,299.00
+    Payment Method: UPI
+    """
+    valid, reason = is_valid_resume_content(amazon_order, "Order_Details.pdf")
+    assert valid is False, "Amazon order must be rejected"
+
+    bank_stmt = """
+    Statement of Account
+    Account Number: 50100234567890
+    Account Summary
+    Opening Balance: INR 54,200.00
+    Total Deposits: INR 85,000.00
+    Total Withdrawals: INR 62,300.00
+    Closing Balance: INR 76,900.00
+    Statement Period: 01-Aug-2024 to 31-Aug-2024
+    """
+    valid, reason = is_valid_resume_content(bank_stmt, "statement_aug.pdf")
+    assert valid is False, "Bank statement must be rejected"
+
+    ticket_doc = """
+    Electronic Reservation Slip (e-Ticket)
+    PNR: 4251678901
+    Train No & Name: 12628 / Karnataka Express
+    Passenger Name: John Doe | Seat Number: B2 34
+    Total Fare: Rs. 1450.00
+    """
+    valid, reason = is_valid_resume_content(ticket_doc, "Ticket.pdf")
+    assert valid is False, "Train ticket must be rejected"
+
+    elec_bill = """
+    BESCOM Electricity Bill
+    Consumer Number: 0987654321
+    Meter Number: MTR9988
+    Units Consumed: 245 kWh
+    Total Amount Due: Rs. 2,150.00
+    Due Date: 25-Sep-2024
+    """
+    valid, reason = is_valid_resume_content(elec_bill, "ElectricityBill.pdf")
+    assert valid is False, "Electricity bill must be rejected"

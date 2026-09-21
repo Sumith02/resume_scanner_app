@@ -215,15 +215,15 @@ def _walk_attachments(payload: dict):
 
         if not filename:
             if "pdf" in mime_type:
-                filename = "resume.pdf"
+                filename = "document.pdf"
             elif "word" in mime_type or "officedocument" in mime_type:
-                filename = "resume.docx"
+                filename = "document.docx"
 
         body = part.get("body", {}) or {}
         attachment_id = body.get("attachmentId")
         inline_data = body.get("data")
         if not filename and attachment_id:
-            filename = "attachment.pdf"
+            filename = "document.pdf"
 
         if filename and (attachment_id or inline_data):
             yield filename, attachment_id, inline_data, mime_type
@@ -318,20 +318,35 @@ def _sync_gmail(
 
     try:
         # Search strategy:
-        # Tier 1: Target resume and career keywords
+        GMAIL_EXCLUDE_QUERY = (
+            "-subject:bill -subject:bills -subject:invoice -subject:invoices "
+            "-subject:receipt -subject:receipts -subject:statement -subject:statements "
+            "-subject:recharge -subject:ticket -subject:tickets -subject:booking "
+            "-subject:order -subject:orders -subject:delivery -subject:payment "
+            "-subject:transaction -subject:tax -subject:gst -subject:pnr -subject:bank "
+            "-subject:policy -subject:salary -subject:payslip -subject:otp"
+        )
+
+        # Tier 1: Target resume and applicant emails
         resume_query = (
-            "has:attachment (resume OR cv OR curriculum OR candidate OR applicant OR application OR profile OR biodata OR job OR hire OR developer OR engineer OR designer OR manager OR internship OR role OR position)"
+            "has:attachment (resume OR cv OR curriculum OR candidate OR applicant OR application "
+            "OR applying OR apply OR biodata OR job OR hire OR developer OR frontend OR backend "
+            "OR engineer OR designer OR internship OR role OR position) "
+            + GMAIL_EXCLUDE_QUERY
         )
         tier1_threads = client.list_threads(query=resume_query, max_results=max_messages)
         tier1_msgs = client.list_messages(query=resume_query, max_results=max_messages)
 
-        # Tier 2: Broader search for documents excluding obvious billing / statements
-        general_query = (
+        # Tier 2: Targeted career/resume fallback (explicitly excluding all billing/statements)
+        fallback_query = (
             "has:attachment (filename:pdf OR filename:docx OR filename:doc) "
-            "-subject:bill -subject:invoice -subject:receipt -subject:statement -subject:tax -subject:ticket -subject:order -subject:recharge"
+            "(subject:resume OR subject:cv OR subject:application OR subject:applying OR subject:job "
+            "OR subject:developer OR subject:engineer OR subject:candidate OR subject:role "
+            "OR filename:resume OR filename:cv OR filename:curriculum OR filename:biodata) "
+            + GMAIL_EXCLUDE_QUERY
         )
-        tier2_threads = client.list_threads(query=general_query, max_results=max_messages)
-        tier2_msgs = client.list_messages(query=general_query, max_results=max_messages)
+        tier2_threads = client.list_threads(query=fallback_query, max_results=max_messages)
+        tier2_msgs = client.list_messages(query=fallback_query, max_results=max_messages)
 
         seen_threads = set()
         thread_ids = []
@@ -371,8 +386,15 @@ def _sync_gmail(
                 # Don't attribute candidate data to the recruiter's own email in reply threads
                 is_mailbox_owner = bool(sender_email and account.email and sender_email == account.email.lower())
 
+                # Discard automated / service sender names so we don't name candidates after billing/system bots
+                is_automated = False
+                if sender_name:
+                    lower_sn = sender_name.lower()
+                    if any(term in lower_sn for term in ("no-reply", "noreply", "support", "notification", "billing", "invoice", "bank", "service", "team", "amazon", "flipkart", "swiggy", "zomato", "airtel", "jio", "google", "alert", "alert")):
+                        is_automated = True
+
                 candidate_overrides = {}
-                if not is_mailbox_owner:
+                if not is_mailbox_owner and not is_automated:
                     if sender_name:
                         candidate_overrides["name"] = sender_name
                     if sender_email:

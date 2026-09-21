@@ -12,26 +12,32 @@ SKILL_LEXICON = [
     "dynamodb", "oracle", "mssql", "sqlite",
     "react", "redux", "next.js", "nextjs", "vue", "angular", "svelte", "node.js",
     "nodejs", "express", "fastapi", "django", "flask", "spring", "rails",
+    "html", "html5", "css", "css3", "tailwind", "bootstrap", "sass", "scss",
+    "webpack", "vite", "frontend", "backend", "full stack", "web development",
+    "software engineering", "software developer", "frontend developer", "backend developer",
     "docker", "kubernetes", "k8s", "terraform", "ansible", "aws", "gcp",
     "azure", "linux", "git", "ci/cd", "jenkins", "github actions", "graphql",
-    "rest api", "grpc", "websockets", "microservices", "serverless",
+    "rest api", "restful", "grpc", "websockets", "microservices", "serverless",
+    "json", "xml", "nosql", "firebase", "supabase", "prisma",
+    "testing", "jest", "cypress", "selenium", "unit test", "automation", "qa",
     "machine learning", "ml", "deep learning", "nlp", "natural language processing",
     "computer vision", "pandas", "numpy", "tensorflow", "pytorch", "scikit-learn",
     "data science", "data analysis", "etl", "spark", "airflow", "databricks",
     "tableau", "power bi", "looker", "excel",
-    "product management", "product management", "agile", "scrum", "kanban",
+    "product management", "agile", "scrum", "kanban",
     "jira", "confluence", "figma", "sketch", "design", "ui/ux", "ux design",
     "ui design", "prototyping", "user research",
+    "flutter", "dart", "react native", "android", "ios",
     "salesforce", "hubspot", "marketing", "seo", "content marketing",
     "crm", "saas", "fintech", "e-commerce", "ecommerce",
     "leadership", "team leadership", "project management", "stakeholder management",
     "communication", "go-to-market", "gtm", "account management",
     "recruitment", "talent acquisition", "sourcing", "ats", "boolean search",
     "linkedin", "hiring", "staffing", "hr", "human resources", "payroll",
-    "excel", "powerpoint", "word",
     "bash", "shell", "powershell", "api", "oauth", "jwt", "security",
     "cybersecurity", "penetration testing", "soc", "devops", "sre",
-    "networking", "tcp/ip", "hadoop", "kafka", "rabbitmq", "numpy",
+    "networking", "tcp/ip", "hadoop", "kafka", "rabbitmq",
+    "btech", "b.tech", "mca", "bca", "computer science",
 ]
 
 _JOB_TITLE_WEIGHT = 1.0
@@ -60,28 +66,114 @@ def extract_resume_text(filename: str, data: bytes) -> str:
 
 
 INVOICE_BILL_PATTERNS = [
+    # Invoices & Bills
     r"\btax\s+invoice\b",
-    r"\binvoice\s+(?:no|num|number|#)\b",
+    r"\bproforma\s+invoice\b",
+    r"\bcommercial\s+invoice\b",
+    r"\bbill\s+of\s+supply\b",
+    r"\binvoice\s+(?:no|num|number|#|date|id)\b",
+    r"\b(?:total\s+)?invoice\s+amount\b",
     r"\bbill\s+to\b",
     r"\bbilled\s+to\b",
+    r"\bbilling\s+address\b",
     r"\bship\s+to\b",
+    r"\bshipped\s+to\b",
     r"\bshipping\s+address\b",
-    r"\border\s+(?:summary|confirmation|number|#)\b",
-    r"\bpayment\s+(?:receipt|confirmation|summary|advice)\b",
-    r"\btransaction\s+(?:id|number|details)\b",
+    r"\bplace\s+of\s+supply\b",
+    r"\bsub[\s-]?total\b",
+    r"\bgrand\s+total\b",
+    r"\btotal\s+amount\s+(?:due|payable)\b",
+    r"\bamount\s+payable\b",
+    r"\bbalance\s+due\b",
+    r"\bnet\s+payable\b",
+    r"\bround\s+off\b",
+    r"\bunit\s+price\b",
+    r"\brate\s+per\s+unit\b",
+    r"\bitem\s+total\b",
+    r"\bhsn[\s/]*(?:sac|code)?\b",
+    r"\bgst(?:in)?\s*[:\s#]*[0-9a-z]{10,}\b",
+    r"\bcgst\b",
+    r"\bsgst\b",
+    r"\bigst\b",
+    r"\btaxable\s+value\b",
+    r"\bmode\s+of\s+payment\b",
+    r"\bpayment\s+method\b",
+    r"\bauthorized\s+signatory\b",
+
+    # Orders & Receipts
+    r"\border\s+(?:summary|confirmation|number|#|id|placed)\b",
+    r"\bpayment\s+(?:receipt|confirmation|summary|advice|successful)\b",
+    r"\breceipt\s+(?:no|num|number|#|date)\b",
+    r"\btransaction\s+(?:id|number|details|reference|ref)\b",
+    r"\bsold\s+by\b",
+    r"\btracking\s+(?:id|number)\b",
+    r"\bshipment\s+details\b",
+    r"\bdelivery\s+address\b",
+
+    # Banking & Financial Statements
     r"\bstatement\s+of\s+account\b",
     r"\bbank\s+statement\b",
+    r"\baccount\s+statement\b",
     r"\baccount\s+summary\b",
+    r"\bopening\s+balance\b",
+    r"\bclosing\s+balance\b",
+    r"\bcredit\s+limit\b",
+    r"\bavailable\s+limit\b",
+    r"\bminimum\s+(?:amount\s+)?due\b",
+    r"\bcredit\s+card\s+statement\b",
+    r"\bstatement\s+period\b",
+    r"\bpassbook\b",
+    r"\bdemat\s+account\b",
+
+    # Utilities & Recharges
+    r"\belectricity\s+bill\b",
+    r"\butility\s+bill\b",
+    r"\bwater\s+bill\b",
+    r"\bgas\s+bill\b",
+    r"\bconsumer\s+(?:no|number|id)\b",
+    r"\bmeter\s+number\b",
+    r"\bunits\s+consumed\b",
+    r"\bpower\s+distribution\b",
+    r"\brecharge\s+successful\b",
+    r"\bmobile\s+recharge\b",
+
+    # Travel & Tickets
     r"\bflight\s+ticket\b",
     r"\bboarding\s+pass\b",
     r"\be-ticket\b",
-    r"\belectricity\s+bill\b",
-    r"\butility\s+bill\b",
+    r"\bpnr(?:\s+no|\s+number)?\s*[:#\s]*[a-z0-9]{6,}\b",
+    r"\bpassenger\s+(?:name|details)\b",
+    r"\btrain\s+(?:no|number)\b",
+    r"\bberth\s+preference\b",
+    r"\bseat\s+number\b",
+
+    # Payslips
     r"\bsalary\s+slip\b",
-    r"\bpayslip\s+for\b",
-    r"\btotal\s+amount\s+due\b",
-    r"\bamount\s+payable\b",
-    r"\bgst(?:in)?\s*:\s*[0-9a-z]{10,}\b",
+    r"\bpayslip\s+(?:for|of)\b",
+    r"\bpay\s+slip\s+(?:for|of)\b",
+    r"\bbasic\s+pay\b",
+    r"\bdearness\s+allowance\b",
+    r"\bprovident\s+fund\s+deduction\b",
+    r"\bnet\s+salary\b",
+    r"\bgross\s+salary\b",
+
+    # Insurance
+    r"\binsurance\s+policy\b",
+    r"\bpolicy\s+schedule\b",
+    r"\bpremium\s+receipt\b",
+    r"\bsum\s+insured\b",
+
+    # Certificates / Marksheets / IDs (Not resumes!)
+    r"\bcertificate\s+of\s+(?:completion|appreciation|participation|excellence)\b",
+    r"\bthis\s+is\s+to\s+certify\s+that\b",
+    r"\bthis\s+certificate\s+is\s+(?:proudly\s+)?presented\s+to\b",
+    r"\bstatement\s+of\s+marks\b",
+    r"\bhall\s+ticket\b",
+    r"\badmit\s+card\b",
+    r"\baadhaar\s+card\b",
+    r"\belection\s+commission\s+of\s+india\b",
+    r"\bvoter\s+identity\s+card\b",
+    r"\bdriving\s+licen[sc]e\b",
 ]
 
 RESUME_SECTION_PATTERNS = [
@@ -101,9 +193,15 @@ RESUME_SECTION_PATTERNS = [
     r"\bresume\b",
     r"\bbio-?data\b",
     r"\bcareer\s+objective\b",
+    r"\bobjective\b",
     r"\bcertifications?\b",
     r"\binternships?\b",
     r"\bachievements?\b",
+    r"\bprofile\b",
+    r"\babout\s+me\b",
+    r"\bdeclaration\b",
+    r"\bpersonal\s+details\b",
+    r"\blanguages?\b",
 ]
 
 
@@ -115,31 +213,54 @@ def is_valid_resume_content(text: str, filename: str) -> tuple[bool, str]:
     lower = text.lower()
     lower_fn = (filename or "").lower()
 
-    # 1. Reject invoices / bills / receipts
+    # 1. Immediate rejection: check for explicit invoice / bill / statement patterns
     for pat in INVOICE_BILL_PATTERNS:
         if re.search(pat, lower):
-            return False, "Matched invoice or billing statement marker"
+            return False, "Matched invoice, billing, or statement marker"
 
-    # 2. Reject non-resume filenames
-    bad_fn = ("invoice", "tax_invoice", "receipt", "statement", "ticket", "bill", "salaryslip", "payslip")
+    # 2. Secondary check: standalone invoice keyword combined with financial/billing attributes
+    if re.search(r"\binvoices?\b", lower):
+        if any(w in lower for w in ("total", "amount", "due", "balance", "subtotal", "payment", "paid", "bill to", "billed to", "tax", "gst", "item", "qty")):
+            if not any(proj in lower for proj in ("project:", "projects", "work experience", "technical skills", "education")):
+                return False, "Document appears to be an invoice"
+            if any(w in lower for w in ("invoice no", "invoice #", "bill to", "billed to", "subtotal", "gstin", "grand total", "amount due", "balance due")):
+                return False, "Document contains invoice billing table"
+
+    # 3. Reject non-resume filenames
+    bad_fn = ("invoice", "tax_invoice", "receipt", "statement", "ticket", "bill", "salaryslip", "payslip", "marksheet", "admitcard", "certificate")
     if any(b in lower_fn for b in bad_fn):
         return False, f"Filename indicates non-resume ({filename})"
 
-    # 3. Check for resume markers in filename
-    has_fn_marker = any(k in lower_fn for k in ("resume", "cv", "biodata", "curriculum", "profile", "candidate", "applicant"))
+    # 4. Check for explicit resume indicators in filename
+    has_fn_marker = any(k in lower_fn for k in ("resume", "cv", "biodata", "curriculum"))
 
-    # 4. Count resume sections and skills
+    # 5. Extract candidate contact info and signals
+    has_email = bool(extract_email(text))
+    has_phone = bool(extract_phone(text))
+    has_link = bool(re.search(r"(?:linkedin\.com|github\.com|gitlab\.com|portfolio|behance\.net|medium\.com)", lower))
+    has_contact = has_email or has_phone or has_link
+
+    # 6. Count resume sections and skills
     sec_matches = [pat for pat in RESUME_SECTION_PATTERNS if re.search(pat, lower)]
     skills = extract_skills(text)
 
-    if has_fn_marker:
-        return True, "Filename indicates resume"
+    # Decision tree:
+    # A) File named explicitly as resume/cv with at least some section, skill, or contact info
+    if has_fn_marker and (sec_matches or skills or has_contact):
+        return True, "Filename indicates resume with supporting profile data"
 
-    if len(sec_matches) >= 2:
-        return True, "Standard resume sections found"
+    # B) Standard resume structure: contains multiple recognized sections and skills or contact info
+    if len(sec_matches) >= 2 and (skills or has_contact):
+        return True, "Standard resume sections and profile data found"
 
-    if skills and (len(sec_matches) >= 1 or "experience" in lower or "engineer" in lower or "developer" in lower):
-        return True, "Resume skills and professional context found"
+    # C) Has skills and professional context with candidate contact details
+    if skills and (len(sec_matches) >= 1 or "developer" in lower or "engineer" in lower or "experience" in lower or len(skills) >= 2):
+        if has_contact or len(sec_matches) >= 1:
+            return True, "Resume skills and professional context found"
+
+    # D) Multiple recognized technical skills and candidate contact details
+    if len(skills) >= 2 and has_contact:
+        return True, "Technical skills and candidate contact details found"
 
     return False, "Document lacks resume structure or professional skills"
 

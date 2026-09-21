@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Search, SlidersHorizontal, Trash2 } from "lucide-react";
+import { CheckSquare, Plus, Search, SlidersHorizontal, Trash2 } from "lucide-react";
 import { api } from "../../api";
 import { Alert, Empty, StageBadge } from "../../components/ui";
 import { CandidateUploadModal } from "../../components/CandidateUploadModal";
@@ -27,7 +27,7 @@ export function CandidatesPage() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [deleting, setDeleting] = useState(false);
 
-  const canDelete = can(user, "candidate:delete") || user?.role === "MASTER_ADMIN" || user?.role === "COMPANY_OWNER" || user?.role === "COMPANY_ADMIN";
+  const canDelete = can(user, "candidate:delete") || user?.role === "MASTER_ADMIN" || user?.role === "COMPANY_OWNER" || user?.role === "COMPANY_ADMIN" || user?.role === "RECRUITER";
 
   const load = useCallback(async () => {
     try {
@@ -115,7 +115,26 @@ export function CandidatesPage() {
             Searchable, reusable candidate intelligence for this company.
           </div>
         </div>
-        <div className="flex">
+        <div className="flex" style={{ gap: 8 }}>
+          {canDelete && candidates.length > 0 && (
+            <button
+              className={`btn sm ${selectedIds.length > 0 ? "secondary" : "ghost"}`}
+              onClick={toggleSelectAll}
+              title="Select or deselect all candidates"
+            >
+              <CheckSquare size={15} /> {selectedIds.length === candidates.length ? "Deselect all" : `Select all (${candidates.length})`}
+            </button>
+          )}
+          {canDelete && selectedIds.length > 0 && (
+            <button
+              className="btn sm danger"
+              disabled={deleting}
+              onClick={handleBulkDelete}
+              title="Delete selected candidates"
+            >
+              <Trash2 size={15} /> {deleting ? "Deleting…" : `Delete (${selectedIds.length})`}
+            </button>
+          )}
           <button className="btn ghost" onClick={() => setShowTagInput((v) => !v)}>
             <SlidersHorizontal size={15} /> Tag
           </button>
@@ -221,9 +240,10 @@ export function CandidatesPage() {
             <thead>
               <tr>
                 {canDelete && (
-                  <th style={{ width: 36, textAlign: "center" }}>
+                  <th style={{ width: 42, textAlign: "center" }}>
                     <input
                       type="checkbox"
+                      style={{ cursor: "pointer", width: 16, height: 16 }}
                       checked={candidates.length > 0 && selectedIds.length === candidates.length}
                       onChange={toggleSelectAll}
                       title="Select all"
@@ -241,13 +261,33 @@ export function CandidatesPage() {
             </thead>
             <tbody>
               {candidates.map((c) => (
-                <tr key={c.id} style={{ cursor: "pointer" }} onClick={() => setSelected(c.id)}>
+                <tr
+                  key={c.id}
+                  style={{
+                    cursor: "pointer",
+                    background: selectedIds.includes(c.id) ? "rgba(239, 68, 68, 0.04)" : undefined,
+                  }}
+                  onClick={() => setSelected(c.id)}
+                >
                   {canDelete && (
-                    <td style={{ textAlign: "center" }} onClick={(e) => toggleSelect(c.id, e)}>
+                    <td
+                      style={{ textAlign: "center", width: 42 }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleSelect(c.id, e);
+                      }}
+                    >
                       <input
                         type="checkbox"
+                        style={{ cursor: "pointer", width: 16, height: 16 }}
                         checked={selectedIds.includes(c.id)}
-                        onChange={() => {}}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          setSelectedIds((prev) =>
+                            prev.includes(c.id) ? prev.filter((x) => x !== c.id) : [...prev, c.id]
+                          );
+                        }}
+                        onClick={(e) => e.stopPropagation()}
                       />
                     </td>
                   )}
