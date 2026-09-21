@@ -18,6 +18,7 @@ from backend.resume_service import (
     extract_experience_years,
     extract_phone,
     extract_resume_text,
+    extract_current_title,
     extract_skills,
     guess_name,
     is_valid_resume_content,
@@ -65,7 +66,7 @@ def ingest_resume(
     clean_name = _clean_pg_text(raw_name) or filename
     clean_email = _clean_pg_text(raw_email)
     clean_phone = _clean_pg_text(raw_phone)
-    clean_title = _clean_pg_text(overrides.get("current_title"))
+    clean_title = _clean_pg_text(overrides.get("current_title") or extract_current_title(text))
     clean_company = _clean_pg_text(overrides.get("current_company"))
     clean_location = _clean_pg_text(overrides.get("location"))
     raw_summary = overrides.get("summary") or (text[:1000] if text else None)
@@ -75,6 +76,34 @@ def ingest_resume(
 
     dups = find_dup_candidates(db, org.id, clean_email, clean_phone, clean_name)
     dup_of = dups[0].id if dups else None
+
+    # Gmail may return the same thread again during a deep scan or after the
+    # processed-thread window rolls over. Keep one canonical candidate for
+    # mailbox imports; manual uploads retain the existing duplicate marker so
+    # recruiters can consciously review the second upload.
+    if source == SourceKind.GMAIL and dups:
+        existing = dups[0]
+        if not existing.current_title and clean_title:
+            existing.current_title = clean_title
+        if not existing.experience_years and experience:
+            existing.experience_years = experience
+        db.flush()
+        log_audit(
+            db,
+            org_id=org.id,
+            actor_user_id=created_by_user_id or 0,
+            actor_email=actor_email,
+            action="candidate.duplicate_skipped",
+            resource_type="candidate",
+            resource_id=existing.id,
+            details={"source": source.value, "filename": filename},
+        )
+        return {"candidate": existing, "is_duplicate": True, "parsed_skills": clean_skills}
+
+    storage_mb = max(1, (len(data) + (1024 * 1024) - 1) // (1024 * 1024))
+    if meter:
+        from backend.plans import check_quota
+        check_quota(db, org, "storage_mb", storage_mb)
 
     candidate = Candidate(
         organization_id=org.id,
@@ -93,6 +122,19 @@ def ingest_resume(
         resume_text=clean_text,
         created_by_user_id=created_by_user_id,
     )
+    # Keep Gmail imports consistent with manual uploads: immediately attach
+    # the candidate to open jobs with at least 25% skill overlap.
+    from backend.models import Job, JobStatus
+    candidate.matched_job_ids = [
+        job.id
+        for job in db.query(Job).filter(
+            Job.organization_id == org.id, Job.status != JobStatus.CLOSED
+        ).all()
+        if clean_skills
+        and (set(s.lower() for s in (job.skills or [])) & set(s.lower() for s in clean_skills))
+        and len(set(s.lower() for s in (job.skills or [])) & set(s.lower() for s in clean_skills))
+        / max(1, len(job.skills or [])) >= 0.25
+    ]
     db.add(candidate)
     db.flush()
 
@@ -108,6 +150,7 @@ def ingest_resume(
 
         increment_usage(db, org.id, "resume_parses", 1)
         increment_usage(db, org.id, "candidates", 1)
+        increment_usage(db, org.id, "storage_mb", storage_mb)
 
     log_audit(
         db,

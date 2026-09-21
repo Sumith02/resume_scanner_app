@@ -278,6 +278,7 @@ def update_company_status(
         for u in list_users(db, org.id):
             u.status = UserStatus.INACTIVE
 
+    previous_status = org.status.value
     org.status = new_status
     log_audit(
         db,
@@ -287,7 +288,7 @@ def update_company_status(
         action="platform.company_status_changed",
         resource_type="organization",
         resource_id=org.id,
-        details={"from": org.status.value, "to": new_status.value},
+        details={"from": previous_status, "to": new_status.value},
     )
     db.commit()
     return {"message": "Company status updated", "company": _org_with_seats(db, org)}

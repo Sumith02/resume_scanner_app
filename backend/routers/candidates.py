@@ -21,6 +21,7 @@ from backend.rbac import (
     TAG_MANAGE,
 )
 from backend.ingestion import _clean_pg_text
+from backend.ingestion import is_probably_bad_attachment
 from backend.repository import (
     find_dup_candidates,
     get_candidate,
@@ -32,6 +33,7 @@ from backend.repository import (
 from backend.resume_service import (
     extract_email,
     extract_experience_years,
+    extract_current_title,
     extract_phone,
     extract_resume_text,
     extract_skills,
@@ -48,6 +50,14 @@ from backend.schemas import (
 from backend.serializers import candidate_out, note_out, tag_out
 
 router = APIRouter(prefix="/api/org", tags=["candidates"])
+
+
+def _resume_disk_path(relative_path: str) -> str | None:
+    """Resolve uploads written to the configured directory or its serverless fallback."""
+    candidates = [f"{UPLOAD_DIR}/{relative_path}"]
+    if "/tmp" not in UPLOAD_DIR:
+        candidates.append(f"/tmp/uploads/{relative_path}")
+    return next((path for path in candidates if os.path.exists(path)), None)
 
 
 def _assert_stage(value: str) -> CandidateStage:
@@ -119,9 +129,11 @@ def delete_candidate(
     if c is None:
         raise HTTPException(404, "Candidate not found")
     if c.resume_path:
-        path = f"{UPLOAD_DIR}/{c.resume_path}"
-        if os.path.exists(path):
+        path = _resume_disk_path(c.resume_path)
+        if path:
             try:
+                from backend.plans import increment_usage
+                increment_usage(db, org_id, "storage_mb", -max(1, (os.path.getsize(path) + (1024 * 1024) - 1) // (1024 * 1024)))
                 os.remove(path)
             except Exception:
                 pass
@@ -156,9 +168,11 @@ def bulk_delete_candidates(
         c = get_candidate(db, org_id, cid)
         if c:
             if c.resume_path:
-                path = f"{UPLOAD_DIR}/{c.resume_path}"
-                if os.path.exists(path):
+                path = _resume_disk_path(c.resume_path)
+                if path:
                     try:
+                        from backend.plans import increment_usage
+                        increment_usage(db, org_id, "storage_mb", -max(1, (os.path.getsize(path) + (1024 * 1024) - 1) // (1024 * 1024)))
                         os.remove(path)
                     except Exception:
                         pass
@@ -203,7 +217,18 @@ async def create_candidate(
         data = await resume.read()
         if len(data) > MAX_RESUME_BYTES:
             raise HTTPException(413, "Resume larger than 10MB")
+        storage_mb = max(1, (len(data) + (1024 * 1024) - 1) // (1024 * 1024))
+        consume_quota(db, org, "storage_mb", storage_mb)
         resume_text = extract_resume_text(resume.filename, data)
+        # Manual uploads keep support for short/simple CVs, but reject
+        # unmistakable invoices, statements, IDs and similar documents too.
+        lower_text = resume_text.lower()
+        obvious_non_resume = any(marker in lower_text for marker in (
+            "tax invoice", "invoice no", "bill to", "bank statement", "salary slip",
+            "aadhaar card", "this certifies that", "job description",
+        ))
+        if is_probably_bad_attachment(resume.filename) or obvious_non_resume:
+            raise HTTPException(422, "The uploaded document does not appear to be a resume")
 
         parsed_name = name or guess_name(resume_text) or resume.filename
         parsed_email = email or extract_email(resume_text)
@@ -212,6 +237,7 @@ async def create_candidate(
         parsed_exp = experience_years
         if parsed_exp is None:
             parsed_exp = extract_experience_years(resume_text)
+        parsed_title = current_title or extract_current_title(resume_text)
 
         # keep raw bytes until candidate row exists (needs candidate.id for path)
         raw = data
@@ -222,6 +248,7 @@ async def create_candidate(
         parsed_phone = phone
         parsed_skills = ([s.strip() for s in skills_csv.split(",")] if skills_csv else [])
         parsed_exp = experience_years
+        parsed_title = current_title
         raw = None
 
     clean_name = _clean_pg_text(parsed_name)
@@ -230,7 +257,7 @@ async def create_candidate(
 
     clean_email = _clean_pg_text(parsed_email)
     clean_phone = _clean_pg_text(parsed_phone)
-    clean_title = _clean_pg_text(current_title)
+    clean_title = _clean_pg_text(parsed_title)
     clean_company = _clean_pg_text(current_company)
     clean_location = _clean_pg_text(location)
     clean_text = _clean_pg_text(resume_text)
@@ -357,8 +384,8 @@ def download_resume(
         raise HTTPException(404, "Candidate not found")
     if not c.resume_path:
         raise HTTPException(404, "No resume on file")
-    path = f"{UPLOAD_DIR}/{c.resume_path}"
-    if not os.path.exists(path):
+    path = _resume_disk_path(c.resume_path)
+    if not path:
         raise HTTPException(404, "Resume file missing on disk")
     return FileResponse(path, filename=c.resume_filename or os.path.basename(path))
 

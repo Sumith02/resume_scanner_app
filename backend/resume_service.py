@@ -366,6 +366,18 @@ def extract_skills(text: str) -> list[str]:
 
 def extract_experience_years(text: str) -> int:
     years = 0.0
+    # Covers common CV formats such as "May 2021 - Present" and
+    # "06/2019 – 08/2023", where the old year-only expression was too strict.
+    for m in re.finditer(
+        r"\b(?:[A-Za-z]{3,9}\s+|\d{1,2}[/-])?(19\d{2}|20\d{2})\s*[-–—to]+\s*"
+        r"(?:(?:[A-Za-z]{3,9}\s+|\d{1,2}[/-])?(19\d{2}|20\d{2})|present|current|now)\b",
+        text,
+        re.IGNORECASE,
+    ):
+        start = int(m.group(1))
+        end = datetime.now().year if not m.group(2) else int(m.group(2))
+        if 1970 <= start <= end <= datetime.now().year + 1:
+            years = max(years, float(end - start))
     for pattern, end_year in _EXP_YEAR_PROFILE:
         for m in re.finditer(pattern, text):
             start = int(m.group(1))
@@ -378,6 +390,40 @@ def extract_experience_years(text: str) -> int:
         for m in re.finditer(r"(?:^|\s)(\d{1,2})\s*\+?\s*(?:years?|yrs?)\b", text, re.IGNORECASE):
             years = max(years, float(m.group(1)))
     return int(round(years))
+
+
+def extract_current_title(text: str) -> str | None:
+    """Extract a likely professional title from the header or profile lines."""
+    title_terms = re.compile(
+        r"\b(?:developer|engineer|designer|manager|analyst|consultant|architect|"
+        r"administrator|scientist|recruiter|specialist|coordinator|director|"
+        r"accountant|nurse|teacher|intern|associate|executive|officer|lead)\b",
+        re.IGNORECASE,
+    )
+    section_terms = re.compile(
+        r"^(?:resume|curriculum vitae|profile|summary|objective|education|skills|"
+        r"experience|projects|certifications?|contact|work experience)\s*:?$",
+        re.IGNORECASE,
+    )
+    lines = [re.sub(r"\s+", " ", line).strip(" •|:-") for line in text.splitlines()]
+    for line in lines[:18]:
+        if not line or len(line) > 100 or section_terms.match(line):
+            continue
+        if "@" in line or re.search(r"\d{5,}", line) or re.search(r"https?://", line, re.I):
+            continue
+        if title_terms.search(line) and 1 <= len(line.split()) <= 8:
+            return line
+    match = re.search(
+        r"\b((?:senior|junior|lead|principal|staff)?\s*(?:software\s+)?"
+        r"(?:developer|engineer|designer|manager|analyst|consultant|architect|"
+        r"administrator|scientist|recruiter|specialist|coordinator|director|"
+        r"accountant|nurse|teacher|intern|associate|executive|officer))\b",
+        text,
+        re.IGNORECASE,
+    )
+    if match:
+        return re.sub(r"\s+", " ", match.group(1)).strip().title()
+    return None
 
 
 def extract_email(text: str) -> str | None:

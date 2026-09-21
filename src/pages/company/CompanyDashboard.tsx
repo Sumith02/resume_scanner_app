@@ -16,8 +16,10 @@ export function CompanyDashboard() {
   const [counts, setCounts] = useState({ jobs: 0, activeJobs: 0, candidates: 0 });
   const [error, setError] = useState<string | null>(null);
   const [requested, setRequested] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   async function load() {
+    setLoading(true);
     try {
       const [s, p, jobs, c] = await Promise.all([
         api.seats(),
@@ -42,6 +44,7 @@ export function CompanyDashboard() {
         setGmail(null);
       }
     }
+    setLoading(false);
   }
 
   useEffect(() => {
@@ -85,14 +88,14 @@ export function CompanyDashboard() {
       )}
 
       <div className="grid cols-4">
-        <Stat label="Open Jobs" value={counts.activeJobs} icon={<Briefcase size={18} />} />
-        <Stat label="Candidates" value={counts.candidates} icon={<FileText size={18} />} />
+        <Stat label="Open Jobs" value={loading ? "—" : counts.activeJobs} icon={<Briefcase size={18} />} />
+        <Stat label="Candidates" value={loading ? "—" : counts.candidates} icon={<FileText size={18} />} />
         <Stat
           label="Seats Used"
-          value={seats ? `${seats.used}/${seats.limit}` : "—"}
+          value={loading ? "—" : seats ? `${seats.used}/${seats.limit}` : "—"}
           icon={<Users size={18} />}
         />
-        <Stat label="In Pipeline" value={total} icon={<UserCheck size={18} />} />
+        <Stat label="In Pipeline" value={loading ? "—" : total} icon={<UserCheck size={18} />} />
       </div>
 
       <div className="card mt-2">
@@ -140,7 +143,7 @@ export function CompanyDashboard() {
         <p className="muted mt-0">Live candidate distribution across pipeline stages.</p>
         <div className="grid cols-4">
           {PIPELINE_STAGES.map((stage) => {
-            const n = pipeline?.counts[stage] ?? 0;
+            const n = loading ? "—" : pipeline?.counts[stage] ?? 0;
             return (
               <div key={stage} className="flex between" style={{ padding: "8px 0" }}>
                 <span className="flex" style={{ gap: 8 }}>

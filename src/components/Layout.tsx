@@ -5,6 +5,7 @@ import {
   Briefcase,
   Building2,
   CalendarClock,
+  CreditCard,
   FileText,
   FolderOpen,
   Handshake,
@@ -20,6 +21,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { roleLabel } from "../lib/format";
+import { can } from "../lib/perms";
 
 interface NavEntry {
   to: string;
@@ -47,6 +49,7 @@ const COMPANY_NAV: NavEntry[] = [
   { to: "/app/email", label: "Email", icon: <Mail size={17} /> },
   { to: "/app/analytics", label: "Analytics", icon: <TrendingUp size={17} /> },
   { to: "/app/portal", label: "Client Portal", icon: <Share2 size={17} /> },
+  { to: "/app/billing", label: "Billing & Usage", icon: <CreditCard size={17} /> },
   { to: "/app/users", label: "Users & Seats", icon: <Users size={17} /> },
   { to: "/app/audit", label: "Audit Log", icon: <ScrollText size={17} /> },
 ];
@@ -66,7 +69,7 @@ export function Layout({ children, title }: { children: ReactNode; title: string
         </div>
 
         <div className="nav-section">{isMaster ? "Platform" : "Workspace"}</div>
-        {nav.map((item) => (
+        {nav.filter((item) => item.to !== "/app/billing" || can(user, "billing:read")).map((item) => (
           <NavLink
             key={item.to}
             to={item.to}

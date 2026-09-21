@@ -50,6 +50,7 @@ JWT_SECRET = os.getenv(
 )
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRES_MINUTES = int(os.getenv("JWT_EXPIRES_MINUTES", "1440"))
+DEBUG = os.getenv("DEBUG", "false").lower() in {"1", "true", "yes", "on"}
 
 INVITE_EXPIRES_HOURS = int(os.getenv("INVITE_EXPIRES_HOURS", "72"))
 

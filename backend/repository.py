@@ -27,6 +27,18 @@ from backend.models import (
 _JSON_LIKE_COLS = {"skills", "matched_job_ids", "feature_flags"}
 
 
+def json_array_contains_id(column, value: int):
+    """Match an integer in a JSON array without prefix collisions (1 != 10)."""
+    encoded = str(int(value))
+    text_col = func.cast(column, Text)
+    return or_(
+        text_col == f"[{encoded}]",
+        text_col.like(f"[{encoded},%"),
+        text_col.like(f"%,{encoded},%"),
+        text_col.like(f"%,{encoded}]"),
+    )
+
+
 def active_user_count(db: Session, org_id: int) -> int:
     return (
         db.query(func.count(User.id))
@@ -128,9 +140,7 @@ def list_candidates(
     if stage:
         q = q.filter(Candidate.stage == stage)
     if job_id:
-        q = q.filter(
-            func.cast(Candidate.matched_job_ids, Text).like(f"%{job_id}%")
-        )
+        q = q.filter(json_array_contains_id(Candidate.matched_job_ids, job_id))
     if tag_id:
         q = q.filter(Candidate.tags.any(Tag.id == tag_id))
     if query:

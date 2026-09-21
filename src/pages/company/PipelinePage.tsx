@@ -17,6 +17,7 @@ export function PipelinePage() {
   const [overStage, setOverStage] = useState<string | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     try {
@@ -26,6 +27,8 @@ export function PipelinePage() {
       setTags(t);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load pipeline");
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -57,7 +60,8 @@ export function PipelinePage() {
         </div>
       </div>
 
-      <div className="board">
+      {loading && <div className="card muted">Loading pipeline…</div>}
+      <div className="board" style={{ display: loading ? "none" : undefined }}>
         {PIPELINE_STAGES.map((stage) => {
           const items = candidates.filter((c) => c.stage === stage);
           return (

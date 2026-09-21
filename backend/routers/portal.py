@@ -24,7 +24,7 @@ from backend.models import (
 )
 from backend.plans import require_feature
 from backend.rbac import PORTAL_MANAGE
-from backend.repository import log_audit
+from backend.repository import json_array_contains_id, log_audit
 from backend.security import generate_invite_token, hash_token
 from backend.serializers import portal_token_out
 
@@ -226,13 +226,11 @@ def portal_job_candidates(token: str, job_id: int, db: Session = Depends(get_db)
     if job is None:
         raise HTTPException(404, "Job not found")
 
-    from sqlalchemy import Text, func
-
     candidates = (
         db.query(Candidate)
         .filter(
             Candidate.organization_id == row.organization_id,
-            func.cast(Candidate.matched_job_ids, Text).like(f"%{job_id}%"),
+            json_array_contains_id(Candidate.matched_job_ids, job_id),
         )
         .all()
     )
@@ -245,13 +243,11 @@ def portal_job_candidates(token: str, job_id: int, db: Session = Depends(get_db)
 
 
 def _pipeline_counts(db: Session, org_id: int, job_id: int) -> dict:
-    from sqlalchemy import Text, func
-
     candidates = (
         db.query(Candidate)
         .filter(
             Candidate.organization_id == org_id,
-            func.cast(Candidate.matched_job_ids, Text).like(f"%{job_id}%"),
+            json_array_contains_id(Candidate.matched_job_ids, job_id),
         )
         .all()
     )

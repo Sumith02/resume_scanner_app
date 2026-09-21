@@ -2,7 +2,7 @@ import base64
 
 import pytest
 
-from backend.resume_service import is_valid_resume_content
+from backend.resume_service import extract_current_title, extract_experience_years, is_valid_resume_content
 
 
 RESUME = (
@@ -34,6 +34,15 @@ def test_rejects_supporting_documents_even_with_resume_filename(filename, text):
 ])
 def test_accepts_nontechnical_and_fresher_resumes_with_generic_names(text):
     assert is_valid_resume_content(text, "document.pdf", strict=True)[0]
+
+
+def test_resume_header_parser_extracts_title_and_date_range():
+    text = (
+        "Anita Rao\nSenior Software Engineer\nanita@example.com\n"
+        "May 2021 - Present\nSkills: Python React"
+    )
+    assert extract_current_title(text) == "Senior Software Engineer"
+    assert extract_experience_years(text) >= 4
 
 
 def test_gmail_mixed_attachments_only_persist_resume(client, master, monkeypatch):

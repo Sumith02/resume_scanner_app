@@ -94,14 +94,17 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     import traceback
+    from backend.config import DEBUG
+
     tb = traceback.format_exc()
     print("UNHANDLED ERROR ON", request.url.path, ":", tb)
+    detail = "An unexpected server error occurred. Please try again."
+    if DEBUG:
+        detail = f"{type(exc).__name__}: {str(exc)}"
     return JSONResponse(
         status_code=500,
         content={
-            "detail": f"{type(exc).__name__}: {str(exc)}",
-            "error_type": type(exc).__name__,
-            "traceback": tb.splitlines()[-4:],
+            "detail": detail,
         },
     )
 
