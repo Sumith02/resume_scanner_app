@@ -13,8 +13,10 @@ Two providers:
 from __future__ import annotations
 
 import base64
+import re
 import urllib.parse
 from datetime import timedelta
+from email.utils import parseaddr
 from pathlib import Path
 
 import httpx
@@ -159,6 +161,21 @@ def _walk_attachments(payload: dict):
         if children:
             stack.extend(children)
         filename = part.get("filename")
+        if not filename:
+            for h in part.get("headers", []) or []:
+                hname = h.get("name", "").lower()
+                if hname in ("content-disposition", "content-type"):
+                    m = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';\r\n]+)', h.get("value", ""), re.IGNORECASE)
+                    if m:
+                        filename = m.group(1).strip()
+                        break
+        mime_type = (part.get("mimeType") or "").lower()
+        if not filename:
+            if mime_type == "application/pdf":
+                filename = "resume.pdf"
+            elif "wordprocessingml" in mime_type or mime_type == "application/msword":
+                filename = "resume.docx"
+
         body = part.get("body", {}) or {}
         attachment_id = body.get("attachmentId")
         inline_data = body.get("data")
@@ -252,16 +269,15 @@ def _sync_gmail(
     ingested, skipped, newly = 0, 0, []
 
     try:
-        # Multi-tier search:
-        # 1. Emails with explicit resume / candidate / CV keywords
+        # Search strategy:
+        # Tier 1: Target resume keywords
         resume_query = (
-            "has:attachment (filename:pdf OR filename:docx OR filename:doc) "
-            "(resume OR cv OR curriculum OR candidate OR applicant OR application OR profile OR biodata OR job OR hire)"
+            "has:attachment (resume OR cv OR curriculum OR candidate OR applicant OR application OR profile OR biodata OR job OR hire OR developer OR engineer)"
         )
         tier1 = client.list_messages(query=resume_query, max_results=max_messages)
 
-        # 2. Broader search for any PDF / DOCX attachments
-        general_query = "has:attachment (filename:pdf OR filename:docx OR filename:doc)"
+        # Tier 2: Any email with attachment in Gmail
+        general_query = "has:attachment"
         tier2 = client.list_messages(query=general_query, max_results=max_messages)
 
         seen_ids = set()
@@ -277,6 +293,19 @@ def _sync_gmail(
                 continue
             checked_count += 1
             message = client.get_message(message_id)
+
+            sender_header = _decoded_header(message, "From")
+            sender_name, sender_email = parseaddr(sender_header)
+            sender_name = sender_name.strip() if sender_name else None
+            sender_email = sender_email.strip().lower() if sender_email else None
+
+            candidate_overrides = {}
+            if sender_name:
+                candidate_overrides["name"] = sender_name
+            if sender_email:
+                candidate_overrides["email"] = sender_email
+
+            message_had_ingestion = False
             for filename, attachment_id, inline_data in _walk_attachments(message.get("payload", {})):
                 if not looks_like_resume(filename) or is_probably_bad_attachment(filename):
                     skipped += 1
@@ -292,12 +321,16 @@ def _sync_gmail(
                         ingest_resume(
                             db, org=org, filename=filename, data=data,
                             source=SourceKind.GMAIL, actor_email=actor_email,
+                            overrides=candidate_overrides,
                         )
                     ingested += 1
+                    message_had_ingestion = True
                 except Exception as att_err:
                     print(f"Skipping attachment {filename}: {att_err}")
                     skipped += 1
-            newly.append(message_id)
+
+            if message_had_ingestion:
+                newly.append(message_id)
 
         try:
             profile = client.profile()
