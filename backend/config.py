@@ -8,13 +8,23 @@ except ImportError:  # pragma: no cover - dotenv is optional in production
     pass
 
 def _is_serverless_or_readonly() -> bool:
-    if os.getenv("VERCEL") or os.getenv("LAMBDA_TASK_ROOT") or os.getenv("AWS_LAMBDA_FUNCTION_NAME") or os.getenv("AWS_EXECUTION_ENV"):
+    if (
+        os.getenv("VERCEL")
+        or os.getenv("VERCEL_ENV")
+        or os.getenv("VERCEL_URL")
+        or os.getenv("LAMBDA_TASK_ROOT")
+        or os.getenv("AWS_LAMBDA_FUNCTION_NAME")
+        or os.getenv("AWS_EXECUTION_ENV")
+    ):
         return True
     try:
-        test_file = "./.write_test"
+        test_dir = "./uploads/.test_write_dir"
+        os.makedirs(test_dir, exist_ok=True)
+        test_file = f"{test_dir}/1"
         with open(test_file, "w") as f:
             f.write("1")
         os.remove(test_file)
+        os.rmdir(test_dir)
         return False
     except OSError:
         return True
@@ -44,7 +54,19 @@ JWT_EXPIRES_MINUTES = int(os.getenv("JWT_EXPIRES_MINUTES", "1440"))
 INVITE_EXPIRES_HOURS = int(os.getenv("INVITE_EXPIRES_HOURS", "72"))
 
 _default_upload_dir = "/tmp/uploads" if IS_VERCEL else "./uploads"
-UPLOAD_DIR = os.getenv("UPLOAD_DIR", _default_upload_dir)
+_configured_upload_dir = os.getenv("UPLOAD_DIR")
+if _configured_upload_dir:
+    try:
+        os.makedirs(_configured_upload_dir, exist_ok=True)
+        _tfile = f"{_configured_upload_dir}/.test_w"
+        with open(_tfile, "w") as _f:
+            _f.write("1")
+        os.remove(_tfile)
+        UPLOAD_DIR = _configured_upload_dir
+    except OSError:
+        UPLOAD_DIR = "/tmp/uploads"
+else:
+    UPLOAD_DIR = _default_upload_dir
 
 BOOTSTRAP_EMAIL = os.getenv("BOOTSTRAP_EMAIL", "admin@nexerra.io")
 BOOTSTRAP_PASSWORD = os.getenv("BOOTSTRAP_PASSWORD", "Admin@12345")

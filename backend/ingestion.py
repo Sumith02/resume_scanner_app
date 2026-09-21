@@ -91,8 +91,11 @@ def ingest_resume(
     db.add(candidate)
     db.flush()
 
-    rel = save_upload(org.id, candidate.id, filename, data, UPLOAD_DIR)
-    candidate.resume_path = rel
+    try:
+        rel = save_upload(org.id, candidate.id, filename, data, UPLOAD_DIR)
+        candidate.resume_path = rel
+    except Exception as upload_err:
+        print(f"Warning: could not save raw resume upload file: {upload_err}")
     candidate.resume_filename = filename
 
     if meter:

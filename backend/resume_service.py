@@ -159,13 +159,24 @@ def detect_duplicate_key(candidate) -> tuple[str | None, str | None, str | None]
 def save_upload(
     org_id: int, candidate_id: int, filename: str, data: bytes, upload_dir: str
 ) -> str:
+    import os
 
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
     rel = f"org_{org_id}/cand_{candidate_id}_{uuid.uuid4().hex[:8]}.{ext}"
-    full = f"{upload_dir}/{rel}"
-    import os
 
-    os.makedirs(os.path.dirname(full), exist_ok=True)
-    with open(full, "wb") as fh:
-        fh.write(data)
+    # Try configured upload_dir first; on read-only environments (e.g. Vercel / AWS Lambda), fallback to /tmp/uploads
+    candidates_dirs = [upload_dir]
+    if "/tmp" not in upload_dir:
+        candidates_dirs.append("/tmp/uploads")
+
+    for target in candidates_dirs:
+        try:
+            full = f"{target}/{rel}"
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "wb") as fh:
+                fh.write(data)
+            return rel
+        except OSError as err:
+            print(f"Failed to write upload to {target}: {err}")
+
     return rel
