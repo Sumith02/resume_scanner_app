@@ -57,10 +57,11 @@ MAX_RESUME_BYTES = int(os.getenv("MAX_RESUME_BYTES", str(10 * 1024 * 1024)))
 # ---------------------------------------------------------------------------
 # Email ingestion (Gmail OAuth) — Phase 4
 # ---------------------------------------------------------------------------
+_custom_domain = os.getenv("CUSTOM_DOMAIN", "talent.edvols.in")
 _vercel_domain = (
-    os.getenv("VERCEL_PROJECT_PRODUCTION_URL")
+    _custom_domain
+    or os.getenv("VERCEL_PROJECT_PRODUCTION_URL")
     or os.getenv("VERCEL_URL")
-    or "resume-scanner-app-two.vercel.app"
 )
 _default_api_url = f"https://{_vercel_domain}" if IS_VERCEL else "http://localhost:4174"
 _default_frontend_url = f"https://{_vercel_domain}" if IS_VERCEL else "http://localhost:5174"

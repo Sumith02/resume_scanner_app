@@ -205,7 +205,7 @@ def _get_redirect_uri(request: Request) -> str:
         return os.getenv("GOOGLE_REDIRECT_URI")
     host = request.headers.get("x-forwarded-host") or request.headers.get("host")
     if host:
-        proto = request.headers.get("x-forwarded-proto", "https" if "vercel.app" in host else "http")
+        proto = request.headers.get("x-forwarded-proto") or ("http" if host.startswith("localhost") or host.startswith("127.0.0.1") else "https")
         return f"{proto}://{host}/api/email/gmail/callback"
     return GOOGLE_REDIRECT_URI
 
@@ -215,7 +215,7 @@ def _get_frontend_url(request: Request) -> str:
         return os.getenv("FRONTEND_URL")
     host = request.headers.get("x-forwarded-host") or request.headers.get("host")
     if host:
-        proto = request.headers.get("x-forwarded-proto", "https" if "vercel.app" in host else "http")
+        proto = request.headers.get("x-forwarded-proto") or ("http" if host.startswith("localhost") or host.startswith("127.0.0.1") else "https")
         return f"{proto}://{host}"
     return FRONTEND_URL
 
