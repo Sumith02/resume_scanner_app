@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Inbox, Mail, Plus, RefreshCw, Send, Trash2 } from "lucide-react";
+import { Check, Inbox, Mail, Plus, RefreshCw, Send, Trash2 } from "lucide-react";
 import { api } from "../../api";
 import { Alert, Empty, Modal, StatusBadge } from "../../components/ui";
 import { useAuth } from "../../lib/auth";
@@ -94,23 +94,18 @@ export function EmailPage() {
         setError(`Sync issue: ${summary.error}`);
       } else {
         const ingested = summary.ingested ?? 0;
-        const skipped = summary.skipped ?? 0;
-        const checked = summary.checked_emails ?? 0;
-        const total = summary.total_found ?? checked;
         const cands = (summary.ingested_candidates || []) as string[];
         const errors = (summary.errors || []) as string[];
 
-        let text = "";
         if (ingested > 0) {
-          const names = cands.length > 0 ? ` (${cands.join(", ")})` : "";
-          text = `Sync complete: ${ingested} resume(s) imported${names}, ${skipped} non-resume attachment(s) skipped. (Checked ${checked} threads in inbox).`;
+          const names = cands.length > 0 ? `: ${cands.join(", ")}` : "";
+          setNotice(`✅ Successfully imported ${ingested} candidate resume(s)${names}. View them in the Candidates tab!`);
         } else {
-          text = `Sync finished: 0 resumes imported, ${skipped} non-resume attachments skipped. (Checked ${checked} of ${total} threads in inbox).`;
+          setNotice(`Scan complete: 0 new resumes found (${summary.skipped ?? 0} non-resume files filtered).`);
         }
         if (errors.length > 0) {
-          text += ` [${errors.length} issue(s): ${errors.slice(0, 3).join("; ")}]`;
+          setError(`Note: ${errors.length} file(s) encountered processing errors: ${errors.slice(0, 2).join("; ")}`);
         }
-        setNotice(text);
       }
       await load();
     } catch (e) {
@@ -238,18 +233,60 @@ export function EmailPage() {
           </h3>
           {gmail.account ? (
             <>
-              <Alert kind="success">
-                Connected to <strong>{gmail.account.email ?? "demo inbox"}</strong>{" "}
-                {gmail.account.is_demo && "(demo mode)"} · status {gmail.account.status}
-              </Alert>
-              <div className="muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
-                Last sync: {gmail.account.last_sync_at ? formatDate(gmail.account.last_sync_at) : "never"}
-                {gmail.account.last_sync_summary &&
-                  ` · ${JSON.stringify(gmail.account.last_sync_summary)}`}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 14, fontWeight: 600 }}>{gmail.account.email ?? "Demo Inbox"}</span>
+                  <StatusBadge status={gmail.account.status} />
+                  {gmail.account.is_demo && <span className="badge">Demo Mode</span>}
+                </div>
+                <span className="muted" style={{ fontSize: 12 }}>
+                  Last sync: {gmail.account.last_sync_at ? formatDate(gmail.account.last_sync_at) : "never"}
+                </span>
               </div>
+
+              {gmail.account.last_sync_summary && (() => {
+                const summary = gmail.account.last_sync_summary as Record<string, any>;
+                const ingested = summary.ingested ?? 0;
+                const checked = summary.checked_emails ?? summary.checked ?? 0;
+                const skipped = summary.skipped ?? 0;
+                const cands = (summary.ingested_candidates || []) as string[];
+
+                return (
+                  <div style={{ marginBottom: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+                    <div className="grid cols-3" style={{ gap: 10 }}>
+                      <div style={{ padding: "10px 14px", background: "rgba(16, 185, 129, 0.08)", border: "1px solid rgba(16, 185, 129, 0.25)", borderRadius: 8 }}>
+                        <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", fontWeight: 600 }}>Resumes Ingested</div>
+                        <div style={{ fontSize: 22, fontWeight: 700, color: "#059669", marginTop: 2 }}>{ingested}</div>
+                      </div>
+                      <div style={{ padding: "10px 14px", background: "rgba(59, 130, 246, 0.08)", border: "1px solid rgba(59, 130, 246, 0.25)", borderRadius: 8 }}>
+                        <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", fontWeight: 600 }}>Threads Scanned</div>
+                        <div style={{ fontSize: 22, fontWeight: 700, color: "#2563eb", marginTop: 2 }}>{checked}</div>
+                      </div>
+                      <div style={{ padding: "10px 14px", background: "rgba(107, 114, 128, 0.08)", border: "1px solid rgba(107, 114, 128, 0.25)", borderRadius: 8 }}>
+                        <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", fontWeight: 600 }}>Non-Resumes Filtered</div>
+                        <div style={{ fontSize: 22, fontWeight: 700, color: "#4b5563", marginTop: 2 }}>{skipped}</div>
+                      </div>
+                    </div>
+
+                    {cands.length > 0 && (
+                      <div style={{ padding: "10px 14px", background: "rgba(16, 185, 129, 0.04)", border: "1px solid rgba(16, 185, 129, 0.2)", borderRadius: 8 }}>
+                        <div style={{ fontSize: 11.5, fontWeight: 600, color: "#065f46", marginBottom: 6 }}>Imported Candidates:</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          {cands.map((name, i) => (
+                            <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "#ecfdf5", color: "#047857", border: "1px solid #a7f3d0", padding: "2px 8px", borderRadius: 10, fontSize: 12, fontWeight: 500 }}>
+                              <Check size={11} /> {name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               <div className="flex" style={{ gap: 8, alignItems: "center" }}>
                 <button className="btn primary" disabled={syncBusy} onClick={() => sync(false)}>
-                  <RefreshCw size={15} /> {syncBusy ? "Syncing…" : "Sync now"}
+                  <RefreshCw size={15} className={syncBusy ? "spin" : ""} /> {syncBusy ? "Syncing…" : "Sync now"}
                 </button>
                 <button
                   className="btn secondary"

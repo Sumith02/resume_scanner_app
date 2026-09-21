@@ -348,3 +348,38 @@ def test_resume_text_and_ingestion_sanitizes_nul_bytes(client, master):
         for skill in cand.skills:
             assert "\x00" not in skill
 
+
+def test_resume_validation_filters_invoices_and_bills():
+    from backend.ingestion import is_probably_bad_attachment
+    from backend.resume_service import is_valid_resume_content
+
+    # Invoices and bills must be rejected
+    invoice_text = (
+        "Tax Invoice\n"
+        "Invoice No: INV-2024-998\n"
+        "Bill To: John Smith\n"
+        "Total Amount Due: $450.00\n"
+        "GSTIN: 29ABCDE1234F1Z5"
+    )
+    is_valid, reason = is_valid_resume_content(invoice_text, "Invoice_998.pdf")
+    assert not is_valid
+    assert "invoice" in reason.lower() or "billing" in reason.lower()
+
+    assert is_probably_bad_attachment("tax_invoice.pdf")
+    assert is_probably_bad_attachment("salary_slip_september.pdf")
+    assert is_probably_bad_attachment("electricity_bill.pdf")
+    assert is_probably_bad_attachment("booking_itinerary.pdf")
+
+    # Real resumes must be accepted
+    resume_text = (
+        "Sumith K S\n"
+        "Email: sumith@example.com\n"
+        "Frontend Developer\n"
+        "Education: Bachelor of Technology\n"
+        "Technical Skills: React, TypeScript, JavaScript, CSS\n"
+        "Work Experience: 3 years building web applications\n"
+        "Projects: Talent OS platform"
+    )
+    is_valid, reason = is_valid_resume_content(resume_text, "sumith k s (1).pdf")
+    assert is_valid
+

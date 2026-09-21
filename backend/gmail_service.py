@@ -318,15 +318,18 @@ def _sync_gmail(
 
     try:
         # Search strategy:
-        # Tier 1: Target resume keywords
+        # Tier 1: Target resume and career keywords
         resume_query = (
-            "has:attachment (resume OR cv OR curriculum OR candidate OR applicant OR application OR profile OR biodata OR job OR hire OR developer OR engineer)"
+            "has:attachment (resume OR cv OR curriculum OR candidate OR applicant OR application OR profile OR biodata OR job OR hire OR developer OR engineer OR designer OR manager OR internship OR role OR position)"
         )
         tier1_threads = client.list_threads(query=resume_query, max_results=max_messages)
         tier1_msgs = client.list_messages(query=resume_query, max_results=max_messages)
 
-        # Tier 2: Any email with attachment in Gmail
-        general_query = "has:attachment"
+        # Tier 2: Broader search for documents excluding obvious billing / statements
+        general_query = (
+            "has:attachment (filename:pdf OR filename:docx OR filename:doc) "
+            "-subject:bill -subject:invoice -subject:receipt -subject:statement -subject:tax -subject:ticket -subject:order -subject:recharge"
+        )
         tier2_threads = client.list_threads(query=general_query, max_results=max_messages)
         tier2_msgs = client.list_messages(query=general_query, max_results=max_messages)
 
@@ -412,9 +415,13 @@ def _sync_gmail(
                             ingested_candidates.append(cname)
                     except Exception as att_err:
                         err_str = str(att_err)
-                        print(f"Skipping attachment {filename} in thread {thread_id}: {err_str}")
-                        errors.append(f"{filename}: {err_str}")
-                        skipped += 1
+                        # Content-validation rejections (invoices, receipts, bad structures) are quiet skips
+                        if "non-resume" in err_str.lower() or "not a resume" in err_str.lower():
+                            skipped += 1
+                        else:
+                            print(f"Skipping attachment {filename} in thread {thread_id}: {err_str}")
+                            errors.append(f"{filename}: {err_str}")
+                            skipped += 1
 
             if thread_had_ingestion:
                 newly.append(thread_id)

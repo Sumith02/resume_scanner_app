@@ -59,14 +59,99 @@ def extract_resume_text(filename: str, data: bytes) -> str:
     return (text or "").replace("\x00", "")
 
 
+INVOICE_BILL_PATTERNS = [
+    r"\btax\s+invoice\b",
+    r"\binvoice\s+(?:no|num|number|#)\b",
+    r"\bbill\s+to\b",
+    r"\bbilled\s+to\b",
+    r"\bship\s+to\b",
+    r"\bshipping\s+address\b",
+    r"\border\s+(?:summary|confirmation|number|#)\b",
+    r"\bpayment\s+(?:receipt|confirmation|summary|advice)\b",
+    r"\btransaction\s+(?:id|number|details)\b",
+    r"\bstatement\s+of\s+account\b",
+    r"\bbank\s+statement\b",
+    r"\baccount\s+summary\b",
+    r"\bflight\s+ticket\b",
+    r"\bboarding\s+pass\b",
+    r"\be-ticket\b",
+    r"\belectricity\s+bill\b",
+    r"\butility\s+bill\b",
+    r"\bsalary\s+slip\b",
+    r"\bpayslip\s+for\b",
+    r"\btotal\s+amount\s+due\b",
+    r"\bamount\s+payable\b",
+    r"\bgst(?:in)?\s*:\s*[0-9a-z]{10,}\b",
+]
+
+RESUME_SECTION_PATTERNS = [
+    r"\b(?:work\s+)?experience\b",
+    r"\bemployment(?:\s+history)?\b",
+    r"\bcareer\s+summary\b",
+    r"\bprofessional\s+summary\b",
+    r"\bacademic\s+(?:background|history|qualifications?)\b",
+    r"\beducation\b",
+    r"\bqualifications?\b",
+    r"\btechnical\s+skills\b",
+    r"\bcore\s+competencies\b",
+    r"\bkey\s+skills\b",
+    r"\bskills?\b",
+    r"\bprojects?\b",
+    r"\bcurriculum\s+vitae\b",
+    r"\bresume\b",
+    r"\bbio-?data\b",
+    r"\bcareer\s+objective\b",
+    r"\bcertifications?\b",
+    r"\binternships?\b",
+    r"\bachievements?\b",
+]
+
+
+def is_valid_resume_content(text: str, filename: str) -> tuple[bool, str]:
+    """Inspect text and filename to verify the document is a genuine resume, not an invoice, bill, receipt, or random PDF."""
+    if not text or len(text.strip()) < 20:
+        return False, "Document text is empty or unreadable"
+
+    lower = text.lower()
+    lower_fn = (filename or "").lower()
+
+    # 1. Reject invoices / bills / receipts
+    for pat in INVOICE_BILL_PATTERNS:
+        if re.search(pat, lower):
+            return False, "Matched invoice or billing statement marker"
+
+    # 2. Reject non-resume filenames
+    bad_fn = ("invoice", "tax_invoice", "receipt", "statement", "ticket", "bill", "salaryslip", "payslip")
+    if any(b in lower_fn for b in bad_fn):
+        return False, f"Filename indicates non-resume ({filename})"
+
+    # 3. Check for resume markers in filename
+    has_fn_marker = any(k in lower_fn for k in ("resume", "cv", "biodata", "curriculum", "profile", "candidate", "applicant"))
+
+    # 4. Count resume sections and skills
+    sec_matches = [pat for pat in RESUME_SECTION_PATTERNS if re.search(pat, lower)]
+    skills = extract_skills(text)
+
+    if has_fn_marker:
+        return True, "Filename indicates resume"
+
+    if len(sec_matches) >= 2:
+        return True, "Standard resume sections found"
+
+    if skills and (len(sec_matches) >= 1 or "experience" in lower or "engineer" in lower or "developer" in lower):
+        return True, "Resume skills and professional context found"
+
+    return False, "Document lacks resume structure or professional skills"
+
+
 def _decode_text(data: bytes) -> str:
-    if not data or b"\x00" in data:
+    if not data:
         return ""
     try:
-        return data.decode("utf-8").replace("\x00", "")
-    except UnicodeDecodeError:
+        return data.decode("utf-8", errors="replace").replace("\x00", "")
+    except Exception:
         try:
-            return data.decode("latin-1").replace("\x00", "")
+            return data.decode("latin-1", errors="replace").replace("\x00", "")
         except Exception:
             return ""
 

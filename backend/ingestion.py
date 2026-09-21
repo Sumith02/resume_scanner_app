@@ -20,6 +20,7 @@ from backend.resume_service import (
     extract_resume_text,
     extract_skills,
     guess_name,
+    is_valid_resume_content,
     save_upload,
 )
 
@@ -42,12 +43,16 @@ def ingest_resume(
     Returns {"candidate": Candidate, "is_duplicate": bool, "parsed_skills": [...]}.
     """
     overrides = overrides or {}
+    text = extract_resume_text(filename, data)
+    valid, reason = is_valid_resume_content(text, filename)
+    if not valid:
+        raise ValueError(f"Skipped non-resume document '{filename}': {reason}")
+
     if meter:
         from backend.plans import check_quota, increment_usage
 
         check_quota(db, org, "resume_parses", 1)
         check_quota(db, org, "candidates", 1)
-    text = extract_resume_text(filename, data)
 
     raw_name = overrides.get("name") or guess_name(text) or filename
     raw_email = overrides.get("email") or extract_email(text)
@@ -154,7 +159,7 @@ def is_probably_bad_attachment(filename: str) -> bool:
         "certificate", "certification",
         "salary_slip", "salaryslip", "payslip", "pay_slip",
         "downloadstatement", "statement",
-        "invoice", "receipt", "challan",
+        "invoice", "receipt", "challan", "tax_invoice", "tax-invoice",
         "offer_letter", "offerletter", "appointment_letter", "relieving_letter",
         "boarding_pass", "boardingpass", "e-ticket", "eticket", "itinerary",
         "pan_card", "pancard", "aadhaar", "passport",
@@ -164,11 +169,12 @@ def is_probably_bad_attachment(filename: str) -> bool:
     # Tokenized word matching (avoids matching 'form' in 'platform', 'sign' in 'designer')
     tokens = set(re.findall(r"[a-z0-9]+", lower))
     bad_tokens = {
-        "statement", "downloadstatement", "invoice", "receipt", "bill", "bills",
-        "payslip", "payslips", "salary", "challan", "ticket", "tickets",
-        "itinerary", "booking", "policy", "insurance", "bank",
-        "aadhaar", "passport", "license", "licence", "certificate", "certificates",
-        "screenshot", "signature", "w2", "1099",
+        "statement", "downloadstatement", "invoice", "invoices", "receipt", "receipts",
+        "bill", "bills", "billing", "payslip", "payslips", "salary", "salaryslip",
+        "challan", "ticket", "tickets", "itinerary", "booking", "policy", "insurance",
+        "bank", "banking", "aadhaar", "passport", "license", "licence", "certificate",
+        "certificates", "certification", "screenshot", "signature", "w2", "1099",
+        "order", "orders", "tax", "gst", "utility", "transaction", "recharge", "voucher",
     }
 
     if has_resume_indicator:
