@@ -201,23 +201,57 @@ def gmail_status(
 
 
 def _get_redirect_uri(request: Request) -> str:
-    if os.getenv("GOOGLE_REDIRECT_URI"):
-        return os.getenv("GOOGLE_REDIRECT_URI")
+    from urllib.parse import urlparse
+
+    origin = request.headers.get("origin")
+    if origin and ("edvols.in" in origin or "localhost" in origin):
+        return f"{origin.rstrip('/')}/api/email/gmail/callback"
+
+    referer = request.headers.get("referer")
+    if referer:
+        p = urlparse(referer)
+        if p.netloc and ("edvols.in" in p.netloc or "localhost" in p.netloc):
+            return f"{p.scheme}://{p.netloc}/api/email/gmail/callback"
+
     host = request.headers.get("x-forwarded-host") or request.headers.get("host")
     if host:
+        host = host.split(",")[0].strip()
         proto = request.headers.get("x-forwarded-proto") or ("http" if host.startswith("localhost") or host.startswith("127.0.0.1") else "https")
-        return f"{proto}://{host}/api/email/gmail/callback"
-    return GOOGLE_REDIRECT_URI
+        if "edvols.in" in host or host.startswith("localhost") or host.startswith("127.0.0.1"):
+            return f"{proto}://{host}/api/email/gmail/callback"
+
+    env_uri = os.getenv("GOOGLE_REDIRECT_URI")
+    if env_uri and "vercel.app" not in env_uri:
+        return env_uri
+
+    return "https://talent.edvols.in/api/email/gmail/callback"
 
 
 def _get_frontend_url(request: Request) -> str:
-    if os.getenv("FRONTEND_URL"):
-        return os.getenv("FRONTEND_URL")
+    from urllib.parse import urlparse
+
+    origin = request.headers.get("origin")
+    if origin and ("edvols.in" in origin or "localhost" in origin):
+        return origin.rstrip("/")
+
+    referer = request.headers.get("referer")
+    if referer:
+        p = urlparse(referer)
+        if p.netloc and ("edvols.in" in p.netloc or "localhost" in p.netloc):
+            return f"{p.scheme}://{p.netloc}"
+
     host = request.headers.get("x-forwarded-host") or request.headers.get("host")
     if host:
+        host = host.split(",")[0].strip()
         proto = request.headers.get("x-forwarded-proto") or ("http" if host.startswith("localhost") or host.startswith("127.0.0.1") else "https")
-        return f"{proto}://{host}"
-    return FRONTEND_URL
+        if "edvols.in" in host or host.startswith("localhost") or host.startswith("127.0.0.1"):
+            return f"{proto}://{host}"
+
+    env_url = os.getenv("FRONTEND_URL")
+    if env_url and "vercel.app" not in env_url:
+        return env_url
+
+    return "https://talent.edvols.in"
 
 
 @router.get("/gmail/connect")
