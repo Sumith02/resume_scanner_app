@@ -226,6 +226,11 @@ export const api = {
     }),
   deleteCandidate: (id: number) =>
     request<{ message: string }>(`/api/org/candidates/${id}`, { method: "DELETE" }),
+  bulkDeleteCandidates: (candidateIds: number[]) =>
+    request<{ deleted: number }>("/api/org/candidates/bulk-delete", {
+      method: "POST",
+      body: JSON.stringify({ candidate_ids: candidateIds }),
+    }),
   listNotes: (id: number) => request<Note[]>(`/api/org/candidates/${id}/notes`),
   addNote: (id: number, body: string) =>
     request<Note>(`/api/org/candidates/${id}/notes`, {

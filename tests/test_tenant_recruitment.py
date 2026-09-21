@@ -274,3 +274,31 @@ def test_audit_log_records_actions(client, master):
     actions = {a["action"] for a in audit}
     assert "user.invited" in actions
     assert "seat.request_reviewed" in actions or "platform.company_created" in actions or "user.accept_invite" in actions
+
+
+def test_candidate_single_and_bulk_delete(client, master):
+    org, tok = make_company(client, master, "Delete Co", "del@test.com")
+    c1 = upload_candidate(client, tok, resume_text="Candidate One\none@del.com\nPython 3 years").json()
+    c2 = upload_candidate(client, tok, resume_text="Candidate Two\ntwo@del.com\nReact 4 years").json()
+    c3 = upload_candidate(client, tok, resume_text="Candidate Three\nthree@del.com\nGo 2 years").json()
+
+    # Single delete
+    res = client.delete(f"/api/org/candidates/{c1['id']}", headers=auth_headers(tok))
+    assert res.status_code == 200
+    assert res.json()["message"] == "Candidate deleted"
+
+    # Confirm c1 is deleted
+    assert client.get(f"/api/org/candidates/{c1['id']}", headers=auth_headers(tok)).status_code == 404
+
+    # Bulk delete c2 and c3
+    res_bulk = client.post(
+        "/api/org/candidates/bulk-delete",
+        json={"candidate_ids": [c2["id"], c3["id"]]},
+        headers=auth_headers(tok),
+    )
+    assert res_bulk.status_code == 200
+    assert res_bulk.json()["deleted"] == 2
+
+    # Confirm all deleted
+    remaining = client.get("/api/org/candidates", headers=auth_headers(tok)).json()
+    assert len(remaining) == 0

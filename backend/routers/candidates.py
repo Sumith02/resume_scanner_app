@@ -4,6 +4,7 @@ import os
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.config import MAX_RESUME_BYTES, UPLOAD_DIR
@@ -120,7 +121,10 @@ def delete_candidate(
     if c.resume_path:
         path = f"{UPLOAD_DIR}/{c.resume_path}"
         if os.path.exists(path):
-            os.remove(path)
+            try:
+                os.remove(path)
+            except Exception:
+                pass
     log_audit(
         db,
         org_id=org_id,
@@ -134,6 +138,34 @@ def delete_candidate(
     db.delete(c)
     db.commit()
     return {"message": "Candidate deleted"}
+
+
+class BulkDeleteIn(BaseModel):
+    candidate_ids: list[int]
+
+
+@router.post("/candidates/bulk-delete")
+def bulk_delete_candidates(
+    payload: BulkDeleteIn,
+    user: User = Depends(require_permission(CANDIDATE_DELETE)),
+    db: Session = Depends(get_db),
+):
+    org_id = ensure_company_scope(user)
+    deleted_count = 0
+    for cid in payload.candidate_ids:
+        c = get_candidate(db, org_id, cid)
+        if c:
+            if c.resume_path:
+                path = f"{UPLOAD_DIR}/{c.resume_path}"
+                if os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except Exception:
+                        pass
+            db.delete(c)
+            deleted_count += 1
+    db.commit()
+    return {"deleted": deleted_count}
 
 
 @router.post("/candidates")
