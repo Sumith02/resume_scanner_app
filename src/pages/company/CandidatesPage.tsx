@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Award, Calendar, CheckCircle2, CheckSquare, Plus, Search, SlidersHorizontal, Trash2 } from "lucide-react";
+import { Award, Calendar, CheckCircle2, CheckSquare, MapPin, Plus, Search, Send, SlidersHorizontal, Trash2 } from "lucide-react";
 import { api } from "../../api";
 import { Alert, Empty, StageBadge } from "../../components/ui";
 import { CandidateUploadModal } from "../../components/CandidateUploadModal";
@@ -7,6 +7,7 @@ import { CandidateDrawer } from "../../components/CandidateDrawer";
 import { BulkInterviewModal } from "../../components/BulkInterviewModal";
 import { BulkOfferModal } from "../../components/BulkOfferModal";
 import { BulkOnboardingModal } from "../../components/BulkOnboardingModal";
+import { VacancyBroadcastModal } from "../../components/VacancyBroadcastModal";
 import { useAuth } from "../../lib/auth";
 import { can } from "../../lib/perms";
 import { PIPELINE_STAGES, formatDate, initials, stageLabel } from "../../lib/format";
@@ -18,11 +19,14 @@ export function CandidatesPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [query, setQuery] = useState("");
+  const [location, setLocation] = useState("");
+  const [skill, setSkill] = useState("");
   const [stage, setStage] = useState("");
   const [tagId, setTagId] = useState("");
   const [jobId, setJobId] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
   const [showUpload, setShowUpload] = useState(false);
+  const [showBroadcast, setShowBroadcast] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [newTag, setNewTag] = useState("");
@@ -37,6 +41,7 @@ export function CandidatesPage() {
   const canInterview = can(user, "interview:manage");
   const canOffer = can(user, "offer:manage");
   const canOnboard = can(user, "onboarding:manage");
+  const canBroadcast = can(user, "email:manage") || user?.role === "MASTER_ADMIN" || user?.role === "COMPANY_OWNER" || user?.role === "COMPANY_ADMIN" || user?.role === "RECRUITER";
   const canBulkAct = canDelete || canInterview || canOffer || canOnboard;
 
   const selectedCandidates = candidates.filter((c) => selectedIds.includes(c.id));
@@ -44,7 +49,14 @@ export function CandidatesPage() {
   const load = useCallback(async () => {
     try {
       const [c, j, t] = await Promise.all([
-        api.listCandidates({ q: query || undefined, stage: stage || undefined, tag_id: tagId || undefined, job_id: jobId || undefined }),
+        api.listCandidates({
+          q: query || undefined,
+          stage: stage || undefined,
+          tag_id: tagId || undefined,
+          job_id: jobId || undefined,
+          location: location || undefined,
+          skill: skill || undefined,
+        }),
         api.listJobs(),
         api.listTags(),
       ]);
@@ -54,7 +66,7 @@ export function CandidatesPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load candidates");
     }
-  }, [query, stage, tagId, jobId]);
+  }, [query, location, skill, stage, tagId, jobId]);
 
   useEffect(() => {
     const t = setTimeout(() => void load(), 250);
@@ -137,12 +149,21 @@ export function CandidatesPage() {
               <CheckSquare size={15} /> {selectedIds.length === candidates.length ? "Deselect all" : `Select all (${candidates.length})`}
             </button>
           )}
+          {canBroadcast && jobs.length > 0 && (
+            <button
+              className="btn secondary"
+              onClick={() => setShowBroadcast(true)}
+              title="Broadcast open job vacancies to domain-matching or all candidates"
+            >
+              <Send size={15} /> Broadcast Vacancy
+            </button>
+          )}
           <button className="btn ghost" onClick={() => setShowTagInput((v) => !v)}>
             <SlidersHorizontal size={15} /> Tag
           </button>
           {can(user, "candidate:create") && (
             <button className="btn primary" onClick={() => setShowUpload(true)}>
-              <Plus size={16} /> Add candidate
+              <Plus size={16} /> Add / Upload Resumes
             </button>
           )}
         </div>
@@ -165,16 +186,32 @@ export function CandidatesPage() {
       )}
 
       <div className="card" style={{ marginBottom: 14 }}>
-        <div className="flex wrap">
-          <div className="flex" style={{ flex: 2, minWidth: 220 }}>
+        <div className="flex wrap" style={{ gap: 8 }}>
+          <div className="flex" style={{ flex: 2, minWidth: 200 }}>
             <Search size={16} className="muted" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search name, skill, company, resume text…"
+              placeholder="Search name, email, company, resume text…"
             />
           </div>
-          <select value={stage} onChange={(e) => setStage(e.target.value)} style={{ maxWidth: 170 }}>
+          <div className="flex" style={{ flex: 1.3, minWidth: 150 }}>
+            <MapPin size={16} className="muted" />
+            <input
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              placeholder="Location (e.g. Bengaluru, Remote)…"
+            />
+          </div>
+          <div className="flex" style={{ flex: 1.3, minWidth: 150 }}>
+            <SlidersHorizontal size={16} className="muted" />
+            <input
+              value={skill}
+              onChange={(e) => setSkill(e.target.value)}
+              placeholder="Skill (e.g. React, Python)…"
+            />
+          </div>
+          <select value={stage} onChange={(e) => setStage(e.target.value)} style={{ maxWidth: 150 }}>
             <option value="">All stages</option>
             {PIPELINE_STAGES.map((s) => (
               <option key={s} value={s}>
@@ -182,7 +219,7 @@ export function CandidatesPage() {
               </option>
             ))}
           </select>
-          <select value={tagId} onChange={(e) => setTagId(e.target.value)} style={{ maxWidth: 170 }}>
+          <select value={tagId} onChange={(e) => setTagId(e.target.value)} style={{ maxWidth: 140 }}>
             <option value="">All tags</option>
             {tags.map((t) => (
               <option key={t.id} value={t.id}>
@@ -190,7 +227,7 @@ export function CandidatesPage() {
               </option>
             ))}
           </select>
-          <select value={jobId} onChange={(e) => setJobId(e.target.value)} style={{ maxWidth: 220 }}>
+          <select value={jobId} onChange={(e) => setJobId(e.target.value)} style={{ maxWidth: 180 }}>
             <option value="">All jobs</option>
             {jobs.map((j) => (
               <option key={j.id} value={j.id}>
@@ -198,6 +235,22 @@ export function CandidatesPage() {
               </option>
             ))}
           </select>
+          {(query || location || skill || stage || tagId || jobId) && (
+            <button
+              className="btn sm ghost"
+              style={{ fontSize: 12 }}
+              onClick={() => {
+                setQuery("");
+                setLocation("");
+                setSkill("");
+                setStage("");
+                setTagId("");
+                setJobId("");
+              }}
+            >
+              Clear
+            </button>
+          )}
         </div>
       </div>
 
@@ -293,6 +346,7 @@ export function CandidatesPage() {
                 )}
                 <th>Candidate</th>
                 <th>Title</th>
+                <th>Location</th>
                 <th>Skills</th>
                 <th>Exp</th>
                 <th>Stage</th>
@@ -358,6 +412,16 @@ export function CandidatesPage() {
                       </div>
                     ) : null}
                   </td>
+                  <td>
+                    {c.location ? (
+                      <span className="flex" style={{ gap: 4, fontSize: 12.5 }}>
+                        <MapPin size={13} className="muted" />
+                        {c.location}
+                      </span>
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </td>
                   <td style={{ maxWidth: 260 }}>
                     {c.skills.slice(0, 4).map((s) => (
                       <span key={s} className="pill">
@@ -389,7 +453,7 @@ export function CandidatesPage() {
               ))}
               {candidates.length === 0 && (
                 <tr>
-                  <td colSpan={canDelete ? 8 : 6}>
+                  <td colSpan={canDelete ? 9 : 7}>
                     <Empty
                       title="No candidates found"
                       hint="Upload a resume or adjust your search filters."
@@ -404,9 +468,21 @@ export function CandidatesPage() {
 
       {showUpload && (
         <CandidateUploadModal
+          jobs={jobs}
           onClose={() => setShowUpload(false)}
           onCreated={() => {
             setShowUpload(false);
+            void load();
+          }}
+        />
+      )}
+
+      {showBroadcast && (
+        <VacancyBroadcastModal
+          jobs={jobs}
+          onClose={() => setShowBroadcast(false)}
+          onBroadcastSent={() => {
+            setNotice("Vacancy announcement broadcast sent successfully!");
             void load();
           }}
         />

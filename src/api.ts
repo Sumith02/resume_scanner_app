@@ -214,6 +214,15 @@ export const api = {
   getCandidate: (id: number) => request<Candidate>(`/api/org/candidates/${id}`),
   createCandidateForm: (form: FormData) =>
     request<Candidate>("/api/org/candidates", { method: "POST", body: form }, true),
+  bulkUploadCandidates: (form: FormData) =>
+    request<{
+      total: number;
+      succeeded: number;
+      duplicates: number;
+      failed: number;
+      candidates: Candidate[];
+      errors: { filename: string; error: string }[];
+    }>("/api/org/candidates/bulk-upload", { method: "POST", body: form }, true),
   setStage: (id: number, stage: string) =>
     request<Candidate>(`/api/org/candidates/${id}/stage`, {
       method: "PATCH",
@@ -466,6 +475,39 @@ export const api = {
     body: string;
     template_id?: number;
   }) => request<EmailMessage>("/api/email/send", { method: "POST", body: JSON.stringify(data) }),
+  getVacancyCandidates: (jobId: number, audience: "matching" | "all" = "matching") =>
+    request<{
+      job: Job;
+      total_candidates: number;
+      eligible_count: number;
+      audience: string;
+      candidates: Array<{
+        id: number;
+        name: string;
+        email: string;
+        current_title?: string;
+        skills: string[];
+        location?: string;
+        stage: string;
+        match_reason: string;
+      }>;
+    }>(`/api/email/vacancy-candidates${qs({ job_id: jobId, audience })}`),
+  broadcastVacancy: (data: {
+    job_id: number;
+    audience: "matching" | "all";
+    subject: string;
+    body: string;
+    candidate_ids?: number[];
+  }) =>
+    request<{
+      status: string;
+      sent_count: number;
+      job_title: string;
+      audience: string;
+    }>("/api/email/broadcast-vacancy", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
   gmailStatus: () => request<GmailStatus>("/api/email/gmail/status"),
   gmailConnect: () =>
     request<{ oauth_configured: boolean; auth_url: string | null; message?: string }>(

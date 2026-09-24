@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from backend.config import MAX_RESUME_BYTES, UPLOAD_DIR
 from backend.db import get_db
 from backend.deps import ensure_active_org, ensure_company_scope, require_permission
-from backend.models import Candidate, CandidateStage, Note, Organization, Tag, User
+from backend.models import Candidate, CandidateStage, Note, Organization, SourceKind, Tag, User
 from backend.rbac import (
     CANDIDATE_CREATE,
     CANDIDATE_DELETE,
@@ -20,8 +20,7 @@ from backend.rbac import (
     PIPELINE_MANAGE,
     TAG_MANAGE,
 )
-from backend.ingestion import _clean_pg_text
-from backend.ingestion import is_probably_bad_attachment
+from backend.ingestion import _clean_pg_text, ingest_resume, is_probably_bad_attachment
 from backend.repository import (
     find_dup_candidates,
     get_candidate,
@@ -34,9 +33,11 @@ from backend.resume_service import (
     extract_email,
     extract_experience_years,
     extract_current_title,
+    extract_location,
     extract_phone,
     extract_resume_text,
     extract_skills,
+    extract_summary,
     guess_name,
     save_upload,
 )
@@ -93,6 +94,8 @@ def search_candidates(
     q: str | None = Query(None, max_length=300),
     tag_id: int | None = None,
     job_id: int | None = None,
+    location: str | None = Query(None, max_length=100),
+    skill: str | None = Query(None, max_length=100),
     user: User = Depends(require_permission(CANDIDATE_READ)),
     db: Session = Depends(get_db),
 ):
@@ -100,7 +103,14 @@ def search_candidates(
     ensure_active_org(user, db)
     stage_enum = _assert_stage(stage) if stage else None
     rows = list_candidates(
-        db, org_id, stage=stage_enum, query=q, tag_id=tag_id, job_id=job_id
+        db,
+        org_id,
+        stage=stage_enum,
+        query=q,
+        tag_id=tag_id,
+        job_id=job_id,
+        location=location,
+        skill=skill,
     )
     return [candidate_out(c) for c in rows]
 
@@ -259,10 +269,10 @@ async def create_candidate(
     clean_phone = _clean_pg_text(parsed_phone)
     clean_title = _clean_pg_text(parsed_title)
     clean_company = _clean_pg_text(current_company)
-    clean_location = _clean_pg_text(location)
     clean_text = _clean_pg_text(resume_text)
     clean_skills = [_clean_pg_text(s) for s in parsed_skills if _clean_pg_text(s)]
-    raw_summary = summary or (clean_text[:1000] if clean_text else None)
+    clean_location = _clean_pg_text(location or (extract_location(clean_text) if clean_text else None))
+    raw_summary = summary or (extract_summary(clean_text, title=clean_title, exp_years=parsed_exp, skills=clean_skills) if clean_text else None)
     clean_summary = _clean_pg_text(raw_summary)
 
     # Duplicate detection within the tenant.
@@ -270,7 +280,6 @@ async def create_candidate(
     dup_of = dups[0].id if dups else None
 
     job_ids = [int(x) for x in job_ids_csv.split(",") if x.strip().isdigit()] if job_ids_csv else []
-    from backend.models import SourceKind
 
     try:
         source = SourceKind(manual_source)
@@ -321,6 +330,92 @@ async def create_candidate(
     )
     db.commit()
     return candidate_out(candidate)
+
+
+@router.post("/candidates/bulk-upload")
+async def bulk_upload_candidates(
+    resumes: list[UploadFile] = File(...),
+    job_id: int | None = Form(None),
+    stage: str | None = Form("NEW"),
+    user: User = Depends(require_permission(CANDIDATE_CREATE)),
+    db: Session = Depends(get_db),
+):
+    """Manually bulk upload multiple resumes simultaneously with batch parsing and duplicate detection."""
+    org_id = ensure_company_scope(user)
+    ensure_active_org(user, db)
+    org = db.get(Organization, org_id)
+    if not org:
+        raise HTTPException(404, "Organization not found")
+
+    stage_enum = _assert_stage(stage) if stage else CandidateStage.NEW
+
+    succeeded = []
+    errors = []
+    duplicate_count = 0
+
+    for file in resumes:
+        fn = file.filename or "resume.pdf"
+        try:
+            content = await file.read()
+            if not content:
+                errors.append({"filename": fn, "error": "File is empty"})
+                continue
+            if len(content) > MAX_RESUME_BYTES:
+                errors.append({
+                    "filename": fn,
+                    "error": f"File exceeds {MAX_RESUME_BYTES // (1024 * 1024)}MB size limit",
+                })
+                continue
+
+            overrides = {}
+            if job_id:
+                overrides["job_id"] = job_id
+
+            res = ingest_resume(
+                db,
+                org=org,
+                filename=fn,
+                data=content,
+                source=SourceKind.UPLOAD,
+                created_by_user_id=user.id,
+                stage=stage_enum,
+                actor_email=user.email,
+                overrides=overrides,
+                meter=True,
+            )
+            cand = res["candidate"]
+            if res.get("is_duplicate"):
+                duplicate_count += 1
+            succeeded.append(cand)
+        except Exception as exc:
+            errors.append({"filename": fn, "error": str(exc)})
+
+    db.commit()
+
+    log_audit(
+        db,
+        org_id=org_id,
+        actor_user_id=user.id,
+        actor_email=user.email,
+        action="candidate.bulk_uploaded",
+        resource_type="candidate",
+        resource_id=None,
+        details={
+            "total_files": len(resumes),
+            "succeeded": len(succeeded),
+            "duplicates": duplicate_count,
+            "failed": len(errors),
+        },
+    )
+
+    return {
+        "total": len(resumes),
+        "succeeded": len(succeeded),
+        "duplicates": duplicate_count,
+        "failed": len(errors),
+        "candidates": [candidate_out(c) for c in succeeded],
+        "errors": errors,
+    }
 
 
 @router.patch("/candidates/{candidate_id}/stage")

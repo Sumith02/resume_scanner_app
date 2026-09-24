@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Download, Mail, MapPin, Phone, Trash2 } from "lucide-react";
+import { Check, Copy, Download, Mail, MapPin, Phone, Sparkles, Trash2 } from "lucide-react";
 import { api, apiUrl } from "../api";
 import { Alert, Modal, StageBadge } from "./ui";
 import { PIPELINE_STAGES, formatDate, initials, stageLabel } from "../lib/format";
@@ -26,6 +26,14 @@ export function CandidateDrawer({
   const [notes, setNotes] = useState<Note[]>([]);
   const [noteText, setNoteText] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  function copySummary() {
+    if (!cand?.summary) return;
+    void navigator.clipboard.writeText(cand.summary);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
 
   async function load() {
     try {
@@ -249,19 +257,104 @@ export function CandidateDrawer({
           </div>
 
           <div>
-            <label>Summary</label>
             <div
               style={{
-                background: "var(--surface-2)",
-                borderRadius: 10,
-                padding: 12,
-                fontSize: 13,
-                maxHeight: 220,
-                overflowY: "auto",
-                whiteSpace: "pre-wrap",
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                borderRadius: 12,
+                overflow: "hidden",
+                boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
+                marginBottom: 16,
               }}
             >
-              {cand.summary || "No summary available."}
+              <div
+                style={{
+                  padding: "10px 14px",
+                  background: "linear-gradient(135deg, rgba(37,99,235,0.08), rgba(99,102,241,0.05))",
+                  borderBottom: "1px solid var(--border)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Sparkles size={16} color="var(--primary)" />
+                  <span style={{ fontWeight: 600, fontSize: 13.5 }}>Professional Summary</span>
+                </div>
+                {cand.summary && (
+                  <button
+                    type="button"
+                    className="btn sm ghost"
+                    style={{ fontSize: 11.5, padding: "2px 8px", height: 26 }}
+                    onClick={copySummary}
+                    title="Copy summary to clipboard"
+                  >
+                    {copied ? <Check size={12} color="#16a34a" /> : <Copy size={12} />}
+                    <span style={{ marginLeft: 4 }}>{copied ? "Copied" : "Copy"}</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Quick Profile Highlights Banner */}
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))",
+                  gap: 8,
+                  padding: "10px 14px",
+                  background: "#fcfdff",
+                  borderBottom: "1px solid var(--border)",
+                  fontSize: 12,
+                }}
+              >
+                <div>
+                  <span className="muted" style={{ display: "block", fontSize: 11 }}>Role</span>
+                  <strong>{cand.current_title || "Candidate"}</strong>
+                </div>
+                <div>
+                  <span className="muted" style={{ display: "block", fontSize: 11 }}>Experience</span>
+                  <strong>{cand.experience_years ? `${cand.experience_years} Years` : "Experienced"}</strong>
+                </div>
+                {cand.location && (
+                  <div>
+                    <span className="muted" style={{ display: "block", fontSize: 11 }}>Location</span>
+                    <strong>{cand.location}</strong>
+                  </div>
+                )}
+              </div>
+
+              {/* Formatted Summary Content */}
+              <div
+                style={{
+                  padding: 14,
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                  maxHeight: 250,
+                  overflowY: "auto",
+                  color: "#334155",
+                }}
+              >
+                {cand.summary ? (
+                  cand.summary.includes("\n- ") || cand.summary.includes("\n* ") || cand.summary.includes("\n• ") ? (
+                    <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6 }}>
+                      {cand.summary
+                        .split(/\n[-*•]\s+/)
+                        .filter(Boolean)
+                        .map((bullet, idx) => (
+                          <li key={idx}>{bullet.trim()}</li>
+                        ))}
+                    </ul>
+                  ) : (
+                    cand.summary.split("\n\n").map((para, idx) => (
+                      <p key={idx} style={{ margin: idx === 0 ? 0 : "8px 0 0 0" }}>
+                        {para.trim()}
+                      </p>
+                    ))
+                  )
+                ) : (
+                  <span className="muted">No summary extracted or provided yet.</span>
+                )}
+              </div>
             </div>
 
             <div className="mt-2">

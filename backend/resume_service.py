@@ -448,6 +448,178 @@ def guess_name(text: str) -> str | None:
     return None
 
 
+KNOWN_LOCATIONS = [
+    # India
+    "bengaluru", "bangalore", "hyderabad", "pune", "mumbai", "delhi", "new delhi",
+    "noida", "gurgaon", "gurugram", "chennai", "kolkata", "ahmedabad", "kochi",
+    "trivandrum", "chandigarh", "jaipur", "indore", "lucknow",
+    # North America
+    "san francisco", "san jose", "bay area", "seattle", "new york", "austin",
+    "boston", "chicago", "denver", "los angeles", "san diego", "atlanta",
+    "dallas", "houston", "washington", "toronto", "vancouver", "montreal", "ottawa",
+    # Europe & UK
+    "london", "berlin", "amsterdam", "paris", "dublin", "munich", "madrid",
+    "barcelona", "stockholm", "zurich", "warsaw",
+    # APAC & Middle East
+    "singapore", "tokyo", "sydney", "melbourne", "dubai", "abu dhabi", "tel aviv",
+    # Remote
+    "remote", "hybrid",
+]
+
+
+def extract_location(text: str) -> str | None:
+    """Extract candidate location from resume text."""
+    if not text:
+        return None
+
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    header_lines = lines[:25]
+
+    # 1. Look for explicit label: "Location: ...", "Address: ...", "City: ..."
+    label_pattern = re.compile(
+        r"(?:^|\b)(?:location|address|city|residing\s+in|based\s+in)\s*[:\-]\s*([^\n\r;|]+)",
+        re.IGNORECASE,
+    )
+    for line in header_lines:
+        m = label_pattern.search(line)
+        if m:
+            val = m.group(1).strip()
+            val = re.sub(r"\s+", " ", val).strip(" •|:-")
+            if 2 <= len(val) <= 60 and not re.search(r"@|\d{7,}", val):
+                return val.title()
+
+    # 2. Check header lines for known locations / tech hubs
+    for line in header_lines:
+        if "@" in line or "http" in line or re.search(r"\d{7,}", line):
+            continue
+        line_lower = line.lower()
+        for loc in KNOWN_LOCATIONS:
+            if re.search(rf"\b{re.escape(loc)}\b", line_lower):
+                parts = [p.strip() for p in line.split("|") if p.strip()]
+                for p in parts:
+                    if loc in p.lower() and len(p) <= 50 and not re.search(r"@|\d{5,}", p):
+                        return p.title()
+                return loc.title()
+
+    # 3. Check for City, Country / State pattern in header
+    city_state_pat = re.compile(
+        r"\b([A-Z][a-z]{2,20}(?:\s+[A-Z][a-z]{2,20})?),\s*([A-Z]{2}|India|USA|United States|UK|United Kingdom|Canada|Germany|Australia|Singapore|UAE|France|Netherlands)\b"
+    )
+    for line in header_lines:
+        if "@" in line or "http" in line:
+            continue
+        m = city_state_pat.search(line)
+        if m:
+            return f"{m.group(1).strip()}, {m.group(2).strip()}"
+
+    return None
+
+
+def extract_summary(
+    text: str,
+    title: str | None = None,
+    exp_years: int | None = None,
+    skills: list[str] | None = None,
+) -> str | None:
+    """Extract or intelligently compose a clean professional candidate summary.
+
+    Avoids dumping raw phone numbers, emails, or chopped incomplete text.
+    """
+    if not text:
+        return None
+
+    # Step 1: Look for explicit summary header
+    section_break = re.compile(
+        r"(?im)^\s*(?:(?:work\s+)?experience|employment|technical\s+skills|skills|core\s+competencies|education|academic|projects|certifications?|awards?|achievements?)\s*[:\-\s]*$"
+    )
+    summary_header = re.compile(
+        r"(?im)^\s*(?:professional\s+summary|career\s+summary|executive\s+summary|summary|profile|about\s+me|career\s+objective|objective)\s*[:\-\s]*$"
+    )
+    inline_header = re.compile(
+        r"(?im)^\s*(?:professional\s+summary|career\s+summary|executive\s+summary|summary|profile|about\s+me|career\s+objective|objective)\s*[:\-]\s*(.+)$"
+    )
+
+    lines = [ln.strip() for ln in text.splitlines()]
+    found_summary_lines: list[str] = []
+    collecting = False
+
+    for line in lines:
+        if not collecting:
+            inline_m = inline_header.match(line)
+            if inline_m:
+                collecting = True
+                content = inline_m.group(1).strip()
+                if content:
+                    found_summary_lines.append(content)
+                continue
+            if summary_header.match(line):
+                collecting = True
+                continue
+        else:
+            if section_break.match(line):
+                break
+            if not line:
+                if len(" ".join(found_summary_lines)) > 150:
+                    break
+                continue
+            if "@" in line or re.search(r"https?://|www\.", line, re.I) or re.search(r"\+?\d{10,}", line):
+                continue
+            found_summary_lines.append(line)
+            if len(" ".join(found_summary_lines)) >= 600:
+                break
+
+    extracted = " ".join(found_summary_lines).strip()
+    extracted = re.sub(r"\s+", " ", extracted)
+
+    if len(extracted) >= 40:
+        return extracted[:1200]
+
+    # Step 2: If no explicit summary section was found, synthesize a clean profile summary
+    parts = []
+    if title:
+        exp_str = f"with {exp_years}+ years of experience" if exp_years and exp_years > 0 else "with professional experience"
+        parts.append(f"{title} {exp_str}")
+    elif exp_years and exp_years > 0:
+        parts.append(f"Experienced professional with {exp_years}+ years of background")
+
+    if skills:
+        top_skills = [s.title() for s in skills[:6]]
+        if len(top_skills) > 1:
+            skill_text = ", ".join(top_skills[:-1]) + f" and {top_skills[-1]}"
+        else:
+            skill_text = top_skills[0]
+        if parts:
+            parts.append(f"specializing in {skill_text}.")
+        else:
+            parts.append(f"Professional specializing in {skill_text}.")
+    elif parts:
+        parts.append("with a strong background in software engineering and delivery.")
+
+    if parts:
+        synthesis = " ".join(parts)
+        if not synthesis.endswith("."):
+            synthesis += "."
+        for l in lines[1:10]:
+            l_clean = re.sub(r"\s+", " ", l).strip()
+            if 30 <= len(l_clean) <= 200 and not any(w in l_clean.lower() for w in ["email", "phone", "@", "github", "linkedin", "http", "address"]):
+                if not re.search(r"^[A-Z\s]{4,}$", l_clean):
+                    synthesis += f" {l_clean}"
+                    break
+        return synthesis[:1000]
+
+    top_clean = [
+        l for l in lines[:15]
+        if 20 <= len(l) <= 200
+        and "@" not in l
+        and not re.search(r"https?://|\d{7,}", l)
+        and not re.search(r"^(?:resume|curriculum|skills|education)", l, re.I)
+    ]
+    if top_clean:
+        return " ".join(top_clean[:3])[:800]
+
+    return None
+
+
 def detect_duplicate_key(candidate) -> tuple[str | None, str | None, str | None]:
     email = (candidate.email or "").strip().lower() or None
     phone = re.sub(r"[^\d]", "", candidate.phone or "") or None
@@ -479,3 +651,4 @@ def save_upload(
             print(f"Failed to write upload to {target}: {err}")
 
     return rel
+

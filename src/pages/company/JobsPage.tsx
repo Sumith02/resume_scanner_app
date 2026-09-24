@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Plus, Sparkles, Trash2 } from "lucide-react";
+import { Plus, Send, Sparkles, Trash2 } from "lucide-react";
 import { api } from "../../api";
 import { Alert, Empty, Modal, StatusBadge } from "../../components/ui";
+import { VacancyBroadcastModal } from "../../components/VacancyBroadcastModal";
 import { useAuth } from "../../lib/auth";
 import { can } from "../../lib/perms";
 import { formatDate } from "../../lib/format";
@@ -26,6 +27,9 @@ export function JobsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Job | null>(null);
+  const [broadcastJob, setBroadcastJob] = useState<Job | null>(null);
+
+  const canBroadcast = can(user, "email:manage") || user?.role === "MASTER_ADMIN" || user?.role === "COMPANY_OWNER" || user?.role === "COMPANY_ADMIN" || user?.role === "RECRUITER";
 
   async function load() {
     try {
@@ -90,6 +94,15 @@ export function JobsPage() {
                 Created {formatDate(j.created_at)}
               </span>
               <span className="flex" style={{ gap: 4 }}>
+                {canBroadcast && j.status === "OPEN" && (
+                  <button
+                    className="btn sm secondary"
+                    onClick={() => setBroadcastJob(j)}
+                    title="Broadcast vacancy announcement to matching or all candidates"
+                  >
+                    <Send size={13} /> Announce
+                  </button>
+                )}
                 {can(user, "job:edit") && (
                   <button
                     className="btn sm ghost"
@@ -130,6 +143,17 @@ export function JobsPage() {
               );
             }
             void load();
+          }}
+        />
+      )}
+
+      {broadcastJob && (
+        <VacancyBroadcastModal
+          jobs={jobs}
+          defaultJobId={broadcastJob.id}
+          onClose={() => setBroadcastJob(null)}
+          onBroadcastSent={() => {
+            setNotice(`Vacancy announcement for "${broadcastJob.title}" broadcast sent successfully!`);
           }}
         />
       )}

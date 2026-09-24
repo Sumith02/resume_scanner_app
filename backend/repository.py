@@ -134,6 +134,8 @@ def list_candidates(
     job_id: int | None = None,
     query: str | None = None,
     tag_id: int | None = None,
+    location: str | None = None,
+    skill: str | None = None,
     limit: int = 200,
 ) -> list[Candidate]:
     q = db.query(Candidate).filter(Candidate.organization_id == org_id)
@@ -143,6 +145,17 @@ def list_candidates(
         q = q.filter(json_array_contains_id(Candidate.matched_job_ids, job_id))
     if tag_id:
         q = q.filter(Candidate.tags.any(Tag.id == tag_id))
+    if location and location.strip():
+        q = q.filter(Candidate.location.ilike(f"%{location.strip()}%"))
+    if skill and skill.strip():
+        s_like = f"%{skill.strip()}%"
+        q = q.filter(
+            or_(
+                func.cast(Candidate.skills, Text).ilike(s_like),
+                Candidate.current_title.ilike(s_like),
+                Candidate.resume_text.ilike(s_like),
+            )
+        )
     if query:
         like = _wildcard(query)
         q = q.filter(
@@ -152,8 +165,10 @@ def list_candidates(
                 Candidate.phone.ilike(like),
                 Candidate.current_title.ilike(like),
                 Candidate.current_company.ilike(like),
+                Candidate.location.ilike(like),
                 Candidate.summary.ilike(like),
                 Candidate.resume_text.ilike(like),
+                func.cast(Candidate.skills, Text).ilike(like),
             )
         )
     return q.order_by(Candidate.created_at.desc()).limit(limit).all()

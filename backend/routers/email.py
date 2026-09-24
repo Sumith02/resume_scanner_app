@@ -15,20 +15,23 @@ from backend.config import DEMO_INBOX_DIR, FRONTEND_URL, GOOGLE_REDIRECT_URI
 from backend.db import get_db
 from backend.deps import ensure_active_org, ensure_company_scope, require_permission
 from backend.models import (
+    Candidate,
     EmailAccount,
     EmailMessage,
     EmailTemplate,
+    Job,
     Organization,
     User,
 )
 from backend.plans import consume_quota, require_feature
 from backend.rbac import EMAIL_MANAGE, EMAIL_READ, GMAIL_CONNECT
-from backend.repository import get_candidate, log_audit
+from backend.repository import get_candidate, get_job, log_audit
 from backend.security import create_oauth_state, decode_oauth_state
 from backend.serializers import (
     email_account_out,
     email_message_out,
     email_template_out,
+    job_out,
 )
 
 router = APIRouter(prefix="/api/email", tags=["email"])
@@ -171,6 +174,205 @@ def send(
     db.commit()
     db.refresh(message)
     return email_message_out(message)
+
+
+class VacancyBroadcastIn(BaseModel):
+    job_id: int
+    audience: str = "matching"  # "matching" | "all"
+    subject: str = Field(min_length=1, max_length=300)
+    body: str = Field(min_length=1)
+    candidate_ids: list[int] | None = None
+
+
+def _evaluate_candidate_job_match(c: Candidate, job: Job) -> tuple[bool, str]:
+    """Check if candidate matches the job's domain/skills, and return match reason."""
+    if not c.email:
+        return False, "No email address"
+
+    if job.id in (c.matched_job_ids or []):
+        return True, "Pipeline match"
+
+    cand_skills = {s.lower() for s in (c.skills or [])}
+    job_skills = {s.lower() for s in (job.skills or [])}
+
+    overlap = cand_skills & job_skills
+    if overlap:
+        matched_str = ", ".join(list(overlap)[:3])
+        return True, f"Skill match ({matched_str})"
+
+    # Job title tokens
+    import re
+    ignore_words = {"and", "the", "for", "with", "all", "any", "our", "lead", "senior", "junior", "staff", "head", "role"}
+    title_words = {
+        w.lower()
+        for w in re.split(r"[\s\-_/,]+", job.title or "")
+        if len(w) > 2 and w.lower() not in ignore_words
+    }
+    cand_title = (c.current_title or "").lower()
+    for tw in title_words:
+        if tw in cand_title:
+            return True, f"Title match ('{tw}')"
+
+    if job.department:
+        dept = job.department.lower()
+        if dept in cand_title or any(dept in s for s in cand_skills):
+            return True, f"Department match ({job.department})"
+
+    resume_lower = (c.resume_text or "").lower()
+    for js in job_skills:
+        if re.search(rf"\b{re.escape(js)}\b", resume_lower):
+            return True, f"Resume skill match ({js})"
+
+    return False, "No match"
+
+
+def _interpolate_vacancy_text(template_str: str, candidate: Candidate, job: Job, org: Organization) -> str:
+    res = template_str
+    replacements = {
+        "{{candidate_name}}": candidate.name or "Candidate",
+        "{{job_title}}": job.title or "Open Role",
+        "{{company_name}}": org.name or "Our Company",
+        "{{location}}": job.location or "Not specified",
+        "{{salary_range}}": job.salary_range or "Competitive",
+        "{{department}}": job.department or "General",
+        "{{employment_type}}": job.employment_type or "Full-time",
+        "{{requirements}}": (job.requirements or "See job description").strip(),
+    }
+    for k, v in replacements.items():
+        res = res.replace(k, str(v))
+    return res
+
+
+@router.get("/vacancy-candidates")
+def get_vacancy_candidates(
+    job_id: int,
+    audience: str = Query("matching", pattern="^(matching|all)$"),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission(EMAIL_READ)),
+):
+    org_id = ensure_company_scope(user)
+    ensure_active_org(user, db)
+    job = get_job(db, org_id, job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found")
+
+    candidates = (
+        db.query(Candidate)
+        .filter(Candidate.organization_id == org_id)
+        .order_by(Candidate.created_at.desc())
+        .all()
+    )
+
+    recipients = []
+    for c in candidates:
+        if not c.email:
+            continue
+        if audience == "all":
+            recipients.append((c, "All candidates broadcast"))
+        else:
+            is_match, reason = _evaluate_candidate_job_match(c, job)
+            if is_match:
+                recipients.append((c, reason))
+
+    return {
+        "job": job_out(job),
+        "total_candidates": len(candidates),
+        "eligible_count": len(recipients),
+        "audience": audience,
+        "candidates": [
+            {
+                "id": c.id,
+                "name": c.name,
+                "email": c.email,
+                "current_title": c.current_title,
+                "skills": c.skills or [],
+                "location": c.location,
+                "stage": c.stage.value if hasattr(c.stage, "value") else c.stage,
+                "match_reason": reason,
+            }
+            for c, reason in recipients
+        ],
+    }
+
+
+@router.post("/broadcast-vacancy", status_code=200)
+def broadcast_vacancy(
+    payload: VacancyBroadcastIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission(EMAIL_MANAGE)),
+):
+    org_id = ensure_company_scope(user)
+    ensure_active_org(user, db)
+    org = _org(db, user)
+
+    job = get_job(db, org_id, payload.job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found")
+
+    candidates = (
+        db.query(Candidate)
+        .filter(Candidate.organization_id == org_id)
+        .all()
+    )
+
+    target_candidates: list[Candidate] = []
+    if payload.candidate_ids:
+        id_set = set(payload.candidate_ids)
+        target_candidates = [c for c in candidates if c.id in id_set and c.email]
+    elif payload.audience == "all":
+        target_candidates = [c for c in candidates if c.email]
+    else:  # matching domain/skills
+        for c in candidates:
+            if not c.email:
+                continue
+            is_match, _ = _evaluate_candidate_job_match(c, job)
+            if is_match:
+                target_candidates.append(c)
+
+    if not target_candidates:
+        raise HTTPException(422, "No candidates with valid email address found for the selected audience")
+
+    consume_quota(db, org, "emails_sent", len(target_candidates))
+
+    sent_count = 0
+    for cand in target_candidates:
+        interpolated_subject = _interpolate_vacancy_text(payload.subject, cand, job, org)
+        interpolated_body = _interpolate_vacancy_text(payload.body, cand, job, org)
+
+        email_service.send_email(
+            db,
+            org_id=org_id,
+            to_email=cand.email,
+            subject=interpolated_subject,
+            body=interpolated_body,
+            candidate_id=cand.id,
+            created_by_user_id=user.id,
+        )
+        sent_count += 1
+
+    log_audit(
+        db,
+        org_id=org_id,
+        actor_user_id=user.id,
+        actor_email=user.email,
+        action="email.vacancy_broadcast",
+        resource_type="job",
+        resource_id=job.id,
+        details={
+            "job_title": job.title,
+            "audience": payload.audience,
+            "sent_count": sent_count,
+        },
+    )
+
+    db.commit()
+
+    return {
+        "status": "success",
+        "sent_count": sent_count,
+        "job_title": job.title,
+        "audience": payload.audience,
+    }
 
 
 # -- Gmail connection & sync ---------------------------------------------

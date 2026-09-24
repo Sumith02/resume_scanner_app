@@ -19,7 +19,9 @@ from backend.resume_service import (
     extract_phone,
     extract_resume_text,
     extract_current_title,
+    extract_location,
     extract_skills,
+    extract_summary,
     guess_name,
     is_valid_resume_content,
     save_upload,
@@ -68,11 +70,12 @@ def ingest_resume(
     clean_phone = _clean_pg_text(raw_phone)
     clean_title = _clean_pg_text(overrides.get("current_title") or extract_current_title(text))
     clean_company = _clean_pg_text(overrides.get("current_company"))
-    clean_location = _clean_pg_text(overrides.get("location"))
-    raw_summary = overrides.get("summary") or (text[:1000] if text else None)
+    extracted_loc = extract_location(text)
+    clean_location = _clean_pg_text(overrides.get("location") or extracted_loc)
+    clean_skills = [_clean_pg_text(s) for s in skills if _clean_pg_text(s)]
+    raw_summary = overrides.get("summary") or extract_summary(text, title=clean_title, exp_years=experience, skills=clean_skills)
     clean_summary = _clean_pg_text(raw_summary)
     clean_text = _clean_pg_text(text)
-    clean_skills = [_clean_pg_text(s) for s in skills if _clean_pg_text(s)]
 
     dups = find_dup_candidates(db, org.id, clean_email, clean_phone, clean_name)
     dup_of = dups[0].id if dups else None
@@ -125,7 +128,7 @@ def ingest_resume(
     # Keep Gmail imports consistent with manual uploads: immediately attach
     # the candidate to open jobs with at least 25% skill overlap.
     from backend.models import Job, JobStatus
-    candidate.matched_job_ids = [
+    matched_ids = [
         job.id
         for job in db.query(Job).filter(
             Job.organization_id == org.id, Job.status != JobStatus.CLOSED
@@ -135,6 +138,22 @@ def ingest_resume(
         and len(set(s.lower() for s in (job.skills or [])) & set(s.lower() for s in clean_skills))
         / max(1, len(job.skills or [])) >= 0.25
     ]
+    if overrides.get("job_id"):
+        try:
+            jid = int(overrides["job_id"])
+            if jid not in matched_ids:
+                matched_ids.append(jid)
+        except (ValueError, TypeError):
+            pass
+    if overrides.get("matched_job_ids"):
+        for jid in overrides["matched_job_ids"]:
+            try:
+                j_int = int(jid)
+                if j_int not in matched_ids:
+                    matched_ids.append(j_int)
+            except (ValueError, TypeError):
+                pass
+    candidate.matched_job_ids = matched_ids
     db.add(candidate)
     db.flush()
 
