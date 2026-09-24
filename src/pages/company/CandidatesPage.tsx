@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { CheckSquare, Plus, Search, SlidersHorizontal, Trash2 } from "lucide-react";
+import { Award, Calendar, CheckCircle2, CheckSquare, Plus, Search, SlidersHorizontal, Trash2 } from "lucide-react";
 import { api } from "../../api";
 import { Alert, Empty, StageBadge } from "../../components/ui";
 import { CandidateUploadModal } from "../../components/CandidateUploadModal";
 import { CandidateDrawer } from "../../components/CandidateDrawer";
+import { BulkInterviewModal } from "../../components/BulkInterviewModal";
+import { BulkOfferModal } from "../../components/BulkOfferModal";
+import { BulkOnboardingModal } from "../../components/BulkOnboardingModal";
 import { useAuth } from "../../lib/auth";
 import { can } from "../../lib/perms";
 import { PIPELINE_STAGES, formatDate, initials, stageLabel } from "../../lib/format";
@@ -26,8 +29,17 @@ export function CandidatesPage() {
   const [showTagInput, setShowTagInput] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [deleting, setDeleting] = useState(false);
+  const [showBulkInterview, setShowBulkInterview] = useState(false);
+  const [showBulkOffer, setShowBulkOffer] = useState(false);
+  const [showBulkOnboard, setShowBulkOnboard] = useState(false);
 
   const canDelete = can(user, "candidate:delete") || user?.role === "MASTER_ADMIN" || user?.role === "COMPANY_OWNER" || user?.role === "COMPANY_ADMIN" || user?.role === "RECRUITER";
+  const canInterview = can(user, "interview:manage");
+  const canOffer = can(user, "offer:manage");
+  const canOnboard = can(user, "onboarding:manage");
+  const canBulkAct = canDelete || canInterview || canOffer || canOnboard;
+
+  const selectedCandidates = candidates.filter((c) => selectedIds.includes(c.id));
 
   const load = useCallback(async () => {
     try {
@@ -116,23 +128,13 @@ export function CandidatesPage() {
           </div>
         </div>
         <div className="flex" style={{ gap: 8 }}>
-          {canDelete && candidates.length > 0 && (
+          {canBulkAct && candidates.length > 0 && (
             <button
               className={`btn sm ${selectedIds.length > 0 ? "secondary" : "ghost"}`}
               onClick={toggleSelectAll}
               title="Select or deselect all candidates"
             >
               <CheckSquare size={15} /> {selectedIds.length === candidates.length ? "Deselect all" : `Select all (${candidates.length})`}
-            </button>
-          )}
-          {canDelete && selectedIds.length > 0 && (
-            <button
-              className="btn sm danger"
-              disabled={deleting}
-              onClick={handleBulkDelete}
-              title="Delete selected candidates"
-            >
-              <Trash2 size={15} /> {deleting ? "Deleting…" : `Delete (${selectedIds.length})`}
             </button>
           )}
           <button className="btn ghost" onClick={() => setShowTagInput((v) => !v)}>
@@ -205,31 +207,70 @@ export function CandidatesPage() {
           style={{
             marginBottom: 14,
             padding: "10px 16px",
-            background: "rgba(239, 68, 68, 0.08)",
-            border: "1px solid rgba(239, 68, 68, 0.25)",
+            background: "rgba(14, 165, 233, 0.08)",
+            border: "1px solid rgba(14, 165, 233, 0.3)",
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: 10,
             borderRadius: 8,
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: "#b91c1c" }}>
-            <span>{selectedIds.length} candidate(s) selected</span>
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
+            <span style={{ fontWeight: 650, color: "var(--brand, #0284c7)" }}>
+              {selectedIds.length} candidate{selectedIds.length > 1 ? "s" : ""} selected
+            </span>
             <button
               className="btn sm ghost"
+              style={{ padding: "2px 8px", fontSize: 12 }}
               onClick={() => setSelectedIds([])}
             >
-              Cancel
+              Deselect
             </button>
-            <button
-              className="btn sm danger"
-              disabled={deleting}
-              onClick={handleBulkDelete}
-            >
-              <Trash2 size={14} /> {deleting ? "Deleting…" : `Delete selected (${selectedIds.length})`}
-            </button>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {canInterview && (
+              <button
+                className="btn sm primary"
+                onClick={() => setShowBulkInterview(true)}
+                title="Schedule interview for selected candidates"
+              >
+                <Calendar size={14} /> Schedule Interview ({selectedIds.length})
+              </button>
+            )}
+
+            {canOffer && (
+              <button
+                className="btn sm secondary"
+                onClick={() => setShowBulkOffer(true)}
+                title="Create offers for selected candidates"
+              >
+                <Award size={14} /> Make Offer ({selectedIds.length})
+              </button>
+            )}
+
+            {canOnboard && (
+              <button
+                className="btn sm secondary"
+                onClick={() => setShowBulkOnboard(true)}
+                title="Start onboarding for selected candidates"
+              >
+                <CheckCircle2 size={14} /> Start Onboarding ({selectedIds.length})
+              </button>
+            )}
+
+            {canDelete && (
+              <button
+                className="btn sm danger"
+                disabled={deleting}
+                onClick={handleBulkDelete}
+                title="Delete selected candidates"
+              >
+                <Trash2 size={14} /> {deleting ? "Deleting…" : `Delete (${selectedIds.length})`}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -239,7 +280,7 @@ export function CandidatesPage() {
           <table>
             <thead>
               <tr>
-                {canDelete && (
+                {canBulkAct && (
                   <th style={{ width: 42, textAlign: "center" }}>
                     <input
                       type="checkbox"
@@ -265,11 +306,11 @@ export function CandidatesPage() {
                   key={c.id}
                   style={{
                     cursor: "pointer",
-                    background: selectedIds.includes(c.id) ? "rgba(239, 68, 68, 0.04)" : undefined,
+                    background: selectedIds.includes(c.id) ? "rgba(14, 165, 233, 0.08)" : undefined,
                   }}
                   onClick={() => setSelected(c.id)}
                 >
-                  {canDelete && (
+                  {canBulkAct && (
                     <td
                       style={{ textAlign: "center", width: 42 }}
                       onClick={(e) => {
@@ -380,6 +421,47 @@ export function CandidatesPage() {
           canDelete={canDelete}
           onClose={() => setSelected(null)}
           onChanged={() => void load()}
+        />
+      )}
+
+      {showBulkInterview && (
+        <BulkInterviewModal
+          selectedCandidates={selectedCandidates}
+          jobs={jobs}
+          onClose={() => setShowBulkInterview(false)}
+          onSaved={(count) => {
+            setShowBulkInterview(false);
+            setNotice(`Successfully scheduled interviews for ${count} candidate(s).`);
+            setSelectedIds([]);
+            void load();
+          }}
+        />
+      )}
+
+      {showBulkOffer && (
+        <BulkOfferModal
+          selectedCandidates={selectedCandidates}
+          jobs={jobs}
+          onClose={() => setShowBulkOffer(false)}
+          onSaved={(count) => {
+            setShowBulkOffer(false);
+            setNotice(`Successfully generated offers for ${count} candidate(s).`);
+            setSelectedIds([]);
+            void load();
+          }}
+        />
+      )}
+
+      {showBulkOnboard && (
+        <BulkOnboardingModal
+          selectedCandidates={selectedCandidates}
+          onClose={() => setShowBulkOnboard(false)}
+          onSaved={(count) => {
+            setShowBulkOnboard(false);
+            setNotice(`Successfully assigned onboarding tasks for ${count} candidate(s).`);
+            setSelectedIds([]);
+            void load();
+          }}
         />
       )}
     </>

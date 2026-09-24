@@ -9,9 +9,9 @@ from sqlalchemy.orm import Session
 
 from backend.db import get_db
 from backend.deps import ensure_active_org, ensure_company_scope, require_permission
-from backend.models import OnboardingStatus, OnboardingTask, User, utcnow
+from backend.models import CandidateStage, OnboardingStatus, OnboardingTask, User, utcnow
 from backend.rbac import OFFER_READ, ONBOARDING_MANAGE
-from backend.repository import get_candidate
+from backend.repository import get_candidate, log_audit
 from backend.serializers import onboarding_task_out
 
 router = APIRouter(prefix="/api/onboarding", tags=["onboarding"])
@@ -70,6 +70,72 @@ def create_task(
     db.commit()
     db.refresh(row)
     return onboarding_task_out(row)
+
+
+class BulkTaskItem(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    due_date: datetime | None = None
+
+
+class BulkTaskIn(BaseModel):
+    candidate_ids: list[int] = Field(min_length=1)
+    tasks: list[BulkTaskItem] = Field(default_factory=list)
+    title: str | None = None
+    due_date: datetime | None = None
+    advance_stage: bool = True
+
+
+@router.post("/bulk", status_code=201)
+def bulk_create_tasks(
+    payload: BulkTaskIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission(ONBOARDING_MANAGE)),
+):
+    org_id = ensure_company_scope(user)
+    ensure_active_org(user, db)
+
+    task_defs: list[tuple[str, datetime | None]] = []
+    for t in payload.tasks:
+        task_defs.append((t.title, t.due_date))
+    if payload.title:
+        task_defs.append((payload.title, payload.due_date))
+    if not task_defs:
+        task_defs.append(("Complete Onboarding", payload.due_date))
+
+    created = []
+    for cid in payload.candidate_ids:
+        candidate = get_candidate(db, org_id, cid)
+        if candidate is None:
+            continue
+        for title, due in task_defs:
+            row = OnboardingTask(
+                organization_id=org_id,
+                candidate_id=cid,
+                title=title,
+                due_date=due,
+            )
+            db.add(row)
+            created.append(row)
+        if payload.advance_stage:
+            candidate.stage = CandidateStage.ONBOARDING
+
+    log_audit(
+        db,
+        org_id=org_id,
+        actor_user_id=user.id,
+        actor_email=user.email,
+        action="onboarding.bulk_tasks_created",
+        resource_type="onboarding_task",
+        resource_id=None,
+        details={
+            "candidate_ids": payload.candidate_ids,
+            "created_count": len(created),
+        },
+    )
+    db.commit()
+    for row in created:
+        db.refresh(row)
+    return {"created_count": len(created), "tasks": [onboarding_task_out(t) for t in created]}
 
 
 @router.patch("/{task_id}")

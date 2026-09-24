@@ -382,3 +382,72 @@ def test_resume_validation_filters_invoices_and_bills():
     )
     is_valid, reason = is_valid_resume_content(resume_text, "sumith k s (1).pdf")
     assert is_valid
+
+
+def test_bulk_interviews_offers_and_onboarding(client, master):
+    org, tok = _setup(client, master, "Bulk Ops Co", "bulkops@test.com")
+    c1 = upload_candidate(client, tok, "Alice Brown\nalice@b.com\nPython React")
+    c2 = upload_candidate(client, tok, "Bob Green\nbob@g.com\nPython Django")
+    c3 = upload_candidate(client, tok, "Charlie White\ncharlie@w.com\nFastAPI Docker")
+    job = make_job(client, tok, "Fullstack Engineer", ["python", "react"])
+
+    # 1. Bulk Interview
+    res_iv = client.post(
+        "/api/interviews/bulk",
+        json={
+            "candidate_ids": [c1["id"], c2["id"]],
+            "job_id": job["id"],
+            "title": "Technical Assessment",
+            "mode": "VIDEO",
+            "location": "Google Meet",
+            "advance_stage": True,
+        },
+        headers=auth_headers(tok),
+    )
+    assert res_iv.status_code == 201, res_iv.text
+    data_iv = res_iv.json()
+    assert data_iv["created_count"] == 2
+    assert len(data_iv["interviews"]) == 2
+
+    # Check stage updated to INTERVIEW
+    assert client.get(f"/api/org/candidates/{c1['id']}", headers=auth_headers(tok)).json()["stage"] == "INTERVIEW"
+    assert client.get(f"/api/org/candidates/{c2['id']}", headers=auth_headers(tok)).json()["stage"] == "INTERVIEW"
+
+    # 2. Bulk Offer
+    res_of = client.post(
+        "/api/offers/bulk",
+        json={
+            "candidate_ids": [c1["id"], c2["id"]],
+            "job_id": job["id"],
+            "salary": 115000,
+            "currency": "USD",
+            "notes": "Standard Offer",
+            "advance_stage": True,
+        },
+        headers=auth_headers(tok),
+    )
+    assert res_of.status_code == 201, res_of.text
+    data_of = res_of.json()
+    assert data_of["created_count"] == 2
+    assert len(data_of["offers"]) == 2
+    assert client.get(f"/api/org/candidates/{c1['id']}", headers=auth_headers(tok)).json()["stage"] == "OFFER"
+
+    # 3. Bulk Onboarding
+    res_ob = client.post(
+        "/api/onboarding/bulk",
+        json={
+            "candidate_ids": [c1["id"], c3["id"]],
+            "tasks": [
+                {"title": "Sign Contract"},
+                {"title": "Submit Identity Docs"},
+            ],
+            "advance_stage": True,
+        },
+        headers=auth_headers(tok),
+    )
+    assert res_ob.status_code == 201, res_ob.text
+    data_ob = res_ob.json()
+    assert data_ob["created_count"] == 4
+    assert client.get(f"/api/org/candidates/{c1['id']}", headers=auth_headers(tok)).json()["stage"] == "ONBOARDING"
+    assert client.get(f"/api/org/candidates/{c3['id']}", headers=auth_headers(tok)).json()["stage"] == "ONBOARDING"
+

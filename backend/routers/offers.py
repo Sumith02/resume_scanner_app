@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.db import get_db
@@ -103,6 +103,72 @@ def create_offer(
     db.commit()
     db.refresh(row)
     return offer_out(row)
+
+
+class BulkOfferIn(BaseModel):
+    candidate_ids: list[int] = Field(min_length=1)
+    job_id: int | None = None
+    salary: float | None = None
+    currency: str = "USD"
+    employment_type: str | None = "FULL_TIME"
+    start_date: datetime | None = None
+    notes: str | None = None
+    status: OfferStatus = OfferStatus.DRAFT
+    advance_stage: bool = True
+
+
+@router.post("/bulk", status_code=201)
+def bulk_create_offers(
+    payload: BulkOfferIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission(OFFER_MANAGE)),
+):
+    org_id = ensure_company_scope(user)
+    ensure_active_org(user, db)
+    if payload.job_id is not None and get_job(db, org_id, payload.job_id) is None:
+        raise HTTPException(404, "Job not found")
+
+    created = []
+    for cid in payload.candidate_ids:
+        candidate = get_candidate(db, org_id, cid)
+        if candidate is None:
+            continue
+        row = Offer(
+            organization_id=org_id,
+            candidate_id=cid,
+            job_id=payload.job_id,
+            salary=payload.salary,
+            currency=payload.currency,
+            employment_type=payload.employment_type,
+            start_date=payload.start_date,
+            notes=payload.notes,
+            status=payload.status,
+            created_by_user_id=user.id,
+        )
+        db.add(row)
+        if payload.advance_stage:
+            candidate.stage = CandidateStage.OFFER
+        created.append(row)
+
+    log_audit(
+        db,
+        org_id=org_id,
+        actor_user_id=user.id,
+        actor_email=user.email,
+        action="offer.bulk_created",
+        resource_type="offer",
+        resource_id=None,
+        details={
+            "candidate_ids": payload.candidate_ids,
+            "created_count": len(created),
+            "job_id": payload.job_id,
+            "salary": payload.salary,
+        },
+    )
+    db.commit()
+    for row in created:
+        db.refresh(row)
+    return {"created_count": len(created), "offers": [offer_out(o) for o in created]}
 
 
 @router.get("/{offer_id}")

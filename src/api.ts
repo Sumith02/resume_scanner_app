@@ -298,10 +298,97 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  bulkCreateInterviews: async (data: {
+    candidate_ids: number[];
+    job_id?: number | null;
+    title?: string;
+    scheduled_at?: string | null;
+    duration_minutes?: number;
+    mode?: string;
+    location?: string | null;
+    interviewer_user_id?: number | null;
+    advance_stage?: boolean;
+  }) => {
+    try {
+      return await request<{ created_count: number; interviews: Interview[] }>(
+        "/api/interviews/bulk",
+        { method: "POST", body: JSON.stringify(data) },
+      );
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) {
+        const results = await Promise.all(
+          data.candidate_ids.map(async (cid) => {
+            const iv = await api.createInterview({
+              candidate_id: cid,
+              job_id: data.job_id,
+              title: data.title,
+              scheduled_at: data.scheduled_at,
+              duration_minutes: data.duration_minutes,
+              mode: data.mode as any,
+              location: data.location,
+              interviewer_user_id: data.interviewer_user_id,
+            });
+            if (data.advance_stage) {
+              try {
+                await api.setStage(cid, "INTERVIEW");
+              } catch {}
+            }
+            return iv;
+          }),
+        );
+        return { created_count: results.length, interviews: results };
+      }
+      throw e;
+    }
+  },
+
   listOffers: (params: Record<string, string | number | undefined> = {}) =>
     request<Offer[]>(`/api/offers${qs(params)}`),
   createOffer: (data: Partial<Offer> & { candidate_id: number }) =>
     request<Offer>("/api/offers", { method: "POST", body: JSON.stringify(data) }),
+  bulkCreateOffers: async (data: {
+    candidate_ids: number[];
+    job_id?: number | null;
+    salary?: number | null;
+    currency?: string;
+    employment_type?: string | null;
+    start_date?: string | null;
+    notes?: string | null;
+    status?: string;
+    advance_stage?: boolean;
+  }) => {
+    try {
+      return await request<{ created_count: number; offers: Offer[] }>(
+        "/api/offers/bulk",
+        { method: "POST", body: JSON.stringify(data) },
+      );
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) {
+        const results = await Promise.all(
+          data.candidate_ids.map(async (cid) => {
+            const ofr = await api.createOffer({
+              candidate_id: cid,
+              job_id: data.job_id,
+              salary: data.salary,
+              currency: data.currency ?? "USD",
+              employment_type: data.employment_type,
+              start_date: data.start_date,
+              notes: data.notes,
+              status: (data.status as any) ?? "DRAFT",
+            });
+            if (data.advance_stage) {
+              try {
+                await api.setStage(cid, "OFFER");
+              } catch {}
+            }
+            return ofr;
+          }),
+        );
+        return { created_count: results.length, offers: results };
+      }
+      throw e;
+    }
+  },
   updateOffer: (id: number, data: Partial<Offer>) =>
     request<Offer>(`/api/offers/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   setOfferStatus: (id: number, status: string) =>
@@ -315,6 +402,45 @@ export const api = {
     request<OnboardingTask[]>(`/api/onboarding${qs({ candidate_id: candidateId })}`),
   createOnboardingTask: (data: { candidate_id: number; title: string; due_date?: string }) =>
     request<OnboardingTask>("/api/onboarding", { method: "POST", body: JSON.stringify(data) }),
+  bulkCreateOnboarding: async (data: {
+    candidate_ids: number[];
+    tasks?: { title: string; due_date?: string | null }[];
+    title?: string;
+    due_date?: string | null;
+    advance_stage?: boolean;
+  }) => {
+    try {
+      return await request<{ created_count: number; tasks: OnboardingTask[] }>(
+        "/api/onboarding/bulk",
+        { method: "POST", body: JSON.stringify(data) },
+      );
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) {
+        const taskDefs =
+          data.tasks && data.tasks.length > 0
+            ? data.tasks
+            : [{ title: data.title || "Complete Onboarding", due_date: data.due_date }];
+        const results: OnboardingTask[] = [];
+        for (const cid of data.candidate_ids) {
+          for (const tdef of taskDefs) {
+            const task = await api.createOnboardingTask({
+              candidate_id: cid,
+              title: tdef.title,
+              due_date: tdef.due_date || undefined,
+            });
+            results.push(task);
+          }
+          if (data.advance_stage) {
+            try {
+              await api.setStage(cid, "ONBOARDING");
+            } catch {}
+          }
+        }
+        return { created_count: results.length, tasks: results };
+      }
+      throw e;
+    }
+  },
   updateOnboardingTask: (id: number, data: Partial<OnboardingTask>) =>
     request<OnboardingTask>(`/api/onboarding/${id}`, {
       method: "PATCH",

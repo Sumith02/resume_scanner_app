@@ -118,6 +118,71 @@ def create_interview(
     return interview_out(row)
 
 
+class BulkInterviewIn(BaseModel):
+    candidate_ids: list[int] = Field(min_length=1)
+    job_id: int | None = None
+    title: str | None = None
+    scheduled_at: datetime | None = None
+    duration_minutes: int = 60
+    mode: InterviewMode = InterviewMode.VIDEO
+    location: str | None = None
+    interviewer_user_id: int | None = None
+    advance_stage: bool = True
+
+
+@router.post("/bulk", status_code=201)
+def bulk_create_interviews(
+    payload: BulkInterviewIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_permission(INTERVIEW_MANAGE)),
+):
+    org_id = ensure_company_scope(user)
+    ensure_active_org(user, db)
+    if payload.job_id is not None and get_job(db, org_id, payload.job_id) is None:
+        raise HTTPException(404, "Job not found")
+
+    created = []
+    for cid in payload.candidate_ids:
+        candidate = get_candidate(db, org_id, cid)
+        if candidate is None:
+            continue
+        row = Interview(
+            organization_id=org_id,
+            candidate_id=cid,
+            job_id=payload.job_id,
+            title=payload.title or "Interview",
+            scheduled_at=payload.scheduled_at,
+            duration_minutes=payload.duration_minutes,
+            mode=payload.mode,
+            location=payload.location,
+            interviewer_user_id=payload.interviewer_user_id,
+            created_by_user_id=user.id,
+        )
+        db.add(row)
+        if payload.advance_stage:
+            candidate.stage = CandidateStage.INTERVIEW
+        created.append(row)
+
+    log_audit(
+        db,
+        org_id=org_id,
+        actor_user_id=user.id,
+        actor_email=user.email,
+        action="interview.bulk_scheduled",
+        resource_type="interview",
+        resource_id=None,
+        details={
+            "candidate_ids": payload.candidate_ids,
+            "created_count": len(created),
+            "job_id": payload.job_id,
+        },
+    )
+    db.commit()
+    for row in created:
+        db.refresh(row)
+    return {"created_count": len(created), "interviews": [interview_out(i) for i in created]}
+
+
 @router.get("/{interview_id}")
 def get_interview(
     interview_id: int,
