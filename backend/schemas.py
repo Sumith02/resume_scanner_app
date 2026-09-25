@@ -110,6 +110,10 @@ class CandidatePatch(BaseModel):
     job_ids: list[int] = []
     add_job_ids: list[int] = []
     remove_job_ids: list[int] = []
+    location: str | None = None
+    current_title: str | None = None
+    current_company: str | None = None
+    summary: str | None = None
 
 
 class NoteIn(BaseModel):

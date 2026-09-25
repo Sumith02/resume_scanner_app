@@ -146,7 +146,38 @@ def list_candidates(
     if tag_id:
         q = q.filter(Candidate.tags.any(Tag.id == tag_id))
     if location and location.strip():
-        q = q.filter(Candidate.location.ilike(f"%{location.strip()}%"))
+        loc_clean = location.strip()
+        loc_lower = loc_clean.lower()
+        synonyms = [loc_clean]
+        city_synonyms = {
+            "bangalore": ["bengaluru", "bangalore"],
+            "bengaluru": ["bengaluru", "bangalore"],
+            "gurgaon": ["gurugram", "gurgaon"],
+            "gurugram": ["gurugram", "gurgaon"],
+            "mumbai": ["mumbai", "bombay"],
+            "bombay": ["mumbai", "bombay"],
+            "chennai": ["chennai", "madras"],
+            "madras": ["chennai", "madras"],
+            "kolkata": ["kolkata", "calcutta"],
+            "calcutta": ["kolkata", "calcutta"],
+            "delhi ncr": ["delhi", "noida", "gurgaon", "gurugram", "faridabad", "ghaziabad"],
+            "ncr": ["delhi", "noida", "gurgaon", "gurugram"],
+            "nyc": ["new york", "nyc", "manhattan", "brooklyn"],
+            "new york": ["new york", "nyc"],
+            "bay area": ["san francisco", "san jose", "bay area", "silicon valley"],
+            "sf": ["san francisco", "sf", "bay area"],
+        }
+        if loc_lower in city_synonyms:
+            synonyms = city_synonyms[loc_lower]
+
+        loc_clauses = []
+        for syn in synonyms:
+            term = f"%{syn}%"
+            loc_clauses.extend([
+                Candidate.location.ilike(term),
+                Candidate.resume_text.ilike(term),
+            ])
+        q = q.filter(or_(*loc_clauses))
     if skill and skill.strip():
         s_like = f"%{skill.strip()}%"
         q = q.filter(

@@ -449,68 +449,131 @@ def guess_name(text: str) -> str | None:
 
 
 KNOWN_LOCATIONS = [
-    # India
-    "bengaluru", "bangalore", "hyderabad", "pune", "mumbai", "delhi", "new delhi",
-    "noida", "gurgaon", "gurugram", "chennai", "kolkata", "ahmedabad", "kochi",
-    "trivandrum", "chandigarh", "jaipur", "indore", "lucknow",
-    # North America
-    "san francisco", "san jose", "bay area", "seattle", "new york", "austin",
-    "boston", "chicago", "denver", "los angeles", "san diego", "atlanta",
-    "dallas", "houston", "washington", "toronto", "vancouver", "montreal", "ottawa",
+    # India - Major Cities & Tech Hubs
+    "bengaluru", "bangalore", "hyderabad", "secunderabad", "pune", "mumbai", "bombay",
+    "delhi", "new delhi", "noida", "greater noida", "gurgaon", "gurugram", "chennai", "madras",
+    "kolkata", "calcutta", "ahmedabad", "kochi", "cochin", "trivandrum", "thiruvananthapuram",
+    "calicut", "kozhikode", "thrissur", "ernakulam", "coimbatore", "mysore", "mysuru",
+    "mangalore", "mangaluru", "goa", "panaji", "chandigarh", "mohali", "jaipur", "indore",
+    "bhopal", "lucknow", "kanpur", "patna", "bhubaneswar", "cuttack", "visakhapatnam", "vizag",
+    "vijayawada", "guntur", "warangal", "tirupati", "nagpur", "nashik", "surat", "vadodara",
+    "rajkot", "ranchi", "raipur", "dehradun", "guwahati", "shimla", "amritsar", "jalandhar",
+    # India - States & Regions
+    "karnataka", "maharashtra", "telangana", "andhra pradesh", "tamil nadu", "kerala",
+    "gujarat", "uttar pradesh", "rajasthan", "punjab", "haryana", "west bengal", "odisha",
+    "madhya pradesh", "bihar", "assam", "delhi ncr",
+    # North America - Tech Hubs & Cities
+    "san francisco", "san jose", "silicon valley", "bay area", "seattle", "bellevue", "redmond",
+    "new york", "nyc", "brooklyn", "manhattan", "austin", "boston", "cambridge", "chicago",
+    "denver", "boulder", "los angeles", "san diego", "sacramento", "atlanta", "dallas",
+    "houston", "fort worth", "san antonio", "washington", "washington dc", "philadelphia",
+    "pittsburgh", "phoenix", "salt lake city", "detroit", "minneapolis", "nashville",
+    "miami", "tampa", "orlando", "charlotte", "raleigh", "durham", "portland",
+    # Canada
+    "toronto", "vancouver", "montreal", "ottawa", "calgary", "edmonton", "waterloo", "mississauga",
+    "ontario", "british columbia", "quebec", "alberta",
     # Europe & UK
-    "london", "berlin", "amsterdam", "paris", "dublin", "munich", "madrid",
-    "barcelona", "stockholm", "zurich", "warsaw",
-    # APAC & Middle East
-    "singapore", "tokyo", "sydney", "melbourne", "dubai", "abu dhabi", "tel aviv",
+    "london", "manchester", "birmingham", "edinburgh", "dublin", "berlin", "munich",
+    "frankfurt", "hamburg", "amsterdam", "rotterdam", "paris", "lyon", "madrid",
+    "barcelona", "stockholm", "gothenburg", "zurich", "geneva", "warsaw", "krakow",
+    "lisbon", "porto", "brussels", "vienna", "copenhagen", "oslo", "helsinki",
+    "prague", "milan", "rome", "athens", "budapest", "bucharest",
+    # APAC, Middle East & Oceania
+    "singapore", "tokyo", "sydney", "melbourne", "brisbane", "perth", "adelaide",
+    "auckland", "wellington", "dubai", "abu dhabi", "doha", "riyadh", "tel aviv",
+    "hong kong", "seoul", "bangkok", "kuala lumpur", "jakarta", "manila",
     # Remote
-    "remote", "hybrid",
+    "remote", "hybrid", "work from home", "wfh",
 ]
 
 
+def _format_location(loc_str: str) -> str:
+    """Format location string into clean Title Case with standardized commas and state abbreviations."""
+    loc_str = re.sub(r"^(?:current\s+)?location\s*[:\-]\s*", "", loc_str, flags=re.I).strip()
+    loc_str = re.sub(r"\s+", " ", loc_str)
+    parts = [p.strip() for p in loc_str.split(",") if p.strip()]
+    formatted_parts = []
+    for p in parts:
+        if len(p) == 2 and p.isalpha():
+            formatted_parts.append(p.upper())
+        elif p.lower() in ("usa", "uk", "uae", "nyc", "wfh", "ncr"):
+            formatted_parts.append(p.upper())
+        else:
+            formatted_parts.append(p.title())
+    return ", ".join(formatted_parts)
+
+
 def extract_location(text: str) -> str | None:
-    """Extract candidate location from resume text."""
+    """Extract candidate location from resume text with high recall across diverse resume layouts."""
     if not text:
         return None
 
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    header_lines = lines[:25]
+    header_lines = lines[:30]
 
-    # 1. Look for explicit label: "Location: ...", "Address: ...", "City: ..."
+    # 1. Look for explicit labels: "Location: ...", "Address: ...", "Current Location: ...", etc.
     label_pattern = re.compile(
-        r"(?:^|\b)(?:location|address|city|residing\s+in|based\s+in)\s*[:\-]\s*([^\n\r;|]+)",
+        r"(?:^|\b)(?:current\s+location|preferred\s+location|location|address|residing\s+in|based\s+in|residence|city|place|living\s+in|native)\s*[:\-]\s*([^\n\r;|•]+)",
         re.IGNORECASE,
     )
     for line in header_lines:
         m = label_pattern.search(line)
         if m:
             val = m.group(1).strip()
-            val = re.sub(r"\s+", " ", val).strip(" •|:-")
+            val = re.sub(r"(?:https?://\S+|www\.\S+|\S+@\S+|\b\d{10,}\b)", "", val)
+            val = re.sub(r"\s+", " ", val).strip(" •|:-,")
+            val = re.sub(r"\s*[-–—]?\s*\b\d{5,6}\b\s*$", "", val).strip()
             if 2 <= len(val) <= 60 and not re.search(r"@|\d{7,}", val):
-                return val.title()
+                return _format_location(val)
 
-    # 2. Check header lines for known locations / tech hubs
+    # 2. Inspect segmented tokens in header lines (e.g. "email | phone | Bengaluru, India | LinkedIn")
     for line in header_lines:
-        if "@" in line or "http" in line or re.search(r"\d{7,}", line):
-            continue
-        line_lower = line.lower()
-        for loc in KNOWN_LOCATIONS:
-            if re.search(rf"\b{re.escape(loc)}\b", line_lower):
-                parts = [p.strip() for p in line.split("|") if p.strip()]
-                for p in parts:
-                    if loc in p.lower() and len(p) <= 50 and not re.search(r"@|\d{5,}", p):
-                        return p.title()
-                return loc.title()
+        segments = re.split(r"\s*[|•·;/\t]\s*|\s{3,}|\s+-\s+", line)
+        for seg in segments:
+            seg_clean = seg.strip(" •|:-,")
+            if not seg_clean or len(seg_clean) > 60:
+                continue
+            if "@" in seg_clean or "http" in seg_clean or "linkedin" in seg_clean.lower() or "github" in seg_clean.lower():
+                continue
+            if re.search(r"^\+?\d[\d\s().-]{7,}\d$", seg_clean):
+                continue
+            if re.search(r"^(?:skills|education|experience|summary|projects|objective|technical)", seg_clean, re.IGNORECASE):
+                continue
 
-    # 3. Check for City, Country / State pattern in header
+            seg_lower = seg_clean.lower()
+
+            for loc in KNOWN_LOCATIONS:
+                if re.search(rf"\b{re.escape(loc)}\b", seg_lower):
+                    clean_res = re.sub(r"\s*[-–—]?\s*\b\d{5,6}\b\s*$", "", seg_clean).strip()
+                    if len(clean_res) <= 50 and not re.search(r"@|\d{5,}", clean_res):
+                        return _format_location(clean_res)
+                    return loc.title()
+
+            city_state_match = re.search(
+                r"\b([A-Z][a-zA-Z\s.-]{2,25}),\s*([A-Z]{2}|India|USA|United States|UK|United Kingdom|Canada|Germany|Australia|Singapore|UAE|France|Netherlands|Ireland|Texas|California|Washington|New York|Karnataka|Maharashtra|Telangana|Tamil Nadu)\b",
+                seg_clean,
+            )
+            if city_state_match:
+                return f"{city_state_match.group(1).strip()}, {city_state_match.group(2).strip()}"
+
+    # 3. Full-line City, State / Country check
     city_state_pat = re.compile(
-        r"\b([A-Z][a-z]{2,20}(?:\s+[A-Z][a-z]{2,20})?),\s*([A-Z]{2}|India|USA|United States|UK|United Kingdom|Canada|Germany|Australia|Singapore|UAE|France|Netherlands)\b"
+        r"\b([A-Z][a-zA-Z\s.-]{2,25}),\s*([A-Z]{2}|India|USA|United States|UK|United Kingdom|Canada|Germany|Australia|Singapore|UAE|France|Netherlands|Ireland)\b"
     )
     for line in header_lines:
-        if "@" in line or "http" in line:
+        if "@" in line and not any(loc in line.lower() for loc in KNOWN_LOCATIONS):
             continue
         m = city_state_pat.search(line)
         if m:
             return f"{m.group(1).strip()}, {m.group(2).strip()}"
+
+    # 4. Standalone location mentions in top section
+    for line in lines[:50]:
+        line_lower = line.lower()
+        if "location" in line_lower or "based in" in line_lower or "relocate" in line_lower:
+            for loc in KNOWN_LOCATIONS:
+                if re.search(rf"\b{re.escape(loc)}\b", line_lower):
+                    return loc.title()
 
     return None
 

@@ -90,6 +90,10 @@ def ingest_resume(
             existing.current_title = clean_title
         if not existing.experience_years and experience:
             existing.experience_years = experience
+        if not existing.location and clean_location:
+            existing.location = clean_location
+        if not existing.summary and clean_summary:
+            existing.summary = clean_summary
         db.flush()
         log_audit(
             db,

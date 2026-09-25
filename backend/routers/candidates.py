@@ -112,6 +112,29 @@ def search_candidates(
         location=location,
         skill=skill,
     )
+    updated = False
+    for c in rows:
+        if not c.location and c.resume_text:
+            extracted_loc = extract_location(c.resume_text)
+            if extracted_loc:
+                c.location = extracted_loc
+                updated = True
+        if not c.summary and c.resume_text:
+            extracted_sum = extract_summary(
+                c.resume_text,
+                title=c.current_title,
+                exp_years=c.experience_years,
+                skills=c.skills or [],
+            )
+            if extracted_sum:
+                c.summary = extracted_sum
+                updated = True
+    if updated:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+
     return [candidate_out(c) for c in rows]
 
 
@@ -125,6 +148,27 @@ def get_candidate_detail(
     c = get_candidate(db, org_id, candidate_id)
     if c is None:
         raise HTTPException(404, "Candidate not found")
+    updated = False
+    if not c.location and c.resume_text:
+        extracted_loc = extract_location(c.resume_text)
+        if extracted_loc:
+            c.location = extracted_loc
+            updated = True
+    if not c.summary and c.resume_text:
+        extracted_sum = extract_summary(
+            c.resume_text,
+            title=c.current_title,
+            exp_years=c.experience_years,
+            skills=c.skills or [],
+        )
+        if extracted_sum:
+            c.summary = extracted_sum
+            updated = True
+    if updated:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
     return candidate_out(c)
 
 
@@ -463,6 +507,14 @@ def patch_candidate(
             c.matched_job_ids = list(dict.fromkeys([*(c.matched_job_ids or []), *payload.add_job_ids]))
         if payload.remove_job_ids:
             c.matched_job_ids = [j for j in (c.matched_job_ids or []) if j not in payload.remove_job_ids]
+    if payload.location is not None:
+        c.location = _clean_pg_text(payload.location)
+    if payload.current_title is not None:
+        c.current_title = _clean_pg_text(payload.current_title)
+    if payload.current_company is not None:
+        c.current_company = _clean_pg_text(payload.current_company)
+    if payload.summary is not None:
+        c.summary = _clean_pg_text(payload.summary)
     db.commit()
     return candidate_out(c)
 

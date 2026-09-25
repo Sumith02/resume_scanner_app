@@ -231,3 +231,93 @@ def test_vacancy_announcement_and_broadcast(client, master):
 
     msgs_after = client.get("/api/email/messages", headers=auth_headers(tok)).json()
     assert len(msgs_after) == 3
+
+
+def test_extract_location_varieties():
+    # 1. Pipe-separated contact line with email, phone, and LinkedIn
+    t1 = "Alice Smith\nalice@example.com | +91 9876543210 | Bengaluru, India | linkedin.com/in/alice"
+    assert extract_location(t1) == "Bengaluru, India"
+
+    # 2. Bullet separated with US city and state abbreviation
+    t2 = "Bob Taylor\nbob@test.org • Austin, TX • (512) 555-1234"
+    assert extract_location(t2) == "Austin, TX"
+
+    # 3. Slash separated
+    t3 = "Charlie Brown / charlie@peanuts.com / Mumbai, Maharashtra / +91 9988776655"
+    assert extract_location(t3) == "Mumbai, Maharashtra"
+
+    # 4. Indian pincode stripped
+    t4 = "Deepak Kumar\ndeepak@gmail.com\nHyderabad, Telangana - 500081\nFull Stack Engineer"
+    assert extract_location(t4) == "Hyderabad, Telangana"
+
+    # 5. Label with "Current Location:"
+    t5 = "John Doe\njohn@example.com\nCurrent Location: Chennai, Tamil Nadu\nSkills: Python"
+    assert extract_location(t5) == "Chennai, Tamil Nadu"
+
+    # 6. Tech hubs
+    t6 = "Developer Resume\nLocation: Seattle, WA\nExperience: 7 years"
+    assert extract_location(t6) == "Seattle, WA"
+
+
+def test_candidate_location_backfill_and_patch(client, master):
+    org, tok = make_company(client, master, "LocCorp", "admin@loccorp.com")
+
+    # Upload candidate without explicit location form field, containing location in contact header line
+    resume_content = (
+        "Rahul Sharma\n"
+        "rahul@loccorp.com | +91 9876543210 | Bengaluru, India | github.com/rahul\n"
+        "Frontend Engineer with 4 years experience in React and TypeScript."
+    )
+    r_create = client.post(
+        "/api/org/candidates",
+        files={"resume": ("rahul_resume.pdf", resume_content.encode(), "application/pdf")},
+        data={"name": "Rahul Sharma"},
+        headers=auth_headers(tok),
+    )
+    assert r_create.status_code == 200, r_create.text
+    cand = r_create.json()
+    assert cand["location"] == "Bengaluru, India"
+    cand_id = cand["id"]
+
+    # Test candidate location lazy backfill: simulate an older record in the database where location was None
+    from backend.db import SessionLocal
+    from backend.models import Candidate
+    db = SessionLocal()
+    db_cand = db.get(Candidate, cand_id)
+    assert db_cand is not None
+    db_cand.location = None
+    db.commit()
+    db.close()
+
+    # Search candidates: should lazily backfill the location from resume_text
+    r_list = client.get("/api/org/candidates", headers=auth_headers(tok))
+    assert r_list.status_code == 200
+    listed = [c for c in r_list.json() if c["id"] == cand_id]
+    assert len(listed) == 1
+    assert listed[0]["location"] == "Bengaluru, India"
+
+    # Check synonym search: "Bangalore" should match candidate with "Bengaluru"
+    r_syn = client.get("/api/org/candidates?location=bangalore", headers=auth_headers(tok))
+    assert r_syn.status_code == 200
+    syn_cands = r_syn.json()
+    assert len(syn_cands) >= 1
+    assert any(c["id"] == cand_id for c in syn_cands)
+
+    # Candidate detail endpoint: returns backfilled location
+    r_detail = client.get(f"/api/org/candidates/{cand_id}", headers=auth_headers(tok))
+    assert r_detail.status_code == 200
+    assert r_detail.json()["location"] == "Bengaluru, India"
+
+    # Patch candidate: manually update location to another city
+    r_patch = client.patch(
+        f"/api/org/candidates/{cand_id}",
+        json={"location": "Pune, Maharashtra"},
+        headers=auth_headers(tok),
+    )
+    assert r_patch.status_code == 200, r_patch.text
+    assert r_patch.json()["location"] == "Pune, Maharashtra"
+
+    # Query with updated location
+    r_pune = client.get("/api/org/candidates?location=Pune", headers=auth_headers(tok))
+    assert r_pune.status_code == 200
+    assert any(c["id"] == cand_id for c in r_pune.json())

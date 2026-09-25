@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Copy, Download, Mail, MapPin, Phone, Sparkles, Trash2 } from "lucide-react";
+import { Check, Copy, Download, Mail, MapPin, Pencil, Phone, Sparkles, Trash2 } from "lucide-react";
 import { api, apiUrl } from "../api";
 import { Alert, Modal, StageBadge } from "./ui";
 import { PIPELINE_STAGES, formatDate, initials, stageLabel } from "../lib/format";
@@ -27,6 +27,9 @@ export function CandidateDrawer({
   const [noteText, setNoteText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [editingLocation, setEditingLocation] = useState(false);
+  const [locationInput, setLocationInput] = useState("");
+  const [savingLocation, setSavingLocation] = useState(false);
 
   function copySummary() {
     if (!cand?.summary) return;
@@ -39,9 +42,25 @@ export function CandidateDrawer({
     try {
       const [c, n] = await Promise.all([api.getCandidate(candidateId), api.listNotes(candidateId)]);
       setCand(c);
+      setLocationInput(c.location || "");
       setNotes(n);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load candidate");
+    }
+  }
+
+  async function saveLocation() {
+    if (!cand) return;
+    setSavingLocation(true);
+    try {
+      const updated = await api.patchCandidate(cand.id, { location: locationInput.trim() });
+      setCand(updated);
+      setEditingLocation(false);
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update location");
+    } finally {
+      setSavingLocation(false);
     }
   }
 
@@ -133,11 +152,62 @@ export function CandidateDrawer({
                   <Phone size={14} /> {cand.phone}
                 </span>
               )}
-              {cand.location && (
-                <span className="flex" style={{ gap: 8 }}>
-                  <MapPin size={14} /> {cand.location}
-                </span>
-              )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <div className="flex" style={{ gap: 8, alignItems: "center" }}>
+                  <MapPin size={14} className={cand.location ? "" : "muted"} />
+                  {cand.location ? (
+                    <span style={{ fontWeight: 550 }}>{cand.location}</span>
+                  ) : (
+                    <span className="muted" style={{ fontStyle: "italic" }}>Location not detected</span>
+                  )}
+                  {canEdit && !editingLocation && (
+                    <button
+                      className="btn sm ghost"
+                      style={{ padding: "1px 6px", fontSize: 11, height: "auto", marginLeft: 4 }}
+                      onClick={() => {
+                        setLocationInput(cand.location || "");
+                        setEditingLocation(true);
+                      }}
+                      title="Edit candidate location"
+                    >
+                      <Pencil size={11} /> {cand.location ? "Edit" : "Set"}
+                    </button>
+                  )}
+                </div>
+                {editingLocation && (
+                  <div className="flex" style={{ gap: 6, marginTop: 4 }}>
+                    <input
+                      type="text"
+                      value={locationInput}
+                      onChange={(e) => setLocationInput(e.target.value)}
+                      placeholder="e.g. Bengaluru, India"
+                      style={{ fontSize: 12, padding: "3px 8px", width: 170 }}
+                      autoFocus
+                      disabled={savingLocation}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void saveLocation();
+                        if (e.key === "Escape") setEditingLocation(false);
+                      }}
+                    />
+                    <button
+                      className="btn sm primary"
+                      style={{ padding: "3px 8px", fontSize: 11 }}
+                      disabled={savingLocation}
+                      onClick={() => void saveLocation()}
+                    >
+                      {savingLocation ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      className="btn sm ghost"
+                      style={{ padding: "3px 8px", fontSize: 11 }}
+                      disabled={savingLocation}
+                      onClick={() => setEditingLocation(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex wrap mt-2" style={{ gap: 8 }}>

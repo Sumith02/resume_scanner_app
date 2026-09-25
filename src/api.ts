@@ -233,6 +233,19 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ add_job_ids: add, remove_job_ids: remove }),
     }),
+  patchCandidate: (
+    id: number,
+    data: {
+      location?: string;
+      current_title?: string;
+      current_company?: string;
+      summary?: string;
+    }
+  ) =>
+    request<Candidate>(`/api/org/candidates/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
   deleteCandidate: (id: number) =>
     request<{ message: string }>(`/api/org/candidates/${id}`, { method: "DELETE" }),
   bulkDeleteCandidates: (candidateIds: number[]) =>
