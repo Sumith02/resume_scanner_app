@@ -16,10 +16,11 @@ import base64
 import re
 import urllib.parse
 from datetime import timedelta
-from email.utils import parseaddr
 from pathlib import Path
 
 import httpx
+from fastapi import HTTPException
+from backend.document_reader import DocumentReadError
 
 from backend.config import (
     DEMO_INBOX_DIR,
@@ -35,10 +36,7 @@ from backend.models import EmailAccount, Organization, SourceKind, utcnow
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me"
-GMAIL_QUERY = (
-    "has:attachment (filename:pdf OR filename:docx OR filename:doc OR filename:txt)"
-    " newer_than:45d"
-)
+GMAIL_QUERY = "has:attachment"
 MAX_PROCESSED_TRACKED = 500
 
 
@@ -168,9 +166,11 @@ class GmailClient:
     def get_message(self, message_id: str) -> dict:
         return self._get(f"/messages/{message_id}", {"format": "full"})
 
-    def list_threads(self, query: str = GMAIL_QUERY, max_results: int = 50) -> list[str]:
-        data = self._get("/threads", {"q": query, "maxResults": max_results})
-        return [t["id"] for t in data.get("threads", [])]
+    def list_thread_page(self, *, page_token: str | None = None, max_results: int = 20) -> dict:
+        params = {"q": GMAIL_QUERY, "maxResults": min(max_results, 500), "includeSpamTrash": True}
+        if page_token:
+            params["pageToken"] = page_token
+        return self._get("/threads", params)
 
     def get_thread(self, thread_id: str) -> dict:
         return self._get(f"/threads/{thread_id}", {"format": "full"})
@@ -216,8 +216,16 @@ def _walk_attachments(payload: dict):
         if not filename:
             if "pdf" in mime_type:
                 filename = "document.pdf"
+            elif mime_type == "application/msword":
+                filename = "document.doc"
             elif "word" in mime_type or "officedocument" in mime_type:
                 filename = "document.docx"
+            elif mime_type.startswith("image/"):
+                filename = "document." + mime_type.split("/", 1)[1]
+            elif "opendocument" in mime_type:
+                filename = "document.odt"
+            elif "rtf" in mime_type:
+                filename = "document.rtf"
 
         body = part.get("body", {}) or {}
         attachment_id = body.get("attachmentId")
@@ -248,10 +256,12 @@ def sync_account(
     actor_email: str = "gmail-sync",
     max_messages: int = 50,
     full_scan: bool = False,
+    page_token: str | None = None,
+    resume: bool = False,
 ) -> dict:
     if account.is_demo or not oauth_configured():
         return _sync_demo(db, org, account, actor_email=actor_email, full_scan=full_scan)
-    return _sync_gmail(db, org, account, actor_email=actor_email, max_messages=max_messages, full_scan=full_scan)
+    return _sync_gmail(db, org, account, actor_email=actor_email, max_messages=max_messages, full_scan=full_scan, page_token=page_token, resume=resume)
 
 
 def _mark_processed(account: EmailAccount, keys: list[str], summary: dict) -> None:
@@ -302,7 +312,7 @@ def _sync_demo(db, org: Organization, account: EmailAccount, *, actor_email: str
 
 
 def _sync_gmail(
-    db, org: Organization, account: EmailAccount, *, actor_email: str, max_messages: int = 100, full_scan: bool = False
+    db, org: Organization, account: EmailAccount, *, actor_email: str, max_messages: int = 20, full_scan: bool = False, page_token: str | None = None, resume: bool = False
 ) -> dict:
     token = ensure_access_token(db, account)
     if not token:
@@ -310,104 +320,49 @@ def _sync_gmail(
         db.flush()
         return {"provider": "gmail", "error": "No valid access token. Please reconnect Gmail.", "ingested": 0}
 
+    previous = account.last_sync_summary or {}
+    if resume:
+        if not previous.get("paused"):
+            return {"provider": "gmail", "error": "There is no paused scan to resume.", "ingested": 0}
+        page_token = previous.get("resume_page_token")
+        full_scan = False
     client = GmailClient(token)
     processed = set() if full_scan else set((account.last_sync_summary or {}).get("processed", []))
     ingested, skipped, newly = 0, 0, []
     ingested_candidates = []
     errors = []
+    rejections = []
+    duplicates = 0
+    blocked_reason = None
 
     try:
-        # Search strategy:
-        GMAIL_EXCLUDE_QUERY = (
-            "-subject:bill -subject:bills -subject:invoice -subject:invoices "
-            "-subject:receipt -subject:receipts -subject:statement -subject:statements "
-            "-subject:recharge -subject:ticket -subject:tickets -subject:booking "
-            "-subject:order -subject:orders -subject:delivery -subject:payment "
-            "-subject:transaction -subject:tax -subject:gst -subject:pnr -subject:bank "
-            "-subject:policy -subject:salary -subject:payslip -subject:otp"
-        )
-
-        # Tier 1: Target resume and applicant emails
-        resume_query = (
-            "has:attachment (resume OR cv OR curriculum OR candidate OR applicant OR application "
-            "OR applying OR apply OR biodata OR job OR hire OR developer OR frontend OR backend "
-            "OR engineer OR designer OR internship OR role OR position) "
-            + GMAIL_EXCLUDE_QUERY
-        )
-        tier1_threads = client.list_threads(query=resume_query, max_results=max_messages)
-        tier1_msgs = client.list_messages(query=resume_query, max_results=max_messages)
-
-        # Tier 2: Targeted career/resume fallback (explicitly excluding all billing/statements)
-        fallback_query = (
-            "has:attachment (filename:pdf OR filename:docx OR filename:doc) "
-            "(subject:resume OR subject:cv OR subject:application OR subject:applying OR subject:job "
-            "OR subject:developer OR subject:engineer OR subject:candidate OR subject:role "
-            "OR filename:resume OR filename:cv OR filename:curriculum OR filename:biodata) "
-            + GMAIL_EXCLUDE_QUERY
-        )
-        tier2_threads = client.list_threads(query=fallback_query, max_results=max_messages)
-        tier2_msgs = client.list_messages(query=fallback_query, max_results=max_messages)
-
-        seen_threads = set()
-        thread_ids = []
-        for tid in tier1_threads + tier2_threads:
-            if tid and tid not in seen_threads:
-                seen_threads.add(tid)
-                thread_ids.append(tid)
-
-        for m in tier1_msgs + tier2_msgs:
-            tid = m.get("threadId")
-            if tid and tid not in seen_threads:
-                seen_threads.add(tid)
-                thread_ids.append(tid)
+        # Follow every page without subject, date, or career keyword restrictions.
+        page = client.list_thread_page(page_token=page_token, max_results=min(max_messages, 20))
+        thread_ids = list(dict.fromkeys(t["id"] for t in page.get("threads", [])))
+        next_page_token = page.get("nextPageToken")
 
         checked_count = 0
         for thread_id in thread_ids:
-            if thread_id in processed:
-                continue
             checked_count += 1
 
             try:
                 thread = client.get_thread(thread_id)
             except Exception as thr_err:
-                print(f"Error fetching thread {thread_id}: {thr_err}")
+                errors.append("Could not read an email thread. Run Deep Scan again to retry.")
                 continue
 
             messages = thread.get("messages", [])
-            thread_had_ingestion = False
-
             for message in messages:
                 msg_id = message.get("id")
-                sender_header = _decoded_header(message, "From")
-                sender_name, sender_email = parseaddr(sender_header)
-                sender_name = sender_name.strip() if sender_name else None
-                sender_email = sender_email.strip().lower() if sender_email else None
-
-                # Don't attribute candidate data to the recruiter's own email in reply threads
-                is_mailbox_owner = bool(sender_email and account.email and sender_email == account.email.lower())
-
-                # Discard automated / service sender names so we don't name candidates after billing/system bots
-                is_automated = False
-                if sender_name:
-                    lower_sn = sender_name.lower()
-                    if any(term in lower_sn for term in ("no-reply", "noreply", "support", "notification", "billing", "invoice", "bank", "service", "team", "amazon", "flipkart", "swiggy", "zomato", "airtel", "jio", "google", "alert", "alert")):
-                        is_automated = True
-
-                candidate_overrides = {}
-                if not is_mailbox_owner and not is_automated:
-                    if sender_name:
-                        candidate_overrides["name"] = sender_name
-                    if sender_email:
-                        candidate_overrides["email"] = sender_email
+                # New replies in previously scanned threads must still be checked.
+                message_key = f"message:{msg_id}"
+                if message_key in processed:
+                    continue
+                message_failed = False
 
                 for filename, attachment_id, inline_data, mime_type in _walk_attachments(message.get("payload", {})):
-                    lower_fn = (filename or "").lower()
-                    # Skip common image formats unless named with resume keywords
-                    if lower_fn.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp")) and not any(k in lower_fn for k in ("resume", "cv", "profile", "biodata")):
-                        skipped += 1
-                        continue
-
-                    if not looks_like_resume(filename, mime_type) or is_probably_bad_attachment(filename):
+                    if not looks_like_resume(filename, mime_type):
+                        rejections.append({"filename": filename, "reason": "Unsupported attachment format."})
                         skipped += 1
                         continue
 
@@ -421,32 +376,49 @@ def _sync_gmail(
                                 continue
 
                             if not data or len(data) < 30:
-                                skipped += 1
-                                continue
+                                raise ValueError("Document text is empty or unreadable")
 
                             res = ingest_resume(
                                 db, org=org, filename=filename, data=data,
                                 source=SourceKind.GMAIL, actor_email=actor_email,
-                                overrides=candidate_overrides,
                             )
-                        ingested += 1
-                        thread_had_ingestion = True
+                        if res.get("is_duplicate"):
+                            duplicates += 1
+                        else:
+                            ingested += 1
                         cand = res.get("candidate")
-                        cname = getattr(cand, "name", None) or sender_name or filename
-                        if cname and cname not in ingested_candidates:
+                        cname = getattr(cand, "name", None) or filename
+                        if not res.get("is_duplicate") and cname and cname not in ingested_candidates:
                             ingested_candidates.append(cname)
                     except Exception as att_err:
                         err_str = str(att_err)
                         # Content-validation rejections (invoices, receipts, bad structures) are quiet skips
-                        if "non-resume" in err_str.lower() or "not a resume" in err_str.lower():
+                        if isinstance(att_err, HTTPException) and att_err.status_code == 402:
+                            message_failed = True
+                            blocked_reason = str(att_err.detail).replace("Upgrade the plan to continue.", "Ask your administrator to increase the limit, then resume this scan.")
+                            break
+                        elif isinstance(att_err, DocumentReadError):
+                            message_failed = True
+                            errors.append(f"{filename}: {att_err}")
+                        elif "empty or unreadable" in err_str.lower():
+                            message_failed = True
                             skipped += 1
+                            errors.append(f"{filename}: No readable text was found after extraction. Upload a clearer, unlocked copy.")
+                        elif "non-resume" in err_str.lower() or "not a resume" in err_str.lower():
+                            skipped += 1
+                            rejections.append({"filename": filename, "reason": err_str})
                         else:
+                            message_failed = True
                             print(f"Skipping attachment {filename} in thread {thread_id}: {err_str}")
-                            errors.append(f"{filename}: {err_str}")
+                            errors.append(f"{filename}: Could not import this file. Check file readability and account limits, then retry Deep Scan.")
                             skipped += 1
 
-            if thread_had_ingestion:
-                newly.append(thread_id)
+                if not message_failed:
+                    newly.append(message_key)
+                if blocked_reason:
+                    break
+            if blocked_reason:
+                break
 
         try:
             profile = client.profile()
@@ -497,12 +469,27 @@ def _sync_gmail(
         "provider": "gmail",
         "ingested": ingested,
         "skipped": skipped,
+        "duplicates": duplicates,
+        "rejections": rejections[:20],
+        "failed": len(errors),
+        "next_page_token": None if blocked_reason else next_page_token,
+        "paused": bool(blocked_reason),
+        "blocked_reason": blocked_reason,
+        "resume_page_token": page_token if blocked_reason else None,
+        "complete": not next_page_token and not errors and not blocked_reason,
         "checked_emails": checked_count,
         "total_found": len(thread_ids),
         "ingested_candidates": ingested_candidates,
         "errors": errors[:10],
         "last_run": utcnow().isoformat(),
     }
+    previous = account.last_sync_summary or {}
+    if resume or (page_token and previous.get("next_page_token") == page_token):
+        for key in ("ingested", "skipped", "duplicates", "failed", "checked_emails", "total_found"):
+            summary[key] += previous.get(key, 0)
+        for key, cap in (("errors", 10), ("rejections", 20), ("ingested_candidates", 100)):
+            summary[key] = (previous.get(key, []) + summary[key])[:cap]
+        summary["complete"] = not next_page_token and not summary["failed"] and not blocked_reason
     account.last_sync_at = utcnow()
     _mark_processed(account, newly, summary)
     db.flush()

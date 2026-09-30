@@ -285,14 +285,14 @@ export function CandidateUploadModal({
               id="bulk-file-input"
               type="file"
               multiple
-              accept=".pdf,.docx,.txt,.md"
+              accept=".pdf,.docx,.doc,.rtf,.odt,.txt,.md,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp,.gif"
               style={{ display: "none" }}
               onChange={handleFileSelect}
             />
             <Upload size={32} color="var(--primary)" style={{ margin: "0 auto 8px auto" }} />
             <div style={{ fontWeight: 600, fontSize: 14.5 }}>Click or Drag & Drop Multiple Resumes Here</div>
             <div className="muted mt-1" style={{ fontSize: 12.5 }}>
-              Select multiple PDF, DOCX, or TXT files. Names, skills, locations, and summaries will be automatically extracted.
+              Select PDF, Word, ODT, RTF, text, or image files. Names, skills, locations, and summaries will be automatically extracted.
             </div>
           </div>
 
@@ -388,10 +388,10 @@ export function CandidateUploadModal({
       {!hasCompleted && tab === "single" && (
         <>
           <div className="field">
-            <label>Resume file (PDF / DOCX / TXT)</label>
+            <label>Resume file (document or image)</label>
             <input
               type="file"
-              accept=".pdf,.docx,.txt,.md"
+              accept=".pdf,.docx,.doc,.rtf,.odt,.txt,.md,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp,.gif"
               onChange={(e) => setSingleFile(e.target.files?.[0] ?? null)}
             />
             <div className="muted mt-2" style={{ fontSize: 12.5 }}>

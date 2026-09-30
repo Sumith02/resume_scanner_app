@@ -273,7 +273,13 @@ async def create_candidate(
             raise HTTPException(413, "Resume larger than 10MB")
         storage_mb = max(1, (len(data) + (1024 * 1024) - 1) // (1024 * 1024))
         consume_quota(db, org, "storage_mb", storage_mb)
-        resume_text = extract_resume_text(resume.filename, data)
+        from backend.document_reader import DocumentReadError
+        try:
+            resume_text = extract_resume_text(resume.filename, data)
+            if len(resume_text.strip()) < 20:
+                raise DocumentReadError("No readable text was found. Upload a clearer, unlocked copy.")
+        except DocumentReadError as exc:
+            raise HTTPException(422, str(exc)) from None
         # Manual uploads keep support for short/simple CVs, but reject
         # unmistakable invoices, statements, IDs and similar documents too.
         lower_text = resume_text.lower()

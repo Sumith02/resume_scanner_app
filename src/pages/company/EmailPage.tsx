@@ -83,29 +83,28 @@ export function EmailPage() {
     }
   }
 
-  async function sync(fullScan = false) {
+  async function sync(fullScan = false, resumeScan = false) {
     setSyncBusy(true);
     setError(null);
     setNotice(null);
     try {
-      const res = await api.gmailSync({ full_scan: fullScan });
-      const summary = (res.summary || {}) as Record<string, any>;
-      if (summary.error) {
-        setError(`Sync issue: ${summary.error}`);
-      } else {
-        const ingested = summary.ingested ?? 0;
-        const cands = (summary.ingested_candidates || []) as string[];
-        const errors = (summary.errors || []) as string[];
-
-        if (ingested > 0) {
-          const names = cands.length > 0 ? `: ${cands.join(", ")}` : "";
-          setNotice(`✅ Successfully imported ${ingested} candidate resume(s)${names}. View them in the Candidates tab!`);
-        } else {
-          setNotice(`Scan complete: 0 new resumes found (${summary.skipped ?? 0} non-resume files filtered).`);
-        }
-        if (errors.length > 0) {
-          setError(`Note: ${errors.length} file(s) encountered processing errors: ${errors.slice(0, 2).join("; ")}`);
-        }
+      let pageToken: string | undefined;
+      let summary: Record<string, any> = {};
+      do {
+        const res = await api.gmailSync({ full_scan: fullScan, page_token: pageToken, resume: resumeScan });
+        resumeScan = false;
+        summary = res.summary;
+        if (summary.error) throw new Error(`Scan stopped: ${summary.error}`);
+        pageToken = summary.next_page_token || undefined;
+        setNotice(`Scanned ${summary.checked_emails ?? 0} threads. Imported ${summary.ingested ?? 0} new profiles. ${pageToken ? "Checking older emails… Keep this page open." : ""}`);
+      } while (pageToken);
+      setNotice(`Scan finished: ${summary.ingested ?? 0} new profiles, ${summary.duplicates ?? 0} existing profiles, ${summary.skipped ?? 0} files skipped, ${summary.failed ?? 0} failures.`);
+      if (summary.paused) {
+        setNotice(`Scan paused: ${summary.ingested ?? 0} profiles imported. Progress is saved.`);
+        setError(summary.blocked_reason);
+      }
+      if (summary.errors?.length) {
+        setError(summary.errors.slice(0, 2).join("; "));
       }
       await load();
     } catch (e) {
@@ -255,7 +254,7 @@ export function EmailPage() {
                   <div style={{ marginBottom: 16, display: "flex", flexDirection: "column", gap: 10 }}>
                     <div className="grid cols-3" style={{ gap: 10 }}>
                       <div style={{ padding: "10px 14px", background: "rgba(16, 185, 129, 0.08)", border: "1px solid rgba(16, 185, 129, 0.25)", borderRadius: 8 }}>
-                        <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", fontWeight: 600 }}>Resumes Ingested</div>
+                        <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", fontWeight: 600 }}>New Profiles</div>
                         <div style={{ fontSize: 22, fontWeight: 700, color: "#059669", marginTop: 2 }}>{ingested}</div>
                       </div>
                       <div style={{ padding: "10px 14px", background: "rgba(59, 130, 246, 0.08)", border: "1px solid rgba(59, 130, 246, 0.25)", borderRadius: 8 }}>
@@ -263,11 +262,29 @@ export function EmailPage() {
                         <div style={{ fontSize: 22, fontWeight: 700, color: "#2563eb", marginTop: 2 }}>{checked}</div>
                       </div>
                       <div style={{ padding: "10px 14px", background: "rgba(107, 114, 128, 0.08)", border: "1px solid rgba(107, 114, 128, 0.25)", borderRadius: 8 }}>
-                        <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", fontWeight: 600 }}>Non-Resumes Filtered</div>
+                        <div className="muted" style={{ fontSize: 11, textTransform: "uppercase", fontWeight: 600 }}>Files Skipped</div>
                         <div style={{ fontSize: 22, fontWeight: 700, color: "#4b5563", marginTop: 2 }}>{skipped}</div>
                       </div>
                     </div>
 
+                    <div className="muted" style={{ fontSize: 12 }}>
+                      {summary.duplicates ?? 0} existing profiles · {summary.failed ?? 0} failures
+                      {summary.next_page_token ? " · Scan incomplete; run Deep Scan to check all pages." : ""}
+                    </div>
+                    {summary.paused && <div role="status">Scan paused: {summary.blocked_reason}</div>}
+                    {summary.errors?.length > 0 && (
+                      <details><summary>Files needing attention</summary>
+                        {summary.errors.map((message: string, i: number) => <div key={i}>{message}</div>)}
+                      </details>
+                    )}
+                    {summary.rejections?.length > 0 && (
+                      <details>
+                        <summary>Skipped document details (up to 20)</summary>
+                        {summary.rejections.map((item: { filename: string; reason: string }, i: number) => (
+                          <div key={i} className="muted" style={{ fontSize: 12 }}>{item.filename}: {item.reason}</div>
+                        ))}
+                      </details>
+                    )}
                     {cands.length > 0 && (
                       <div style={{ padding: "10px 14px", background: "rgba(16, 185, 129, 0.04)", border: "1px solid rgba(16, 185, 129, 0.2)", borderRadius: 8 }}>
                         <div style={{ fontSize: 11.5, fontWeight: 600, color: "#065f46", marginBottom: 6 }}>Imported Candidates:</div>
@@ -292,11 +309,14 @@ export function EmailPage() {
                   className="btn secondary"
                   disabled={syncBusy}
                   onClick={() => sync(true)}
-                  title="Force a deep scan of all emails with attachments in your inbox, re-checking any previously skipped emails"
+                  title="Scan all available attachment emails, including archived, spam and trash, with no date limit"
                 >
                   <RefreshCw size={15} /> Deep Scan (All)
                 </button>
-                <button className="btn ghost" onClick={disconnect}>
+                {gmail.account.last_sync_summary?.paused === true && (
+                  <button className="btn secondary" disabled={syncBusy} onClick={() => sync(false, true)}>Resume scan</button>
+                )}
+                <button className="btn ghost" disabled={syncBusy} onClick={disconnect}>
                   Disconnect
                 </button>
               </div>

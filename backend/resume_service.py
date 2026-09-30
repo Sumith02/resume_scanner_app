@@ -48,21 +48,8 @@ _EXP_YEAR_PROFILE = [
 
 
 def extract_resume_text(filename: str, data: bytes) -> str:
-    lower = filename.lower()
-    text = ""
-    if lower.endswith(".pdf"):
-        text = _extract_pdf(data)
-        if not text and not data.startswith(b"%PDF"):
-            text = _decode_text(data)
-    elif lower.endswith(".docx"):
-        text = _extract_docx(data)
-        if not text and not data.startswith(b"PK"):
-            text = _decode_text(data)
-    elif lower.endswith((".txt", ".md", ".text")):
-        text = _decode_text(data)
-    else:
-        text = _extract_pdf(data) or _extract_docx(data) or _decode_text(data)
-    return (text or "").replace("\x00", "")
+    from backend.document_reader import read_document
+    return read_document(filename, data).replace("\x00", "")
 
 
 INVOICE_BILL_PATTERNS = [
@@ -235,7 +222,7 @@ def is_valid_resume_content(
 
     # 3. Reject non-resume filenames
     bad_fn = ("invoice", "tax_invoice", "receipt", "statement", "ticket", "bill", "salaryslip", "payslip", "marksheet", "admitcard", "certificate")
-    if any(b in lower_fn for b in bad_fn):
+    if not strict and any(b in lower_fn for b in bad_fn):
         return False, f"Filename indicates non-resume ({filename})"
 
     # 4. Check for explicit resume indicators in filename

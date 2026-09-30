@@ -531,9 +531,9 @@ export const api = {
       "/api/email/gmail/connect-demo",
       { method: "POST" },
     ),
-  gmailSync: (opts?: { full_scan?: boolean }) =>
+  gmailSync: (opts?: { full_scan?: boolean; page_token?: string; resume?: boolean }) =>
     request<{ summary: Record<string, unknown>; account: EmailAccount }>(
-      opts?.full_scan ? "/api/email/gmail/sync?full_scan=true" : "/api/email/gmail/sync",
+      `/api/email/gmail/sync?resume=${Boolean(opts?.resume)}&full_scan=${Boolean(opts?.full_scan)}${opts?.page_token ? `&page_token=${encodeURIComponent(opts.page_token)}` : ""}`,
       { method: "POST" },
     ),
   gmailDisconnect: () => request<null>("/api/email/gmail", { method: "DELETE" }),

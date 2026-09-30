@@ -322,8 +322,10 @@ def test_resume_text_and_ingestion_sanitizes_nul_bytes(client, master):
 
     # Binary data containing NUL bytes should never produce NUL bytes in extracted text
     raw_corrupted_data = b"%PDF-1.4\x00\x00\x01\x02\x00RandomBinaryData\x00\x00"
-    extracted = extract_resume_text("bad.pdf", raw_corrupted_data)
-    assert "\x00" not in extracted
+    from backend.document_reader import DocumentReadError
+    import pytest
+    with pytest.raises(DocumentReadError, match="damaged"):
+        extract_resume_text("bad.pdf", raw_corrupted_data)
 
     # Test candidate ingestion strips any \x00 bytes before inserting into DB
     org_dict, _tok = _setup(client, master, "Nul Co", "nul@test.com")

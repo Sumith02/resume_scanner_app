@@ -51,12 +51,6 @@ def ingest_resume(
     if not valid:
         raise ValueError(f"Skipped non-resume document '{filename}': {reason}")
 
-    if meter:
-        from backend.plans import check_quota, increment_usage
-
-        check_quota(db, org, "resume_parses", 1)
-        check_quota(db, org, "candidates", 1)
-
     raw_name = overrides.get("name") or guess_name(text) or filename
     raw_email = overrides.get("email") or extract_email(text)
     raw_phone = overrides.get("phone") or extract_phone(text)
@@ -77,7 +71,12 @@ def ingest_resume(
     clean_summary = _clean_pg_text(raw_summary)
     clean_text = _clean_pg_text(text)
 
-    dups = find_dup_candidates(db, org.id, clean_email, clean_phone, clean_name)
+    dups = find_dup_candidates(db, org.id, clean_email, clean_phone, None if source == SourceKind.GMAIL else clean_name)
+    if source == SourceKind.GMAIL and not dups and clean_text:
+        # Contact-free or link-only profiles still dedupe by identical content.
+        dups = db.query(Candidate).filter_by(
+            organization_id=org.id, resume_text=clean_text
+        ).limit(1).all()
     dup_of = dups[0].id if dups else None
 
     # Gmail may return the same thread again during a deep scan or after the
@@ -106,6 +105,12 @@ def ingest_resume(
             details={"source": source.value, "filename": filename},
         )
         return {"candidate": existing, "is_duplicate": True, "parsed_skills": clean_skills}
+
+    if meter:
+        from backend.plans import check_quota, increment_usage
+
+        check_quota(db, org, "resume_parses", 1)
+        check_quota(db, org, "candidates", 1)
 
     storage_mb = max(1, (len(data) + (1024 * 1024) - 1) // (1024 * 1024))
     if meter:
@@ -201,10 +206,13 @@ def _clean_pg_text(val: str | None) -> str | None:
 
 
 def looks_like_resume(filename: str, content_type: str | None = None) -> bool:
+    from backend.document_reader import IMAGE_EXTENSIONS
     lower = (filename or "").lower()
+    if lower.endswith(IMAGE_EXTENSIONS):
+        return True
     if content_type:
         ctype = content_type.lower()
-        if "pdf" in ctype or "word" in ctype or "officedocument" in ctype:
+        if ctype.startswith("image/") or "pdf" in ctype or "word" in ctype or "officedocument" in ctype or "opendocument" in ctype:
             return True
     if lower.endswith((".pdf", ".docx", ".doc", ".txt", ".md", ".rtf", ".odt")):
         return True

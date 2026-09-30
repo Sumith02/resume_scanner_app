@@ -197,3 +197,46 @@ python -m pytest          # backend: 35 tests across foundation → SaaS
 npm run lint              # frontend typecheck
 npm run build             # frontend production build
 ```
+
+## Résumé OCR and document support
+
+Gmail and uploads share the document reader in `backend/document_reader.py`.
+It supports digital and scanned PDFs (including mixed pages), PNG/JPEG/TIFF/BMP/WebP/GIF,
+DOCX, legacy DOC, RTF, ODT, and plain text. Scanned pages and images use local
+[Tesseract](https://tesseract-ocr.github.io/tessdoc/Installation.html); documents are not sent
+to an external OCR API. Résumé validation still runs after extraction.
+
+Install Python dependencies with `pip install -r requirements.txt`, then install the native readers:
+
+```sh
+# Debian / Ubuntu server
+apt-get update
+apt-get install -y tesseract-ocr tesseract-ocr-eng antiword
+# macOS development (legacy DOC uses the built-in textutil reader)
+brew install tesseract
+```
+
+`OCR_LANGUAGES` defaults to `eng`. Additional languages require their Tesseract trained data
+and a value such as `eng+hin`. `TESSERACT_CMD` optionally specifies the executable path.
+Missing readers, locked/corrupt files, extraction deadlines, and quota failures are shown
+in the scan results rather than silently imported as empty candidate profiles.
+
+Resource bounds: `MAX_RESUME_BYTES` (default 10 MB), 30 PDF/image pages, 20 million pixels
+per image, 40 MB expanded office archives, 15 seconds per OCR page and 60 seconds per
+OCR document. Files exceeding these bounds must be split or reduced; no pages are
+silently truncated. OCR quality depends on scan quality; review extracted candidate fields.
+
+`Dockerfile.api` includes the Linux readers. Build with `docker build -f Dockerfile.api -t nexerra-api .`.
+Run with a production PostgreSQL `DATABASE_URL`, application secrets, and a persistent volume
+at `/data/uploads`; serve the frontend separately with `VITE_API_URL` pointed at the API.
+The existing Vercel Python deployment will also need the native executables and language data
+packaged for its runtime, or the API must run on a container host. Python dependencies alone
+are insufficient. The container path has not been deployment-tested.
+
+Gmail scans follow all attachment-search pages. Keep the Email page open until completion.
+When a plan quota is reached, successful imports stay saved and the current page is retained.
+After the administrator changes the plan/limit or the quota resets, choose **Resume scan**.
+The blocked message is retried, and already-created profiles are deduplicated without charging
+usage again. Account quotas remain enforced. Other read failures can be retried with Deep Scan.
+Large threads can still exceed a serverless request deadline; use an API host with an adequate
+request timeout for OCR-heavy mailboxes. A closed tab stops automatic page continuation.
