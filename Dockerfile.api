@@ -8,4 +8,4 @@ ENV PYTHONUNBUFFERED=1 OCR_LANGUAGES=eng UPLOAD_DIR=/data/uploads
 RUN useradd --create-home app && mkdir -p /data/uploads && chown -R app:app /data
 USER app
 EXPOSE 4174
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "4174"]
+CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-4174}"]
