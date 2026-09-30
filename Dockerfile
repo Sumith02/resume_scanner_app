@@ -1,0 +1,26 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng antiword \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY backend ./backend
+COPY scripts ./scripts
+COPY api ./api
+
+ENV PYTHONUNBUFFERED=1 \
+    OCR_LANGUAGES=eng \
+    UPLOAD_DIR=/data/uploads
+
+RUN useradd --create-home app \
+    && mkdir -p /data/uploads \
+    && chown -R app:app /app /data
+USER app
+
+EXPOSE 4174
+CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-4174}"]
