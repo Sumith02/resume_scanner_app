@@ -336,8 +336,10 @@ def _sync_gmail(
     blocked_reason = None
 
     try:
-        # Follow every page without subject, date, or career keyword restrictions.
-        page = client.list_thread_page(page_token=page_token, max_results=min(max_messages, 20))
+        # Keep each synchronous request small. Free hosts may terminate slow
+        # requests while a page contains many threads and OCR attachments; the
+        # browser follows nextPageToken to finish the full mailbox scan.
+        page = client.list_thread_page(page_token=page_token, max_results=min(max_messages, 1))
         thread_ids = list(dict.fromkeys(t["id"] for t in page.get("threads", [])))
         next_page_token = page.get("nextPageToken")
 
