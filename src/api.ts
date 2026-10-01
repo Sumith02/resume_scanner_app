@@ -57,6 +57,23 @@ export class ApiError extends Error {
   }
 }
 
+async function retryTransient<T>(operation: () => Promise<T>, retries = 3): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      const transient = error instanceof ApiError &&
+        (error.status === 0 || error.status === 502 || error.status === 503 || error.status === 504);
+      if (!transient || attempt === retries) throw error;
+      // Render Free can briefly drop a request while its instance wakes or restarts.
+      await new Promise((resolve) => window.setTimeout(resolve, 1200 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -532,10 +549,10 @@ export const api = {
       { method: "POST" },
     ),
   gmailSync: (opts?: { full_scan?: boolean; page_token?: string; resume?: boolean }) =>
-    request<{ summary: Record<string, unknown>; account: EmailAccount }>(
+    retryTransient(() => request<{ summary: Record<string, unknown>; account: EmailAccount }>(
       `/api/email/gmail/sync?resume=${Boolean(opts?.resume)}&full_scan=${Boolean(opts?.full_scan)}${opts?.page_token ? `&page_token=${encodeURIComponent(opts.page_token)}` : ""}`,
       { method: "POST" },
-    ),
+    )),
   gmailDisconnect: () => request<null>("/api/email/gmail", { method: "DELETE" }),
 
   // ---- Phase 5: SaaS ----
