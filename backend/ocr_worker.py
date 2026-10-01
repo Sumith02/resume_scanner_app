@@ -7,13 +7,16 @@ import sys
 
 from PIL import Image, ImageOps, ImageSequence
 
-MAX_PIXELS = 20_000_000
-Image.MAX_IMAGE_PIXELS = MAX_PIXELS
+MAX_PIXELS = 2_500_000
+# Reject extreme decompression bombs before Pillow attempts a large allocation.
+Image.MAX_IMAGE_PIXELS = MAX_PIXELS * 4
 
 
 def recognize(image):
     if image.width * image.height > MAX_PIXELS:
-        raise ValueError("Image too large")
+        scale = (MAX_PIXELS / (image.width * image.height)) ** 0.5
+        size = (max(1, int(image.width * scale)), max(1, int(image.height * scale)))
+        image = image.resize(size, Image.Resampling.LANCZOS)
     image = ImageOps.exif_transpose(image).convert("RGB")
     buf = io.BytesIO()
     image.save(buf, format="PNG")
@@ -35,7 +38,7 @@ def main():
             for index in map(int, sys.argv[2].split(",")):
                 page = doc[index]
                 width, height = page.get_size()
-                scale = min(3, (MAX_PIXELS / max(1, width * height)) ** 0.5)
+                scale = min(2, (MAX_PIXELS / max(1, width * height)) ** 0.5)
                 bitmap = page.render(scale=scale)
                 image = bitmap.to_pil()
                 try:

@@ -56,7 +56,7 @@ def test_encrypted_pdf_and_corrupt_binary_have_actionable_errors():
 
 def test_missing_ocr_is_retryable_and_clear(monkeypatch):
     monkeypatch.setattr("backend.document_reader.shutil.which", lambda name: None)
-    with pytest.raises(DocumentReadError, match="install Tesseract"):
+    with pytest.raises(DocumentReadError, match="Install Tesseract"):
         read_document("scan.png", image_resume())
 
 
@@ -67,6 +67,100 @@ def test_ocr_deadline_is_actionable(monkeypatch):
     monkeypatch.setattr("backend.document_reader.subprocess.run", timeout)
     with pytest.raises(DocumentReadError, match="timed out"):
         read_document("scan.png", image_resume())
+
+
+def test_large_scanned_images_fail_safely_before_ocr(monkeypatch):
+    output = io.BytesIO()
+    Image.new("RGB", (4000, 3000), "white").save(output, format="PNG")
+    monkeypatch.setattr(
+        "backend.document_reader._ocr",
+        lambda *_args, **_kwargs: pytest.fail("oversized image must not start OCR"),
+    )
+    with pytest.raises(DocumentReadError, match="10 megapixel limit"):
+        read_document("large-scan.png", output.getvalue())
+
+
+def test_local_pdf_ocr_restarts_worker_for_each_scanned_page(monkeypatch):
+    calls = []
+
+    def run(args, **_kwargs):
+        calls.append(args[-1])
+        return subprocess.CompletedProcess(args, 0, stdout=f'{{"{args[-1]}":"page text"}}'.encode())
+
+    monkeypatch.setattr("backend.document_reader.shutil.which", lambda _name: "/test/tesseract")
+    monkeypatch.setattr("backend.document_reader.subprocess.run", run)
+    writer = PdfWriter()
+    writer.add_blank_page(width=600, height=800)
+    writer.add_blank_page(width=600, height=800)
+    pdf_data = io.BytesIO()
+    writer.write(pdf_data)
+    result = read_document("scan.pdf", pdf_data.getvalue())
+    assert calls == ["0", "1"]
+    assert "page text" in result
+
+
+def test_google_vision_ocr_sends_one_bounded_page_at_a_time(monkeypatch):
+    from types import SimpleNamespace
+    import sys
+
+    scales = []
+    closed = []
+
+    class Bitmap:
+        def to_pil(self):
+            return Image.new("RGB", (20, 20), "white")
+
+        def close(self):
+            closed.append("bitmap")
+
+    class Page:
+        def get_size(self):
+            return (600, 800)
+
+        def render(self, scale):
+            scales.append(scale)
+            return Bitmap()
+
+        def close(self):
+            closed.append("page")
+
+    class Pdf:
+        def __init__(self, _data):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            closed.append("document")
+
+        def __getitem__(self, _index):
+            return Page()
+
+    class Client:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def post(self, _endpoint, *, params, json):
+            assert params == {"key": "test-key"}
+            assert len(json["requests"]) == 1
+            return SimpleNamespace(
+                is_error=False,
+                json=lambda: {"responses": [{"fullTextAnnotation": {"text": "page text"}}]},
+            )
+
+    monkeypatch.setitem(sys.modules, "pypdfium2", SimpleNamespace(PdfDocument=Pdf))
+    monkeypatch.setattr("httpx.Client", lambda **_kwargs: Client())
+    monkeypatch.setenv("GOOGLE_VISION_API_KEY", "test-key")
+    from backend.document_reader import _google_vision_ocr
+
+    text = _google_vision_ocr(b"pdf", "pdf", [0, 1])
+    assert '"0": "page text"' in text and '"1": "page text"' in text
+    assert len(scales) == 2 and all(scale <= 2 for scale in scales)
+    assert closed.count("bitmap") == closed.count("page") == 2
 
 
 @pytest.mark.skipif(sys.platform != "darwin" or not shutil.which("textutil"), reason="macOS Word fixture converter")

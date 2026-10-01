@@ -21,6 +21,8 @@ class DocumentReadError(ValueError):
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp", ".gif")
 MAX_PAGES = 30
 MAX_EXPANDED_BYTES = 40 * 1024 * 1024
+MAX_IMAGE_PIXELS = 10_000_000
+MAX_OCR_PIXELS = 2_500_000
 
 
 def _text(data: bytes) -> str:
@@ -92,6 +94,10 @@ def read_document(filename: str, data: bytes) -> str:
             with Image.open(io.BytesIO(data)) as image:
                 if image.width < 500 or image.height < 600:
                     return ""
+                if image.width * image.height > MAX_IMAGE_PIXELS:
+                    raise DocumentReadError(
+                        "Image dimensions exceed the safe 10 megapixel limit. Resize the scan and retry."
+                    )
             return _ocr(data, "image")
         # Preserve text fixtures/exported text with a .pdf/.docx suffix, but never
         # treat known binary formats as text after their parser fails.
@@ -142,6 +148,29 @@ def _ocr(data: bytes, kind: str, pages: list[int] | None = None) -> str:
     # Isolate PDFium and image decoding from concurrent request threads. The
     # parent imposes a whole-document deadline, in addition to per-page limits.
     try:
+        if kind == "pdf" and pages:
+            # Reclaim PDFium and Tesseract memory after each page. A single child
+            # processing a 30-page scan can otherwise exceed Render Free's 512 MB.
+            import json
+            import time
+
+            deadline = time.monotonic() + 60
+            recognized = {}
+            for page_index in pages:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired("ocr", 60)
+                result = subprocess.run(
+                    [sys.executable, "-m", "backend.ocr_worker", kind, str(page_index)],
+                    input=data, capture_output=True, timeout=remaining,
+                )
+                if result.returncode:
+                    raise DocumentReadError(
+                        "Local OCR could not read this file. Check the server's OCR language "
+                        "configuration or upload a clearer copy."
+                    )
+                recognized.update(json.loads(result.stdout.decode("utf-8")))
+            return json.dumps(recognized)
         result = subprocess.run(
             [sys.executable, "-m", "backend.ocr_worker", kind, ",".join(map(str, pages or []))],
             input=data, capture_output=True, timeout=60,
@@ -162,69 +191,61 @@ def _google_vision_ocr(data: bytes, kind: str, pages: list[int] | None = None) -
     """Opt-in OCR fallback; only invoked when GOOGLE_VISION_API_KEY is configured."""
     import httpx
 
-    images: list[bytes]
-    if kind == "pdf":
-        import pypdfium2 as pdfium
-        images = []
-        with pdfium.PdfDocument(data) as document:
-            for index in pages or []:
-                page = document[index]
-                width, height = page.get_size()
-                scale = min(2.5, (20_000_000 / max(1, width * height)) ** 0.5)
-                bitmap = page.render(scale=scale)
-                image = bitmap.to_pil()
-                try:
-                    output = io.BytesIO()
-                    image.save(output, format="JPEG", quality=85)
-                    images.append(output.getvalue())
-                finally:
-                    image.close()
-                    bitmap.close()
-                    page.close()
-    else:
-        images = [data]
-
-    if not images:
-        return ""
-
     extracted: list[str] = []
     endpoint = "https://vision.googleapis.com/v1/images:annotate"
     api_key = os.environ["GOOGLE_VISION_API_KEY"].strip()
     try:
-        # Vision accepts a batch of images in one annotate call. Keep batches
-        # bounded and preserve page order in the returned text.
         with httpx.Client(timeout=httpx.Timeout(25, connect=8)) as client:
-            for offset in range(0, len(images), 16):
-                requests = [
-                    {
-                        "image": {"content": base64.b64encode(image).decode("ascii")},
-                        "features": [{"type": "DOCUMENT_TEXT_DETECTION"}],
-                    }
-                    for image in images[offset : offset + 16]
-                ]
-                response = client.post(
-                    endpoint,
-                    params={"key": api_key},
-                    json={"requests": requests},
-                )
-                if response.is_error:
-                    # Avoid returning request URLs or provider payloads that may
-                    # contain credential details to the UI or application logs.
-                    raise DocumentReadError(
-                        "Google Vision OCR failed. Check the server API key, enabled "
-                        "Vision API, and project quota."
-                    )
-                for result in response.json().get("responses", []):
-                    if result.get("error"):
-                        extracted.append("")
-                        continue
-                    extracted.append(
-                        result.get("fullTextAnnotation", {}).get("text", "")
-                        or "\n".join(
-                            item.get("description", "")
-                            for item in result.get("textAnnotations", [])[:1]
+            if kind == "pdf":
+                import pypdfium2 as pdfium
+
+                with pdfium.PdfDocument(data) as document:
+                    for index in pages or []:
+                        page = document[index]
+                        width, height = page.get_size()
+                        scale = min(2, (MAX_OCR_PIXELS / max(1, width * height)) ** 0.5)
+                        bitmap = page.render(scale=scale)
+                        image = bitmap.to_pil()
+                        try:
+                            output = io.BytesIO()
+                            image.save(output, format="JPEG", quality=82)
+                            image_data = output.getvalue()
+                        finally:
+                            image.close()
+                            bitmap.close()
+                            page.close()
+                        extracted.append(_vision_text(client, endpoint, api_key, image_data))
+                        del image_data, output
+            else:
+                from PIL import Image
+
+                with Image.open(io.BytesIO(data)) as source:
+                    if source.width * source.height > MAX_IMAGE_PIXELS:
+                        raise DocumentReadError(
+                            "Image dimensions exceed the safe 10 megapixel limit. Resize the scan and retry."
                         )
-                    )
+                    image = source.copy()
+                try:
+                    if image.width * image.height > MAX_OCR_PIXELS:
+                        scale = (MAX_OCR_PIXELS / (image.width * image.height)) ** 0.5
+                        resized = image.resize(
+                            (max(1, int(image.width * scale)), max(1, int(image.height * scale))),
+                            Image.Resampling.LANCZOS,
+                        )
+                        image.close()
+                        image = resized
+                    rgb = image.convert("RGB")
+                    try:
+                        output = io.BytesIO()
+                        rgb.save(output, format="JPEG", quality=82)
+                        image_data = output.getvalue()
+                    finally:
+                        rgb.close()
+                        output.close()
+                finally:
+                    image.close()
+                extracted.append(_vision_text(client, endpoint, api_key, image_data))
+                del image_data
     except DocumentReadError:
         raise
     except httpx.TimeoutException:
@@ -238,3 +259,26 @@ def _google_vision_ocr(data: bytes, kind: str, pages: list[int] | None = None) -
         import json
         return json.dumps({str(index): text for index, text in zip(pages or [], extracted)})
     return "\n".join(extracted)
+
+
+def _vision_text(client, endpoint: str, api_key: str, image_data: bytes) -> str:
+    response = client.post(
+        endpoint,
+        params={"key": api_key},
+        json={
+            "requests": [{
+                "image": {"content": base64.b64encode(image_data).decode("ascii")},
+                "features": [{"type": "DOCUMENT_TEXT_DETECTION"}],
+            }]
+        },
+    )
+    if response.is_error:
+        raise DocumentReadError(
+            "Google Vision OCR failed. Check the server API key, enabled Vision API, and project quota."
+        )
+    result = response.json().get("responses", [{}])[0]
+    if result.get("error"):
+        return ""
+    return result.get("fullTextAnnotation", {}).get("text", "") or "\n".join(
+        item.get("description", "") for item in result.get("textAnnotations", [])[:1]
+    )
