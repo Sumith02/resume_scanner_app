@@ -1,8 +1,9 @@
 """Bounded document readers and local OCR. Never decode binary files as plain text."""
 from __future__ import annotations
 
-import io
+import base64
 import os
+import io
 from pathlib import Path
 import shutil
 import subprocess
@@ -85,6 +86,12 @@ def read_document(filename: str, data: bytes) -> str:
                 raise DocumentReadError("This Word file could not be read. Save an unlocked copy as DOCX or PDF.")
             return result.stdout.decode("utf-8", errors="replace")
         if suffix in IMAGE_EXTENSIONS or data.startswith((b"\x89PNG", b"\xff\xd8\xff", b"II*\x00", b"MM\x00*", b"GIF8", b"BM")):
+            # Mail logos, warning badges, and signature icons are frequent
+            # attachments. Ignore tiny images before invoking local or cloud OCR.
+            from PIL import Image
+            with Image.open(io.BytesIO(data)) as image:
+                if image.width < 500 or image.height < 600:
+                    return ""
             return _ocr(data, "image")
         # Preserve text fixtures/exported text with a .pdf/.docx suffix, but never
         # treat known binary formats as text after their parser fails.
@@ -124,14 +131,110 @@ def _read_pdf(data: bytes) -> str:
 
 def _ocr(data: bytes, kind: str, pages: list[int] | None = None) -> str:
     command = os.getenv("TESSERACT_CMD", "tesseract")
+    api_key = os.getenv("GOOGLE_VISION_API_KEY", "").strip()
     if not shutil.which(command):
-        raise DocumentReadError("OCR is unavailable on this server. Ask your administrator to install Tesseract and its language data, then retry.")
+        if api_key:
+            return _google_vision_ocr(data, kind, pages)
+        raise DocumentReadError(
+            "OCR is unavailable. Install Tesseract on the server or set the optional "
+            "GOOGLE_VISION_API_KEY server secret, then retry."
+        )
     # Isolate PDFium and image decoding from concurrent request threads. The
     # parent imposes a whole-document deadline, in addition to per-page limits.
-    result = subprocess.run(
-        [sys.executable, "-m", "backend.ocr_worker", kind, ",".join(map(str, pages or []))],
-        input=data, capture_output=True, timeout=60,
-    )
-    if result.returncode:
-        raise DocumentReadError("OCR could not read this file. Check the server's OCR language configuration or upload a clearer copy.")
-    return result.stdout.decode("utf-8")
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "backend.ocr_worker", kind, ",".join(map(str, pages or []))],
+            input=data, capture_output=True, timeout=60,
+        )
+        if result.returncode:
+            raise DocumentReadError(
+                "Local OCR could not read this file. Check the server's OCR language "
+                "configuration or upload a clearer copy."
+            )
+        return result.stdout.decode("utf-8")
+    except (DocumentReadError, subprocess.TimeoutExpired):
+        if api_key:
+            return _google_vision_ocr(data, kind, pages)
+        raise
+
+
+def _google_vision_ocr(data: bytes, kind: str, pages: list[int] | None = None) -> str:
+    """Opt-in OCR fallback; only invoked when GOOGLE_VISION_API_KEY is configured."""
+    import httpx
+
+    images: list[bytes]
+    if kind == "pdf":
+        import pypdfium2 as pdfium
+        images = []
+        with pdfium.PdfDocument(data) as document:
+            for index in pages or []:
+                page = document[index]
+                width, height = page.get_size()
+                scale = min(2.5, (20_000_000 / max(1, width * height)) ** 0.5)
+                bitmap = page.render(scale=scale)
+                image = bitmap.to_pil()
+                try:
+                    output = io.BytesIO()
+                    image.save(output, format="JPEG", quality=85)
+                    images.append(output.getvalue())
+                finally:
+                    image.close()
+                    bitmap.close()
+                    page.close()
+    else:
+        images = [data]
+
+    if not images:
+        return ""
+
+    extracted: list[str] = []
+    endpoint = "https://vision.googleapis.com/v1/images:annotate"
+    api_key = os.environ["GOOGLE_VISION_API_KEY"].strip()
+    try:
+        # Vision accepts a batch of images in one annotate call. Keep batches
+        # bounded and preserve page order in the returned text.
+        with httpx.Client(timeout=httpx.Timeout(25, connect=8)) as client:
+            for offset in range(0, len(images), 16):
+                requests = [
+                    {
+                        "image": {"content": base64.b64encode(image).decode("ascii")},
+                        "features": [{"type": "DOCUMENT_TEXT_DETECTION"}],
+                    }
+                    for image in images[offset : offset + 16]
+                ]
+                response = client.post(
+                    endpoint,
+                    params={"key": api_key},
+                    json={"requests": requests},
+                )
+                if response.is_error:
+                    # Avoid returning request URLs or provider payloads that may
+                    # contain credential details to the UI or application logs.
+                    raise DocumentReadError(
+                        "Google Vision OCR failed. Check the server API key, enabled "
+                        "Vision API, and project quota."
+                    )
+                for result in response.json().get("responses", []):
+                    if result.get("error"):
+                        extracted.append("")
+                        continue
+                    extracted.append(
+                        result.get("fullTextAnnotation", {}).get("text", "")
+                        or "\n".join(
+                            item.get("description", "")
+                            for item in result.get("textAnnotations", [])[:1]
+                        )
+                    )
+    except DocumentReadError:
+        raise
+    except httpx.TimeoutException:
+        raise DocumentReadError("Google Vision OCR timed out. Retry the file or upload a smaller image.") from None
+    except httpx.HTTPError:
+        raise DocumentReadError("Could not connect to Google Vision OCR. Retry the file shortly.") from None
+    except (ValueError, KeyError):
+        raise DocumentReadError("Google Vision returned an unreadable response. Retry the file.") from None
+
+    if kind == "pdf":
+        import json
+        return json.dumps({str(index): text for index, text in zip(pages or [], extracted)})
+    return "\n".join(extracted)

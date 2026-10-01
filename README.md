@@ -203,8 +203,12 @@ npm run build             # frontend production build
 Gmail and uploads share the document reader in `backend/document_reader.py`.
 It supports digital and scanned PDFs (including mixed pages), PNG/JPEG/TIFF/BMP/WebP/GIF,
 DOCX, legacy DOC, RTF, ODT, and plain text. Scanned pages and images use local
-[Tesseract](https://tesseract-ocr.github.io/tessdoc/Installation.html); documents are not sent
-to an external OCR API. Résumé validation still runs after extraction.
+[Tesseract](https://tesseract-ocr.github.io/tessdoc/Installation.html) when installed. If it is
+missing or fails and `GOOGLE_VISION_API_KEY` is configured, OCR falls back to Google Cloud Vision.
+In that opt-in mode, image attachments and locally rendered scanned PDF pages are sent to Google
+for text extraction. Without the key, documents stay on the backend and OCR requires Tesseract.
+Résumé validation still runs after extraction. Small email icons are ignored before OCR so they
+do not consume Vision requests.
 
 Install Python dependencies with `pip install -r requirements.txt`, then install the native readers:
 
@@ -218,6 +222,12 @@ brew install tesseract
 
 `OCR_LANGUAGES` defaults to `eng`. Additional languages require their Tesseract trained data
 and a value such as `eng+hin`. `TESSERACT_CMD` optionally specifies the executable path.
+To enable cloud fallback, create a Google Cloud API key restricted to the Cloud Vision API and
+set `GOOGLE_VISION_API_KEY` as a secret in Render. Do not put it in Vercel or use a `VITE_`
+variable. Vision OCR includes 1,000 free units per month; each image or scanned PDF page uses a
+unit, and further usage can incur charges. Set a usage quota and budget alert in Google Cloud.
+The backend renders PDF pages locally and sends only those page images to Vision, not the source
+PDF.
 Missing readers, locked/corrupt files, extraction deadlines, and quota failures are shown
 in the scan results rather than silently imported as empty candidate profiles.
 
