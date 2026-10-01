@@ -172,6 +172,13 @@ class GmailClient:
             params["pageToken"] = page_token
         return self._get("/threads", params)
 
+    def list_message_page(self, *, page_token: str | None = None, max_results: int = 1) -> dict:
+        """List matching messages directly; never load an entire conversation."""
+        params = {"q": GMAIL_QUERY, "maxResults": min(max_results, 1), "includeSpamTrash": True}
+        if page_token:
+            params["pageToken"] = page_token
+        return self._get("/messages", params)
+
     def get_thread(self, thread_id: str) -> dict:
         return self._get(f"/threads/{thread_id}", {"format": "full"})
 
@@ -336,99 +343,106 @@ def _sync_gmail(
     blocked_reason = None
 
     try:
-        # Keep each synchronous request small. Free hosts may terminate slow
-        # requests while a page contains many threads and OCR attachments; the
-        # browser follows nextPageToken to finish the full mailbox scan.
-        page = client.list_thread_page(page_token=page_token, max_results=min(max_messages, 1))
-        thread_ids = list(dict.fromkeys(t["id"] for t in page.get("threads", [])))
+        # Read one matching message per request. Loading a whole Gmail thread
+        # can include years of replies and exceed free-host request limits.
+        if hasattr(client, "list_message_page"):
+            page = client.list_message_page(page_token=page_token, max_results=1)
+            message_refs = page.get("messages", [])[:1]
+            preloaded_messages = False
+        else:
+            # Compatibility with older/custom adapters that expose threads only.
+            page = client.list_thread_page(page_token=page_token, max_results=1)
+            message_refs = []
+            for thread_ref in page.get("threads", [])[:1]:
+                legacy_thread = client.get_thread(thread_ref["id"])
+                message_refs.extend(legacy_thread.get("messages", []))
+            preloaded_messages = True
         next_page_token = page.get("nextPageToken")
 
         checked_count = 0
-        for thread_id in thread_ids:
+        for message_ref in message_refs:
             checked_count += 1
-
-            try:
-                thread = client.get_thread(thread_id)
-            except Exception as thr_err:
-                errors.append("Could not read an email thread. Run Deep Scan again to retry.")
+            msg_id = message_ref.get("id")
+            if not msg_id:
+                errors.append("Gmail returned a message without an ID. Run Deep Scan again to retry.")
+                continue
+            message_key = f"message:{msg_id}"
+            if message_key in processed:
                 continue
 
-            messages = thread.get("messages", [])
-            for message in messages:
-                msg_id = message.get("id")
-                # New replies in previously scanned threads must still be checked.
-                message_key = f"message:{msg_id}"
-                if message_key in processed:
+            try:
+                message = message_ref if preloaded_messages else client.get_message(msg_id)
+            except Exception:
+                errors.append("Could not read an email. Run Deep Scan again to retry.")
+                continue
+
+            message_failed = False
+
+            for filename, attachment_id, inline_data, mime_type in _walk_attachments(message.get("payload", {})):
+                if not looks_like_resume(filename, mime_type):
+                    rejections.append({"filename": filename, "reason": "Unsupported attachment format."})
+                    skipped += 1
                     continue
-                message_failed = False
 
-                for filename, attachment_id, inline_data, mime_type in _walk_attachments(message.get("payload", {})):
-                    if not looks_like_resume(filename, mime_type):
-                        rejections.append({"filename": filename, "reason": "Unsupported attachment format."})
+                try:
+                    with db.begin_nested():
+                        if inline_data:
+                            data = _safe_b64decode(inline_data)
+                        elif attachment_id:
+                            data = client.get_attachment(msg_id, attachment_id)
+                        else:
+                            continue
+
+                        if not data or len(data) < 30:
+                            raise ValueError("Document text is empty or unreadable")
+
+                        res = ingest_resume(
+                            db, org=org, filename=filename, data=data,
+                            source=SourceKind.GMAIL, actor_email=actor_email,
+                        )
+                    if res.get("is_duplicate"):
+                        duplicates += 1
+                    else:
+                        ingested += 1
+                    cand = res.get("candidate")
+                    cname = getattr(cand, "name", None) or filename
+                    if not res.get("is_duplicate") and cname and cname not in ingested_candidates:
+                        ingested_candidates.append(cname)
+                except Exception as att_err:
+                    err_str = str(att_err)
+                    # Content-validation rejections (invoices, receipts, bad structures) are quiet skips
+                    if isinstance(att_err, HTTPException) and att_err.status_code == 402:
+                        message_failed = True
+                        blocked_reason = str(att_err.detail).replace("Upgrade the plan to continue.", "Ask your administrator to increase the limit, then resume this scan.")
+                        break
+                    elif isinstance(att_err, DocumentReadError):
+                        message_failed = True
+                        errors.append(f"{filename}: {att_err}")
+                    elif "empty or unreadable" in err_str.lower():
+                        message_failed = True
                         skipped += 1
-                        continue
+                        errors.append(f"{filename}: No readable text was found after extraction. Upload a clearer, unlocked copy.")
+                    elif "non-resume" in err_str.lower() or "not a resume" in err_str.lower():
+                        skipped += 1
+                        rejections.append({"filename": filename, "reason": err_str})
+                    else:
+                        message_failed = True
+                        print(f"Skipping attachment {filename} in message {msg_id}: {err_str}")
+                        errors.append(f"{filename}: Could not import this file. Check file readability and account limits, then retry Deep Scan.")
+                        skipped += 1
 
-                    try:
-                        with db.begin_nested():
-                            if inline_data:
-                                data = _safe_b64decode(inline_data)
-                            elif attachment_id:
-                                data = client.get_attachment(msg_id, attachment_id)
-                            else:
-                                continue
-
-                            if not data or len(data) < 30:
-                                raise ValueError("Document text is empty or unreadable")
-
-                            res = ingest_resume(
-                                db, org=org, filename=filename, data=data,
-                                source=SourceKind.GMAIL, actor_email=actor_email,
-                            )
-                        if res.get("is_duplicate"):
-                            duplicates += 1
-                        else:
-                            ingested += 1
-                        cand = res.get("candidate")
-                        cname = getattr(cand, "name", None) or filename
-                        if not res.get("is_duplicate") and cname and cname not in ingested_candidates:
-                            ingested_candidates.append(cname)
-                    except Exception as att_err:
-                        err_str = str(att_err)
-                        # Content-validation rejections (invoices, receipts, bad structures) are quiet skips
-                        if isinstance(att_err, HTTPException) and att_err.status_code == 402:
-                            message_failed = True
-                            blocked_reason = str(att_err.detail).replace("Upgrade the plan to continue.", "Ask your administrator to increase the limit, then resume this scan.")
-                            break
-                        elif isinstance(att_err, DocumentReadError):
-                            message_failed = True
-                            errors.append(f"{filename}: {att_err}")
-                        elif "empty or unreadable" in err_str.lower():
-                            message_failed = True
-                            skipped += 1
-                            errors.append(f"{filename}: No readable text was found after extraction. Upload a clearer, unlocked copy.")
-                        elif "non-resume" in err_str.lower() or "not a resume" in err_str.lower():
-                            skipped += 1
-                            rejections.append({"filename": filename, "reason": err_str})
-                        else:
-                            message_failed = True
-                            print(f"Skipping attachment {filename} in thread {thread_id}: {err_str}")
-                            errors.append(f"{filename}: Could not import this file. Check file readability and account limits, then retry Deep Scan.")
-                            skipped += 1
-
-                if not message_failed:
-                    newly.append(message_key)
-                if blocked_reason:
-                    break
+            if not message_failed:
+                newly.append(message_key)
             if blocked_reason:
                 break
 
-        try:
-            profile = client.profile()
-            account.history_id = profile.get("historyId")
-            if not account.email:
+        if not account.email:
+            try:
+                profile = client.profile()
                 account.email = profile.get("emailAddress")
-        except Exception:
-            pass
+                account.history_id = profile.get("historyId")
+            except Exception:
+                pass
 
         account.status = "CONNECTED"
     except httpx.HTTPStatusError as exc:
@@ -480,7 +494,7 @@ def _sync_gmail(
         "resume_page_token": page_token if blocked_reason else None,
         "complete": not next_page_token and not errors and not blocked_reason,
         "checked_emails": checked_count,
-        "total_found": len(thread_ids),
+        "total_found": len(message_refs),
         "ingested_candidates": ingested_candidates,
         "errors": errors[:10],
         "last_run": utcnow().isoformat(),

@@ -96,7 +96,7 @@ export function EmailPage() {
         summary = res.summary;
         if (summary.error) throw new Error(`Scan stopped: ${summary.error}`);
         pageToken = summary.next_page_token || undefined;
-        setNotice(`Scanned ${summary.checked_emails ?? 0} threads. Imported ${summary.ingested ?? 0} new profiles. ${pageToken ? "Checking older emails… Keep this page open." : ""}`);
+        setNotice(`Scanned ${summary.checked_emails ?? 0} emails. Imported ${summary.ingested ?? 0} new profiles. ${pageToken ? "Continuing through older emails… Keep this page open." : ""}`);
       } while (pageToken);
       setNotice(`Scan finished: ${summary.ingested ?? 0} new profiles, ${summary.duplicates ?? 0} existing profiles, ${summary.skipped ?? 0} files skipped, ${summary.failed ?? 0} failures.`);
       if (summary.paused) {
